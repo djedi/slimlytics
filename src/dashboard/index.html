@@ -4,455 +4,494 @@ title: Analytics Dashboard
 ---
 
 <div class="container" x-data="dashboard()" x-init="init()">
-    <!-- Header with Site and Date Selectors -->
-    <div class="header">
-        <div style="display: flex; align-items: center; gap: 20px;">
-            <a href="/"><img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;"></a>
+  <!-- Header with Site and Date Selectors -->
+  <div class="header">
+    <div style="display: flex; align-items: center; gap: 20px">
+      <a href="/"
+        ><img
+          src="/images/slimlytics.png"
+          alt="Slimlytics"
+          style="height: 40px; width: auto"
+      /></a>
 
-            <!-- Site Selector -->
-            <div class="site-selector">
-                <button class="dropdown-btn" @click="siteDropdownOpen = !siteDropdownOpen">
-                    <span class="emoji-icon">🌐</span>
-                    <span x-text="selectedSite"></span>
-                    <span style="margin-left: auto;">▼</span>
-                </button>
-                <div class="dropdown-menu" x-show="siteDropdownOpen" @click.outside="siteDropdownOpen = false" x-cloak>
-                    <template x-for="site in sites" :key="site.id">
-                        <div class="dropdown-item"
-                             :class="{'active': selectedSite === site.name}"
-                             @click="selectSite(site)">
-                            <span x-text="site.name"></span>
-                        </div>
-                    </template>
-                    <div style="border-top: 1px solid #e9ecef; margin-top: 5px; padding-top: 5px;">
-                        <div class="dropdown-item" @click="goToSiteSettings()">
-                            <span>⚙️ Site Settings</span>
-                        </div>
-                        <div class="dropdown-item" @click="window.location.href='/add-site'">
-                            <span>➕ Add New Site</span>
-                        </div>
-                    </div>
-                </div>
+      <!-- Site Selector -->
+      <div class="site-selector">
+        <button
+          class="dropdown-btn"
+          @click="siteDropdownOpen = !siteDropdownOpen"
+        >
+          <span class="emoji-icon">🌐</span>
+          <span x-text="selectedSite"></span>
+          <span style="margin-left: auto">▼</span>
+        </button>
+        <div
+          class="dropdown-menu"
+          x-show="siteDropdownOpen"
+          @click.outside="siteDropdownOpen = false"
+          x-cloak
+        >
+          <template x-for="site in sites" :key="site.id">
+            <div
+              class="dropdown-item"
+              :class="{'active': selectedSite === site.name}"
+              @click="selectSite(site)"
+            >
+              <span x-text="site.name"></span>
             </div>
-        </div>
-
-        <!-- Date Range Selector -->
-        <div class="date-selector">
-            <button class="dropdown-btn" @click="dateDropdownOpen = !dateDropdownOpen">
-                <span class="emoji-icon">📅</span>
-                <span x-text="dateRanges[selectedDateRange]"></span>
-                <span style="margin-left: auto;">▼</span>
-            </button>
-            <div class="dropdown-menu" x-show="dateDropdownOpen" @click.outside="dateDropdownOpen = false" x-cloak>
-                <template x-for="[key, value] in Object.entries(dateRanges)" :key="key">
-                    <div class="dropdown-item"
-                         :class="{'active': selectedDateRange === key}"
-                         @click="selectDateRange(key)">
-                        <span x-text="value"></span>
-                    </div>
-                </template>
+          </template>
+          <div
+            style="
+              border-top: 1px solid #e9ecef;
+              margin-top: 5px;
+              padding-top: 5px;
+            "
+          >
+            <div class="dropdown-item" @click="goToSiteSettings()">
+              <span>⚙️ Site Settings</span>
             </div>
+            <div
+              class="dropdown-item"
+              @click="window.location.href='/add-site'"
+            >
+              <span>➕ Add New Site</span>
+            </div>
+          </div>
         </div>
+      </div>
     </div>
 
-    <!-- Main Dashboard Grid -->
-    <div class="dashboard-grid">
-        <!-- Column 1 -->
-        <div>
-            <!-- The Basics -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">📊</span>
-                    The Basics
-                </div>
-                <div class="stats-grid">
-                    <div class="stat-item">
-                        <div class="stat-value">1,234</div>
-                        <div class="stat-label">👥 Visitors</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">5,678</div>
-                        <div class="stat-label">🎯 Actions</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">4.6</div>
-                        <div class="stat-label">📈 Avg Actions</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">2h 34m</div>
-                        <div class="stat-label">⏱️ Total Time</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">1m 15s</div>
-                        <div class="stat-label">⏳ Avg Time</div>
-                    </div>
-                    <div class="stat-item">
-                        <div class="stat-value">32%</div>
-                        <div class="stat-label">📉 Bounce Rate</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Recent Visitors -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">🕐</span>
-                    Recent Visitors
-                </div>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Location</th>
-                            <th>IP Address</th>
-                            <th>Page</th>
-                            <th>Time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td><span class="country-flag">🇺🇸</span> United States</td>
-                            <td>192.168.1.***</td>
-                            <td><a href="#" class="link">/blog/getting-started</a></td>
-                            <td class="time-ago">2 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇬🇧</span> United Kingdom</td>
-                            <td>10.0.0.***</td>
-                            <td><a href="#" class="link">/products</a></td>
-                            <td class="time-ago">5 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇩🇪</span> Germany</td>
-                            <td>172.16.0.***</td>
-                            <td><a href="#" class="link">/</a></td>
-                            <td class="time-ago">8 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇫🇷</span> France</td>
-                            <td>192.168.2.***</td>
-                            <td><a href="#" class="link">/about</a></td>
-                            <td class="time-ago">12 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇯🇵</span> Japan</td>
-                            <td>10.1.1.***</td>
-                            <td><a href="#" class="link">/contact</a></td>
-                            <td class="time-ago">15 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇨🇦</span> Canada</td>
-                            <td>172.17.0.***</td>
-                            <td><a href="#" class="link">/pricing</a></td>
-                            <td class="time-ago">18 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇦🇺</span> Australia</td>
-                            <td>192.168.3.***</td>
-                            <td><a href="#" class="link">/docs</a></td>
-                            <td class="time-ago">22 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇧🇷</span> Brazil</td>
-                            <td>10.2.2.***</td>
-                            <td><a href="#" class="link">/blog/update-v2</a></td>
-                            <td class="time-ago">25 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇮🇳</span> India</td>
-                            <td>172.18.0.***</td>
-                            <td><a href="#" class="link">/features</a></td>
-                            <td class="time-ago">28 min ago</td>
-                        </tr>
-                        <tr>
-                            <td><span class="country-flag">🇪🇸</span> Spain</td>
-                            <td>192.168.4.***</td>
-                            <td><a href="#" class="link">/support</a></td>
-                            <td class="time-ago">30 min ago</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Links (Referrers) -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">🔗</span>
-                    Links
-                </div>
-                <ul class="data-list">
-                    <li class="list-item">
-                        <span><a href="#" class="link">google.com</a></span>
-                        <span class="badge primary">234</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">reddit.com/r/webdev</a></span>
-                        <span class="badge primary">189</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">hackernews.com</a></span>
-                        <span class="badge primary">156</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">twitter.com</a></span>
-                        <span class="badge primary">123</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">dev.to</a></span>
-                        <span class="badge primary">98</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">linkedin.com</a></span>
-                        <span class="badge primary">76</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">facebook.com</a></span>
-                        <span class="badge primary">54</span>
-                    </li>
-                    <li class="list-item">
-                        <span><a href="#" class="link">github.com</a></span>
-                        <span class="badge primary">45</span>
-                    </li>
-                </ul>
-            </div>
-
-            <!-- Searches -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">🔍</span>
-                    Searches
-                </div>
-                <ul class="data-list">
-                    <li class="list-item">
-                        <span>"analytics dashboard"</span>
-                        <span class="badge success">89</span>
-                    </li>
-                    <li class="list-item">
-                        <span>"web analytics tool"</span>
-                        <span class="badge success">67</span>
-                    </li>
-                    <li class="list-item">
-                        <span>"google analytics alternative"</span>
-                        <span class="badge success">45</span>
-                    </li>
-                    <li class="list-item">
-                        <span>"website statistics"</span>
-                        <span class="badge success">34</span>
-                    </li>
-                    <li class="list-item">
-                        <span>"visitor tracking"</span>
-                        <span class="badge success">28</span>
-                    </li>
-                    <li class="list-item">
-                        <span>"real time analytics"</span>
-                        <span class="badge success">23</span>
-                    </li>
-                </ul>
-            </div>
-        </div>
-
-        <!-- Column 2 -->
-        <div>
-            <!-- Visitors Chart -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">📈</span>
-                    Visitors
-                    <select style="margin-left: auto; padding: 5px; border: 1px solid #ddd; border-radius: 4px;">
-                        <option>Compare to: 7 days ago</option>
-                        <option>Compare to: Yesterday</option>
-                        <option>Compare to: 28 days ago</option>
-                    </select>
-                </div>
-                <div class="chart-container" x-html="chartSvg"></div>
-            </div>
-
-            <!-- Content -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">📄</span>
-                    Content
-                </div>
-                <ul class="data-list">
-                    <li class="list-item">
-                        <span>/</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">456 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 85%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/blog/getting-started</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">234 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 65%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/products</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">189 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 55%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/about</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">167 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 45%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/pricing</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">145 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 40%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/contact</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">123 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 35%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/docs</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">98 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 25%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>/blog/update-v2</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge">76 views</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 20%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                </ul>
-            </div>
-
-            <!-- Locale -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">🌍</span>
-                    Locale
-                </div>
-                <ul class="data-list">
-                    <li class="list-item">
-                        <span><span class="country-flag">🇺🇸</span> United States</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge warning">345</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 75%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span><span class="country-flag">🇬🇧</span> United Kingdom</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge warning">234</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 55%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span><span class="country-flag">🇩🇪</span> Germany</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge warning">156</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 35%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span><span class="country-flag">🇫🇷</span> France</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge warning">123</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 28%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span><span class="country-flag">🇯🇵</span> Japan</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge warning">98</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 22%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span><span class="country-flag">🇨🇦</span> Canada</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge warning">87</span>
-                            <div class="progress-bar" style="width: 100px;">
-                                <div class="progress-fill" style="width: 20%;"></div>
-                            </div>
-                        </div>
-                    </li>
-                </ul>
-            </div>
-
-            <!-- Traffic Sources -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">🚦</span>
-                    Traffic Sources
-                </div>
-                <ul class="data-list">
-                    <li class="list-item">
-                        <span>🔍 Search Engines</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge primary">456</span>
-                            <span style="color: #7f8c8d; font-size: 12px;">38%</span>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>🔗 Direct</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge primary">345</span>
-                            <span style="color: #7f8c8d; font-size: 12px;">29%</span>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>📱 Social Media</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge primary">234</span>
-                            <span style="color: #7f8c8d; font-size: 12px;">20%</span>
-                        </div>
-                    </li>
-                    <li class="list-item">
-                        <span>🌐 Referral Sites</span>
-                        <div style="display: flex; align-items: center; gap: 10px;">
-                            <span class="badge primary">156</span>
-                            <span style="color: #7f8c8d; font-size: 12px;">13%</span>
-                        </div>
-                    </li>
-                </ul>
-            </div>
-        </div>
+    <!-- Date Range Selector -->
+    <div class="date-selector">
+      <button
+        class="dropdown-btn"
+        @click="dateDropdownOpen = !dateDropdownOpen"
+      >
+        <span class="emoji-icon">📅</span>
+        <span x-text="dateRanges[selectedDateRange]"></span>
+        <span style="margin-left: auto">▼</span>
+      </button>
+      <div
+        class="dropdown-menu"
+        x-show="dateDropdownOpen"
+        @click.outside="dateDropdownOpen = false"
+        x-cloak
+      >
+        <template x-for="[key, value] in Object.entries(dateRanges)" :key="key">
+          <div
+            class="dropdown-item"
+            :class="{'active': selectedDateRange === key}"
+            @click="selectDateRange(key)"
+          >
+            <span x-text="value"></span>
+          </div>
+        </template>
+      </div>
     </div>
+  </div>
+
+  <!-- Main Dashboard Grid -->
+  <div class="dashboard-grid">
+    <!-- Column 1 -->
+    <div>
+      <!-- The Basics -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">📊</span>
+          The Basics
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-value">1,234</div>
+            <div class="stat-label">👥 Visitors</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">5,678</div>
+            <div class="stat-label">🎯 Actions</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">4.6</div>
+            <div class="stat-label">📈 Avg Actions</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">2h 34m</div>
+            <div class="stat-label">⏱️ Total Time</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">1m 15s</div>
+            <div class="stat-label">⏳ Avg Time</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value">32%</div>
+            <div class="stat-label">📉 Bounce Rate</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent Visitors -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🕐</span>
+          Recent Visitors
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Location</th>
+              <th>IP Address</th>
+              <th>Page</th>
+              <th>Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="country-flag">🇺🇸</span> United States</td>
+              <td>192.168.1.***</td>
+              <td><a href="#" class="link">/blog/getting-started</a></td>
+              <td class="time-ago">2 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇬🇧</span> United Kingdom</td>
+              <td>10.0.0.***</td>
+              <td><a href="#" class="link">/products</a></td>
+              <td class="time-ago">5 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇩🇪</span> Germany</td>
+              <td>172.16.0.***</td>
+              <td><a href="#" class="link">/</a></td>
+              <td class="time-ago">8 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇫🇷</span> France</td>
+              <td>192.168.2.***</td>
+              <td><a href="#" class="link">/about</a></td>
+              <td class="time-ago">12 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇯🇵</span> Japan</td>
+              <td>10.1.1.***</td>
+              <td><a href="#" class="link">/contact</a></td>
+              <td class="time-ago">15 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇨🇦</span> Canada</td>
+              <td>172.17.0.***</td>
+              <td><a href="#" class="link">/pricing</a></td>
+              <td class="time-ago">18 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇦🇺</span> Australia</td>
+              <td>192.168.3.***</td>
+              <td><a href="#" class="link">/docs</a></td>
+              <td class="time-ago">22 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇧🇷</span> Brazil</td>
+              <td>10.2.2.***</td>
+              <td><a href="#" class="link">/blog/update-v2</a></td>
+              <td class="time-ago">25 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇮🇳</span> India</td>
+              <td>172.18.0.***</td>
+              <td><a href="#" class="link">/features</a></td>
+              <td class="time-ago">28 min ago</td>
+            </tr>
+            <tr>
+              <td><span class="country-flag">🇪🇸</span> Spain</td>
+              <td>192.168.4.***</td>
+              <td><a href="#" class="link">/support</a></td>
+              <td class="time-ago">30 min ago</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Links (Referrers) -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🔗</span>
+          Links
+        </div>
+        <ul class="data-list">
+          <li class="list-item">
+            <span><a href="#" class="link">google.com</a></span>
+            <span class="badge primary">234</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">reddit.com/r/webdev</a></span>
+            <span class="badge primary">189</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">hackernews.com</a></span>
+            <span class="badge primary">156</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">twitter.com</a></span>
+            <span class="badge primary">123</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">dev.to</a></span>
+            <span class="badge primary">98</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">linkedin.com</a></span>
+            <span class="badge primary">76</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">facebook.com</a></span>
+            <span class="badge primary">54</span>
+          </li>
+          <li class="list-item">
+            <span><a href="#" class="link">github.com</a></span>
+            <span class="badge primary">45</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Searches -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🔍</span>
+          Searches
+        </div>
+        <ul class="data-list">
+          <li class="list-item">
+            <span>"analytics dashboard"</span>
+            <span class="badge success">89</span>
+          </li>
+          <li class="list-item">
+            <span>"web analytics tool"</span>
+            <span class="badge success">67</span>
+          </li>
+          <li class="list-item">
+            <span>"google analytics alternative"</span>
+            <span class="badge success">45</span>
+          </li>
+          <li class="list-item">
+            <span>"website statistics"</span>
+            <span class="badge success">34</span>
+          </li>
+          <li class="list-item">
+            <span>"visitor tracking"</span>
+            <span class="badge success">28</span>
+          </li>
+          <li class="list-item">
+            <span>"real time analytics"</span>
+            <span class="badge success">23</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Column 2 -->
+    <div>
+      <!-- Visitors Chart -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">📈</span>
+          Visitors
+          <select
+            style="
+              margin-left: auto;
+              padding: 5px;
+              border: 1px solid #ddd;
+              border-radius: 4px;
+            "
+          >
+            <option>Compare to: 7 days ago</option>
+            <option>Compare to: Yesterday</option>
+            <option>Compare to: 28 days ago</option>
+          </select>
+        </div>
+        <div class="chart-container" x-html="chartSvg"></div>
+      </div>
+
+      <!-- Content -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">📄</span>
+          Content
+        </div>
+        <ul class="data-list">
+          <li class="list-item">
+            <span>/</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">456 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 85%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/blog/getting-started</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">234 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 65%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/products</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">189 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 55%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/about</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">167 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 45%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/pricing</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">145 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 40%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/contact</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">123 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 35%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/docs</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">98 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 25%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>/blog/update-v2</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge">76 views</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 20%"></div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Locale -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🌍</span>
+          Locale
+        </div>
+        <ul class="data-list">
+          <li class="list-item">
+            <span><span class="country-flag">🇺🇸</span> United States</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge warning">345</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 75%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span><span class="country-flag">🇬🇧</span> United Kingdom</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge warning">234</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 55%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span><span class="country-flag">🇩🇪</span> Germany</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge warning">156</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 35%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span><span class="country-flag">🇫🇷</span> France</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge warning">123</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 28%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span><span class="country-flag">🇯🇵</span> Japan</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge warning">98</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 22%"></div>
+              </div>
+            </div>
+          </li>
+          <li class="list-item">
+            <span><span class="country-flag">🇨🇦</span> Canada</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge warning">87</span>
+              <div class="progress-bar" style="width: 100px">
+                <div class="progress-fill" style="width: 20%"></div>
+              </div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Traffic Sources -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🚦</span>
+          Traffic Sources
+        </div>
+        <ul class="data-list">
+          <li class="list-item">
+            <span>🔍 Search Engines</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge primary">456</span>
+              <span style="color: #7f8c8d; font-size: 12px">38%</span>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>🔗 Direct</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge primary">345</span>
+              <span style="color: #7f8c8d; font-size: 12px">29%</span>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>📱 Social Media</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge primary">234</span>
+              <span style="color: #7f8c8d; font-size: 12px">20%</span>
+            </div>
+          </li>
+          <li class="list-item">
+            <span>🌐 Referral Sites</span>
+            <div style="display: flex; align-items: center; gap: 10px">
+              <span class="badge primary">156</span>
+              <span style="color: #7f8c8d; font-size: 12px">13%</span>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
 </div>
 
-
-<\!-- Load external JavaScript for this page -->
 <script src="/js/dashboard.js"></script>

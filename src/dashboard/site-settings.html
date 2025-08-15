@@ -7,7 +7,7 @@ title: Site Settings
     <!-- Header -->
     <div class="header">
         <div style="display: flex; align-items: center; gap: 20px;">
-            <img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;">
+            <a href="/"><img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;"></a>
             <h1 style="font-size: 24px; color: #2c3e50; margin: 0;">Site Settings</h1>
         </div>
         <a href="/" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 16px; border-radius: 5px; font-size: 14px;">
@@ -23,7 +23,7 @@ title: Site Settings
 
     <!-- Settings Content -->
     <div x-show="!loading && site" x-cloak style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-        
+
         <!-- Left Column -->
         <div>
             <!-- Site Information -->
@@ -32,15 +32,15 @@ title: Site Settings
                     <span class="emoji-icon">⚙️</span>
                     Site Information
                 </div>
-                
+
                 <form @submit.prevent="updateSite()">
                     <div style="margin-bottom: 20px;">
                         <label for="siteName" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
                             Site Name
                         </label>
-                        <input type="text" 
+                        <input type="text"
                                id="siteName"
-                               x-model="site.name" 
+                               x-model="site.name"
                                required
                                style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
                     </div>
@@ -49,9 +49,9 @@ title: Site Settings
                         <label for="siteUrl" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
                             Site Domain
                         </label>
-                        <input type="text" 
+                        <input type="text"
                                id="siteUrl"
-                               x-model="site.domain" 
+                               x-model="site.domain"
                                required
                                placeholder="example.com"
                                style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
@@ -69,12 +69,12 @@ title: Site Settings
                     </div>
 
                     <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                        <button type="button" 
+                        <button type="button"
                                 @click="resetForm()"
                                 style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px;">
                             Cancel
                         </button>
-                        <button type="submit" 
+                        <button type="submit"
                                 style="background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600;"
                                 :disabled="updateLoading">
                             <span x-show="!updateLoading">💾 Save Changes</span>
@@ -83,12 +83,12 @@ title: Site Settings
                     </div>
                 </form>
 
-                <div x-show="updateSuccess" x-cloak 
+                <div x-show="updateSuccess" x-cloak
                      style="margin-top: 15px; padding: 10px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 5px; color: #155724;">
                     <span class="emoji-icon">✅</span> Settings updated successfully!
                 </div>
 
-                <div x-show="updateError" x-cloak 
+                <div x-show="updateError" x-cloak
                      style="margin-top: 15px; padding: 10px; background: #fee; border: 1px solid #fcc; border-radius: 5px; color: #c00;">
                     <span class="emoji-icon">⚠️</span> <span x-text="updateError"></span>
                 </div>
@@ -100,14 +100,14 @@ title: Site Settings
                     <span class="emoji-icon">📊</span>
                     Tracking Code
                 </div>
-                
+
                 <p style="margin-bottom: 15px; color: #7f8c8d; font-size: 14px;">
                     Add this code to your website, just before the closing &lt;/body&gt; tag:
                 </p>
-                
+
                 <div style="position: relative;">
                     <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #dee2e6; font-size: 12px;"><code x-text="trackingCode"></code></pre>
-                    <button @click="copyTrackingCode()" 
+                    <button @click="copyTrackingCode()"
                             style="position: absolute; top: 10px; right: 10px; background: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
                         <span x-text="copyButtonText"></span>
                     </button>
@@ -118,7 +118,7 @@ title: Site Settings
                         💡 Pro Tip
                     </div>
                     <div style="font-size: 13px; color: #495057;">
-                        For single-page applications, our tracking script automatically detects route changes. 
+                        For single-page applications, our tracking script automatically detects route changes.
                         You can also manually track events using <code style="background: #fff; padding: 2px 4px; border-radius: 3px;">window.slimlytics.trackEvent('event_name', data)</code>
                     </div>
                 </div>
@@ -133,7 +133,7 @@ title: Site Settings
                     <span class="emoji-icon">📈</span>
                     Site Statistics
                 </div>
-                
+
                 <div class="stats-grid" style="grid-template-columns: repeat(2, 1fr);">
                     <div class="stat-item">
                         <div class="stat-value" x-text="stats.totalPageViews || '0'">0</div>
@@ -154,7 +154,7 @@ title: Site Settings
                 </div>
 
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e9ecef;">
-                    <a :href="`/?site=${site.id}`" 
+                    <a :href="`/?site=${site.id}`"
                        style="display: block; text-align: center; background: #3498db; color: white; text-decoration: none; padding: 10px; border-radius: 5px; font-weight: 600;">
                         📊 View Full Analytics
                     </a>
@@ -167,18 +167,18 @@ title: Site Settings
                     <span class="emoji-icon">🗂️</span>
                     Data Management
                 </div>
-                
+
                 <div style="margin-bottom: 20px;">
                     <h4 style="margin-bottom: 10px; color: #2c3e50;">Export Data</h4>
                     <p style="margin-bottom: 10px; color: #7f8c8d; font-size: 14px;">
                         Download your analytics data in various formats:
                     </p>
                     <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
-                        <button @click="exportData('csv')" 
+                        <button @click="exportData('csv')"
                                 style="background: #28a745; color: white; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-size: 13px;">
                             📄 Export as CSV
                         </button>
-                        <button @click="exportData('json')" 
+                        <button @click="exportData('json')"
                                 style="background: #17a2b8; color: white; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-size: 13px;">
                             📋 Export as JSON
                         </button>
@@ -190,7 +190,7 @@ title: Site Settings
                     <p style="margin-bottom: 10px; color: #7f8c8d; font-size: 14px;">
                         Remove analytics data for this site:
                     </p>
-                    <button @click="showClearDataModal = true" 
+                    <button @click="showClearDataModal = true"
                             style="background: #ffc107; color: #000; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 13px;">
                         🧹 Clear Analytics Data
                     </button>
@@ -203,12 +203,12 @@ title: Site Settings
                     <span class="emoji-icon">⚠️</span>
                     Danger Zone
                 </div>
-                
+
                 <p style="margin-bottom: 15px; color: #7f8c8d; font-size: 14px;">
                     Once you delete a site, there is no going back. All analytics data will be permanently removed.
                 </p>
-                
-                <button @click="showDeleteModal = true" 
+
+                <button @click="showDeleteModal = true"
                         style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600;">
                     🗑️ Delete This Site
                 </button>
@@ -217,33 +217,33 @@ title: Site Settings
     </div>
 
     <!-- Delete Confirmation Modal -->
-    <div x-show="showDeleteModal" x-cloak 
+    <div x-show="showDeleteModal" x-cloak
          style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div class="card" style="max-width: 500px; margin: 20px;">
             <div class="card-header" style="background: #fff5f5; color: #dc3545;">
                 <span class="emoji-icon">⚠️</span>
                 Confirm Site Deletion
             </div>
-            
+
             <p style="margin-bottom: 15px;">
                 Are you sure you want to delete <strong x-text="site.name"></strong>? This action cannot be undone.
             </p>
-            
+
             <p style="margin-bottom: 20px; color: #7f8c8d; font-size: 14px;">
                 To confirm, please type the site name: <strong x-text="site.name"></strong>
             </p>
-            
-            <input type="text" 
-                   x-model="deleteConfirmation" 
+
+            <input type="text"
+                   x-model="deleteConfirmation"
                    placeholder="Type site name to confirm"
                    style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; margin-bottom: 20px;">
-            
+
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button @click="showDeleteModal = false; deleteConfirmation = ''" 
+                <button @click="showDeleteModal = false; deleteConfirmation = ''"
                         style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
                     Cancel
                 </button>
-                <button @click="deleteSite()" 
+                <button @click="deleteSite()"
                         :disabled="deleteConfirmation !== site.name || deleteLoading"
                         style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: 600;"
                         :style="deleteConfirmation !== site.name ? 'opacity: 0.5; cursor: not-allowed;' : ''">
@@ -255,21 +255,21 @@ title: Site Settings
     </div>
 
     <!-- Clear Data Confirmation Modal -->
-    <div x-show="showClearDataModal" x-cloak 
+    <div x-show="showClearDataModal" x-cloak
          style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
         <div class="card" style="max-width: 500px; margin: 20px;">
             <div class="card-header" style="background: #fff3cd; color: #856404;">
                 <span class="emoji-icon">🧹</span>
                 Clear Analytics Data
             </div>
-            
+
             <p style="margin-bottom: 15px;">
                 This will remove all analytics data for <strong x-text="site.name"></strong>. The site configuration will remain.
             </p>
-            
+
             <div style="margin-bottom: 20px;">
                 <label style="display: block; margin-bottom: 8px; font-weight: 600;">Clear data from:</label>
-                <select x-model="clearDataRange" 
+                <select x-model="clearDataRange"
                         style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
                     <option value="all">All time</option>
                     <option value="30days">Last 30 days</option>
@@ -277,13 +277,13 @@ title: Site Settings
                     <option value="today">Today only</option>
                 </select>
             </div>
-            
+
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button @click="showClearDataModal = false" 
+                <button @click="showClearDataModal = false"
                         style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
                     Cancel
                 </button>
-                <button @click="clearData()" 
+                <button @click="clearData()"
                         style="background: #ffc107; color: #000; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: 600;">
                     Clear Data
                 </button>
@@ -292,5 +292,4 @@ title: Site Settings
     </div>
 </div>
 
-<\!-- Load external JavaScript for this page -->
 <script src="/js/site-settings.js"></script>
