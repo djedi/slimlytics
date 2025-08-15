@@ -1,0 +1,22 @@
+{
+  "name": "slimlytics",
+  "version": "1.0.0",
+  "description": "A lightweight, privacy-friendly analytics app",
+  "main": "src/api/server.js",
+  "scripts": {
+    "dev": "concurrently \"bun run dev:api\" \"bun run dev:dashboard\"",
+    "dev:api": "bun --watch src/api/server.js",
+    "dev:dashboard": "eleventy --serve --watch",
+    "build": "eleventy",
+    "db:init": "bun src/db/init.js"
+  },
+  "dependencies": {
+    "hono": "^3.11.0",
+    "@11ty/eleventy": "^2.0.1",
+    "htmx.org": "^1.9.10",
+    "alpinejs": "^3.13.3"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
