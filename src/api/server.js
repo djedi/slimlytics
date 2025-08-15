@@ -2,11 +2,31 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { Database } from 'bun:sqlite';
 import { trackEvent, getStats } from '../db/queries.js';
+import { sitesRoutes } from './sites.ts';
 
 const app = new Hono();
 const db = new Database('./data/analytics.db');
 
 app.use('*', cors());
+
+// Sites API routes
+app.get('/api/sites', async (c) => {
+  return sitesRoutes.getAllSites(c.req.raw);
+});
+
+app.post('/api/sites', async (c) => {
+  return sitesRoutes.createSite(c.req.raw);
+});
+
+app.put('/api/sites/:id', async (c) => {
+  const { id } = c.req.param();
+  return sitesRoutes.updateSite(c.req.raw, id);
+});
+
+app.delete('/api/sites/:id', async (c) => {
+  const { id } = c.req.param();
+  return sitesRoutes.deleteSite(c.req.raw, id);
+});
 
 app.post('/track', async (c) => {
   const body = await c.req.json();

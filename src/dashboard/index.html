@@ -17,13 +17,21 @@ title: Analytics Dashboard
                     <span style="margin-left: auto;">▼</span>
                 </button>
                 <div class="dropdown-menu" x-show="siteDropdownOpen" @click.outside="siteDropdownOpen = false" x-cloak>
-                    <template x-for="site in sites" :key="site">
+                    <template x-for="site in sites" :key="site.id">
                         <div class="dropdown-item"
-                             :class="{'active': selectedSite === site}"
+                             :class="{'active': selectedSite === site.name}"
                              @click="selectSite(site)">
-                            <span x-text="site"></span>
+                            <span x-text="site.name"></span>
                         </div>
                     </template>
+                    <div style="border-top: 1px solid #e9ecef; margin-top: 5px; padding-top: 5px;">
+                        <div class="dropdown-item" @click="goToSiteSettings()">
+                            <span>⚙️ Site Settings</span>
+                        </div>
+                        <div class="dropdown-item" @click="window.location.href='/add-site'">
+                            <span>➕ Add New Site</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -449,8 +457,9 @@ title: Analytics Dashboard
 function dashboard() {
     return {
         // Site management
-        sites: ['example.com', 'blog.example.com', 'shop.example.com', 'app.example.com'],
-        selectedSite: 'example.com',
+        sites: [],
+        selectedSite: null,
+        selectedSiteId: null,
         siteDropdownOpen: false,
 
         // Date range management
@@ -468,14 +477,61 @@ function dashboard() {
             'lastmonth': 'Last Month'
         },
 
-        init() {
+        async init() {
+            // Load sites first
+            await this.loadSites();
+            
+            // Check if we have sites, if not redirect to add-site page
+            if (this.sites.length === 0) {
+                window.location.href = '/add-site';
+                return;
+            }
+            
+            // Initialize with the first site
+            if (!this.selectedSite && this.sites.length > 0) {
+                this.selectedSite = this.sites[0].name;
+                this.selectedSiteId = this.sites[0].id;
+            }
+            
             this.initChart();
+        },
+        
+        async loadSites() {
+            try {
+                const response = await fetch('/api/sites');
+                if (response.ok) {
+                    const sitesData = await response.json();
+                    this.sites = sitesData || [];
+                } else {
+                    // If API doesn't exist yet, use mock data for now
+                    this.sites = [
+                        {id: '1', name: 'example.com', url: 'https://example.com'},
+                        {id: '2', name: 'blog.example.com', url: 'https://blog.example.com'},
+                        {id: '3', name: 'shop.example.com', url: 'https://shop.example.com'}
+                    ];
+                }
+            } catch (err) {
+                console.log('Sites API not available, using mock data');
+                // Use mock data if API isn't ready
+                this.sites = [
+                    {id: '1', name: 'example.com', url: 'https://example.com'},
+                    {id: '2', name: 'blog.example.com', url: 'https://blog.example.com'},
+                    {id: '3', name: 'shop.example.com', url: 'https://shop.example.com'}
+                ];
+            }
         },
 
         selectSite(site) {
-            this.selectedSite = site;
+            this.selectedSite = site.name;
+            this.selectedSiteId = site.id;
             this.siteDropdownOpen = false;
             // In real app, would fetch new data here
+        },
+        
+        goToSiteSettings() {
+            if (this.selectedSiteId) {
+                window.location.href = `/site-settings?id=${this.selectedSiteId}`;
+            }
         },
 
         selectDateRange(range) {

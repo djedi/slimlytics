@@ -1,0 +1,508 @@
+---
+layout: base.njk
+title: Site Settings
+---
+
+<div class="container" x-data="siteSettings()" x-init="init()">
+    <!-- Header -->
+    <div class="header">
+        <div style="display: flex; align-items: center; gap: 20px;">
+            <img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;">
+            <h1 style="font-size: 24px; color: #2c3e50; margin: 0;">Site Settings</h1>
+        </div>
+        <a href="/" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 16px; border-radius: 5px; font-size: 14px;">
+            ← Back to Dashboard
+        </a>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading" class="card" style="text-align: center; padding: 40px;">
+        <span style="font-size: 24px;">⏳</span>
+        <p style="margin-top: 10px; color: #7f8c8d;">Loading site settings...</p>
+    </div>
+
+    <!-- Settings Content -->
+    <div x-show="!loading && site" x-cloak style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        
+        <!-- Left Column -->
+        <div>
+            <!-- Site Information -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="emoji-icon">⚙️</span>
+                    Site Information
+                </div>
+                
+                <form @submit.prevent="updateSite()">
+                    <div style="margin-bottom: 20px;">
+                        <label for="siteName" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
+                            Site Name
+                        </label>
+                        <input type="text" 
+                               id="siteName"
+                               x-model="site.name" 
+                               required
+                               style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 20px;">
+                        <label for="siteUrl" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
+                            Site URL
+                        </label>
+                        <input type="url" 
+                               id="siteUrl"
+                               x-model="site.url" 
+                               required
+                               style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+                    </div>
+
+                    <div style="margin-bottom: 15px; padding: 15px; background: #f8f9fa; border-radius: 5px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                            <span style="color: #7f8c8d; font-size: 13px;">Site ID:</span>
+                            <span style="font-family: monospace; font-size: 13px;" x-text="site.id"></span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #7f8c8d; font-size: 13px;">Created:</span>
+                            <span style="font-size: 13px;" x-text="formatDate(site.created_at)"></span>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button type="button" 
+                                @click="resetForm()"
+                                style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px;">
+                            Cancel
+                        </button>
+                        <button type="submit" 
+                                style="background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600;"
+                                :disabled="updateLoading">
+                            <span x-show="!updateLoading">💾 Save Changes</span>
+                            <span x-show="updateLoading">⏳ Saving...</span>
+                        </button>
+                    </div>
+                </form>
+
+                <div x-show="updateSuccess" x-cloak 
+                     style="margin-top: 15px; padding: 10px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 5px; color: #155724;">
+                    <span class="emoji-icon">✅</span> Settings updated successfully!
+                </div>
+
+                <div x-show="updateError" x-cloak 
+                     style="margin-top: 15px; padding: 10px; background: #fee; border: 1px solid #fcc; border-radius: 5px; color: #c00;">
+                    <span class="emoji-icon">⚠️</span> <span x-text="updateError"></span>
+                </div>
+            </div>
+
+            <!-- Tracking Code -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="emoji-icon">📊</span>
+                    Tracking Code
+                </div>
+                
+                <p style="margin-bottom: 15px; color: #7f8c8d; font-size: 14px;">
+                    Add this code to your website, just before the closing &lt;/body&gt; tag:
+                </p>
+                
+                <div style="position: relative;">
+                    <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #dee2e6; font-size: 12px;"><code x-text="trackingCode"></code></pre>
+                    <button @click="copyTrackingCode()" 
+                            style="position: absolute; top: 10px; right: 10px; background: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
+                        <span x-text="copyButtonText"></span>
+                    </button>
+                </div>
+
+                <div style="margin-top: 15px; padding: 15px; background: #e7f3ff; border-radius: 5px; border-left: 4px solid #3498db;">
+                    <div style="font-weight: 600; margin-bottom: 5px; color: #2c3e50;">
+                        💡 Pro Tip
+                    </div>
+                    <div style="font-size: 13px; color: #495057;">
+                        For single-page applications, our tracking script automatically detects route changes. 
+                        You can also manually track events using <code style="background: #fff; padding: 2px 4px; border-radius: 3px;">window.slimlytics.trackEvent('event_name', data)</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column -->
+        <div>
+            <!-- Statistics Overview -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="emoji-icon">📈</span>
+                    Site Statistics
+                </div>
+                
+                <div class="stats-grid" style="grid-template-columns: repeat(2, 1fr);">
+                    <div class="stat-item">
+                        <div class="stat-value" x-text="stats.totalPageViews || '0'">0</div>
+                        <div class="stat-label">Total Page Views</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" x-text="stats.uniqueVisitors || '0'">0</div>
+                        <div class="stat-label">Unique Visitors</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" x-text="stats.avgTimeOnSite || '0s'">0s</div>
+                        <div class="stat-label">Avg. Time on Site</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" x-text="stats.bounceRate || '0%'">0%</div>
+                        <div class="stat-label">Bounce Rate</div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e9ecef;">
+                    <a :href="`/?site=${site.id}`" 
+                       style="display: block; text-align: center; background: #3498db; color: white; text-decoration: none; padding: 10px; border-radius: 5px; font-weight: 600;">
+                        📊 View Full Analytics
+                    </a>
+                </div>
+            </div>
+
+            <!-- Data Management -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="emoji-icon">🗂️</span>
+                    Data Management
+                </div>
+                
+                <div style="margin-bottom: 20px;">
+                    <h4 style="margin-bottom: 10px; color: #2c3e50;">Export Data</h4>
+                    <p style="margin-bottom: 10px; color: #7f8c8d; font-size: 14px;">
+                        Download your analytics data in various formats:
+                    </p>
+                    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                        <button @click="exportData('csv')" 
+                                style="background: #28a745; color: white; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-size: 13px;">
+                            📄 Export as CSV
+                        </button>
+                        <button @click="exportData('json')" 
+                                style="background: #17a2b8; color: white; border: none; padding: 8px; border-radius: 5px; cursor: pointer; font-size: 13px;">
+                            📋 Export as JSON
+                        </button>
+                    </div>
+                </div>
+
+                <div style="padding-top: 20px; border-top: 1px solid #e9ecef;">
+                    <h4 style="margin-bottom: 10px; color: #2c3e50;">Clear Data</h4>
+                    <p style="margin-bottom: 10px; color: #7f8c8d; font-size: 14px;">
+                        Remove analytics data for this site:
+                    </p>
+                    <button @click="showClearDataModal = true" 
+                            style="background: #ffc107; color: #000; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; font-size: 13px;">
+                        🧹 Clear Analytics Data
+                    </button>
+                </div>
+            </div>
+
+            <!-- Danger Zone -->
+            <div class="card" style="border: 1px solid #dc3545;">
+                <div class="card-header" style="background: #fff5f5; color: #dc3545;">
+                    <span class="emoji-icon">⚠️</span>
+                    Danger Zone
+                </div>
+                
+                <p style="margin-bottom: 15px; color: #7f8c8d; font-size: 14px;">
+                    Once you delete a site, there is no going back. All analytics data will be permanently removed.
+                </p>
+                
+                <button @click="showDeleteModal = true" 
+                        style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600;">
+                    🗑️ Delete This Site
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div x-show="showDeleteModal" x-cloak 
+         style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+        <div class="card" style="max-width: 500px; margin: 20px;">
+            <div class="card-header" style="background: #fff5f5; color: #dc3545;">
+                <span class="emoji-icon">⚠️</span>
+                Confirm Site Deletion
+            </div>
+            
+            <p style="margin-bottom: 15px;">
+                Are you sure you want to delete <strong x-text="site.name"></strong>? This action cannot be undone.
+            </p>
+            
+            <p style="margin-bottom: 20px; color: #7f8c8d; font-size: 14px;">
+                To confirm, please type the site name: <strong x-text="site.name"></strong>
+            </p>
+            
+            <input type="text" 
+                   x-model="deleteConfirmation" 
+                   placeholder="Type site name to confirm"
+                   style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; margin-bottom: 20px;">
+            
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button @click="showDeleteModal = false; deleteConfirmation = ''" 
+                        style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                    Cancel
+                </button>
+                <button @click="deleteSite()" 
+                        :disabled="deleteConfirmation !== site.name || deleteLoading"
+                        style="background: #dc3545; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: 600;"
+                        :style="deleteConfirmation !== site.name ? 'opacity: 0.5; cursor: not-allowed;' : ''">
+                    <span x-show="!deleteLoading">Delete Site</span>
+                    <span x-show="deleteLoading">Deleting...</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Clear Data Confirmation Modal -->
+    <div x-show="showClearDataModal" x-cloak 
+         style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;">
+        <div class="card" style="max-width: 500px; margin: 20px;">
+            <div class="card-header" style="background: #fff3cd; color: #856404;">
+                <span class="emoji-icon">🧹</span>
+                Clear Analytics Data
+            </div>
+            
+            <p style="margin-bottom: 15px;">
+                This will remove all analytics data for <strong x-text="site.name"></strong>. The site configuration will remain.
+            </p>
+            
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Clear data from:</label>
+                <select x-model="clearDataRange" 
+                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+                    <option value="all">All time</option>
+                    <option value="30days">Last 30 days</option>
+                    <option value="7days">Last 7 days</option>
+                    <option value="today">Today only</option>
+                </select>
+            </div>
+            
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button @click="showClearDataModal = false" 
+                        style="background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                    Cancel
+                </button>
+                <button @click="clearData()" 
+                        style="background: #ffc107; color: #000; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: 600;">
+                    Clear Data
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function siteSettings() {
+    return {
+        site: null,
+        originalSite: null,
+        stats: {},
+        loading: true,
+        updateLoading: false,
+        deleteLoading: false,
+        updateSuccess: false,
+        updateError: null,
+        showDeleteModal: false,
+        showClearDataModal: false,
+        deleteConfirmation: '',
+        clearDataRange: 'all',
+        trackingCode: '',
+        copyButtonText: '📋 Copy',
+        
+        async init() {
+            // Get site ID from URL params
+            const urlParams = new URLSearchParams(window.location.search);
+            const siteId = urlParams.get('id');
+            
+            if (!siteId) {
+                window.location.href = '/';
+                return;
+            }
+            
+            await this.loadSite(siteId);
+            await this.loadStats(siteId);
+            this.generateTrackingCode();
+        },
+        
+        async loadSite(siteId) {
+            try {
+                const response = await fetch('/api/sites');
+                if (response.ok) {
+                    const sites = await response.json();
+                    this.site = sites.find(s => s.id === siteId);
+                    this.originalSite = {...this.site};
+                    
+                    if (!this.site) {
+                        window.location.href = '/';
+                    }
+                } else {
+                    // Mock data for development
+                    this.site = {
+                        id: siteId,
+                        name: 'example.com',
+                        url: 'https://example.com',
+                        created_at: '2024-01-15T10:00:00Z'
+                    };
+                    this.originalSite = {...this.site};
+                }
+            } catch (err) {
+                // Mock data for development
+                this.site = {
+                    id: siteId,
+                    name: 'example.com',
+                    url: 'https://example.com',
+                    created_at: '2024-01-15T10:00:00Z'
+                };
+                this.originalSite = {...this.site};
+            } finally {
+                this.loading = false;
+            }
+        },
+        
+        async loadStats(siteId) {
+            // Load basic statistics for the site
+            // In production, this would fetch from the API
+            this.stats = {
+                totalPageViews: '12,345',
+                uniqueVisitors: '3,456',
+                avgTimeOnSite: '2m 34s',
+                bounceRate: '32%'
+            };
+        },
+        
+        generateTrackingCode() {
+            if (!this.site) return;
+            
+            const baseUrl = window.location.origin;
+            this.trackingCode = `<!-- Slimlytics Tracking Code -->
+<script>
+(function() {
+    var script = document.createElement('script');
+    script.src = '${baseUrl}/t.js';
+    script.async = true;
+    script.dataset.site = '${this.site.id}';
+    document.head.appendChild(script);
+})();
+</script>
+<!-- End Slimlytics Tracking Code -->`;
+        },
+        
+        async updateSite() {
+            this.updateLoading = true;
+            this.updateSuccess = false;
+            this.updateError = null;
+            
+            try {
+                const response = await fetch(`/api/sites/${this.site.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: this.site.name,
+                        url: this.site.url
+                    })
+                });
+                
+                if (response.ok) {
+                    this.originalSite = {...this.site};
+                    this.updateSuccess = true;
+                    setTimeout(() => {
+                        this.updateSuccess = false;
+                    }, 3000);
+                } else {
+                    throw new Error('Failed to update site');
+                }
+            } catch (err) {
+                this.updateError = err.message || 'Failed to update site settings';
+            } finally {
+                this.updateLoading = false;
+            }
+        },
+        
+        resetForm() {
+            this.site = {...this.originalSite};
+            this.updateSuccess = false;
+            this.updateError = null;
+        },
+        
+        async deleteSite() {
+            if (this.deleteConfirmation !== this.site.name) return;
+            
+            this.deleteLoading = true;
+            
+            try {
+                const response = await fetch(`/api/sites/${this.site.id}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    // Redirect to dashboard or add-site if no sites left
+                    window.location.href = '/';
+                } else {
+                    throw new Error('Failed to delete site');
+                }
+            } catch (err) {
+                alert('Failed to delete site: ' + err.message);
+            } finally {
+                this.deleteLoading = false;
+            }
+        },
+        
+        async clearData() {
+            // In production, this would call an API to clear data
+            alert(`Clearing ${this.clearDataRange} data for ${this.site.name}`);
+            this.showClearDataModal = false;
+        },
+        
+        async exportData(format) {
+            // In production, this would trigger a download
+            alert(`Exporting data as ${format.toUpperCase()}`);
+        },
+        
+        async copyTrackingCode() {
+            try {
+                await navigator.clipboard.writeText(this.trackingCode);
+                this.copyButtonText = '✅ Copied!';
+                setTimeout(() => {
+                    this.copyButtonText = '📋 Copy';
+                }, 2000);
+            } catch (err) {
+                this.copyButtonText = '❌ Failed';
+                setTimeout(() => {
+                    this.copyButtonText = '📋 Copy';
+                }, 2000);
+            }
+        },
+        
+        formatDate(dateString) {
+            if (!dateString) return 'N/A';
+            const date = new Date(dateString);
+            return date.toLocaleDateString('en-US', { 
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric' 
+            });
+        }
+    }
+}
+</script>
+
+<style>
+    [x-cloak] { display: none !important; }
+    
+    input:focus, select:focus {
+        outline: none;
+        border-color: #3498db !important;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+    }
+    
+    button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+    
+    code {
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    }
+</style>

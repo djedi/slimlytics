@@ -2,6 +2,7 @@ module.exports = (eleventyConfig) => {
 	eleventyConfig.addPassthroughCopy({ "src/public/images": "images" });
 	eleventyConfig.addPassthroughCopy({ "src/public/css": "css" });
 	eleventyConfig.addPassthroughCopy({ "src/public/js": "js" });
+	eleventyConfig.addPassthroughCopy({ "src/public/t.js": "t.js" });
 	eleventyConfig.addPassthroughCopy({
 		"node_modules/htmx.org/dist/htmx.min.js": "js/htmx.min.js",
 	});
