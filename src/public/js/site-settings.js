@@ -34,7 +34,7 @@ function siteSettings() {
         
         async loadSite(siteId) {
             try {
-                const response = await fetch('/api/sites');
+                const response = await fetch('http://localhost:3000/api/sites');
                 if (response.ok) {
                     const sites = await response.json();
                     this.site = sites.find(s => s.id === siteId);
@@ -48,7 +48,7 @@ function siteSettings() {
                     this.site = {
                         id: siteId,
                         name: 'example.com',
-                        url: 'https://example.com',
+                        domain: 'example.com',
                         created_at: '2024-01-15T10:00:00Z'
                     };
                     this.originalSite = {...this.site};
@@ -58,7 +58,7 @@ function siteSettings() {
                 this.site = {
                     id: siteId,
                     name: 'example.com',
-                    url: 'https://example.com',
+                    domain: 'example.com',
                     created_at: '2024-01-15T10:00:00Z'
                 };
                 this.originalSite = {...this.site};
@@ -105,14 +105,14 @@ ${scriptClose}
             this.updateError = null;
             
             try {
-                const response = await fetch(`/api/sites/${this.site.id}`, {
+                const response = await fetch(`http://localhost:3000/api/sites/${this.site.id}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
                         name: this.site.name,
-                        url: this.site.url
+                        url: this.site.domain  // API expects 'url' but we send domain
                     })
                 });
                 
@@ -144,7 +144,7 @@ ${scriptClose}
             this.deleteLoading = true;
             
             try {
-                const response = await fetch(`/api/sites/${this.site.id}`, {
+                const response = await fetch(`http://localhost:3000/api/sites/${this.site.id}`, {
                     method: 'DELETE'
                 });
                 

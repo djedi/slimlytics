@@ -7,7 +7,7 @@ title: Add Site
     <!-- Header -->
     <div class="header">
         <div style="display: flex; align-items: center; gap: 20px;">
-            <img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;">
+            <a href="/"><img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;"></a>
             <h1 style="font-size: 24px; color: #2c3e50; margin: 0;" x-text="hasExistingSites ? 'Add New Site' : 'Add Your First Site'">Add Your First Site</h1>
         </div>
         <a x-show="hasExistingSites" href="/" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 16px; border-radius: 5px; font-size: 14px;">
@@ -21,15 +21,15 @@ title: Add Site
             <span class="emoji-icon">🌐</span>
             Site Configuration
         </div>
-        
+
         <form @submit.prevent="addSite()">
             <div style="margin-bottom: 20px;">
                 <label for="siteName" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
                     Site Name
                 </label>
-                <input type="text" 
+                <input type="text"
                        id="siteName"
-                       x-model="siteName" 
+                       x-model="siteName"
                        placeholder="My Awesome Website"
                        required
                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
@@ -40,24 +40,24 @@ title: Add Site
 
             <div style="margin-bottom: 20px;">
                 <label for="siteUrl" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
-                    Site URL
+                    Site Domain
                 </label>
-                <input type="url" 
+                <input type="text"
                        id="siteUrl"
-                       x-model="siteUrl" 
-                       placeholder="https://example.com"
+                       x-model="siteUrl"
+                       placeholder="example.com or https://example.com"
                        required
                        style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
                 <div style="margin-top: 5px; font-size: 12px; color: #7f8c8d;">
-                    The full URL of the website you want to track
+                    Enter your domain (we'll extract it from a full URL if provided)
                 </div>
             </div>
 
             <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button type="submit" 
+                <button type="submit"
                         style="background: #3498db; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600; transition: background 0.2s;"
                         :disabled="loading"
-                        @mouseover="this.style.background='#2980b9'" 
+                        @mouseover="this.style.background='#2980b9'"
                         @mouseout="this.style.background='#3498db'">
                     <span x-show="!loading">🚀 Add Site</span>
                     <span x-show="loading">⏳ Adding...</span>
@@ -65,7 +65,7 @@ title: Add Site
             </div>
         </form>
 
-        <div x-show="error" x-cloak 
+        <div x-show="error" x-cloak
              style="margin-top: 20px; padding: 10px; background: #fee; border: 1px solid #fcc; border-radius: 5px; color: #c00;">
             <span class="emoji-icon">⚠️</span> <span x-text="error"></span>
         </div>
@@ -77,7 +77,7 @@ title: Add Site
             <span class="emoji-icon">✅</span>
             Site Added Successfully!
         </div>
-        
+
         <div style="margin-bottom: 20px;">
             <h3 style="margin-bottom: 10px; color: #2c3e50;">📊 Tracking Code</h3>
             <p style="margin-bottom: 10px; color: #7f8c8d;">
@@ -85,7 +85,7 @@ title: Add Site
             </p>
             <div style="position: relative;">
                 <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #dee2e6;"><code x-text="trackingCode"></code></pre>
-                <button @click="copyTrackingCode()" 
+                <button @click="copyTrackingCode()"
                         style="position: absolute; top: 10px; right: 10px; background: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
                     <span x-text="copyButtonText"></span>
                 </button>

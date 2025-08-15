@@ -47,12 +47,13 @@ title: Site Settings
 
                     <div style="margin-bottom: 20px;">
                         <label for="siteUrl" style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">
-                            Site URL
+                            Site Domain
                         </label>
-                        <input type="url" 
+                        <input type="text" 
                                id="siteUrl"
-                               x-model="site.url" 
+                               x-model="site.domain" 
                                required
+                               placeholder="example.com"
                                style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
                     </div>
 

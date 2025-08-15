@@ -44,25 +44,25 @@ function dashboard() {
         
         async loadSites() {
             try {
-                const response = await fetch('/api/sites');
+                const response = await fetch('http://localhost:3000/api/sites');
                 if (response.ok) {
                     const sitesData = await response.json();
                     this.sites = sitesData || [];
                 } else {
                     // If API doesn't exist yet, use mock data for now
                     this.sites = [
-                        {id: '1', name: 'example.com', url: 'https://example.com'},
-                        {id: '2', name: 'blog.example.com', url: 'https://blog.example.com'},
-                        {id: '3', name: 'shop.example.com', url: 'https://shop.example.com'}
+                        {id: '1', name: 'example.com', domain: 'example.com'},
+                        {id: '2', name: 'blog.example.com', domain: 'blog.example.com'},
+                        {id: '3', name: 'shop.example.com', domain: 'shop.example.com'}
                     ];
                 }
             } catch (err) {
                 console.log('Sites API not available, using mock data');
                 // Use mock data if API isn't ready
                 this.sites = [
-                    {id: '1', name: 'example.com', url: 'https://example.com'},
-                    {id: '2', name: 'blog.example.com', url: 'https://blog.example.com'},
-                    {id: '3', name: 'shop.example.com', url: 'https://shop.example.com'}
+                    {id: '1', name: 'example.com', domain: 'example.com'},
+                    {id: '2', name: 'blog.example.com', domain: 'blog.example.com'},
+                    {id: '3', name: 'shop.example.com', domain: 'shop.example.com'}
                 ];
             }
         },

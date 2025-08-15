@@ -11,10 +11,11 @@
     "db:init": "bun src/db/init.js"
   },
   "dependencies": {
-    "hono": "^3.11.0",
     "@11ty/eleventy": "^2.0.1",
+    "alpinejs": "^3.13.3",
+    "hono": "^3.11.0",
     "htmx.org": "^1.9.10",
-    "alpinejs": "^3.13.3"
+    "nanoid": "^5.1.5"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

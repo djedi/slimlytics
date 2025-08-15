@@ -1,29 +1,37 @@
 import { Database } from 'bun:sqlite';
 import { nanoid } from 'nanoid';
 
-// Initialize database
+// Initialize database - reuse existing schema from init.js
 const db = new Database('data/analytics.db', { create: true });
-
-// Create sites table if it doesn't exist
-db.run(`
-    CREATE TABLE IF NOT EXISTS sites (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        url TEXT NOT NULL,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-`);
-
-// Create indexes
-db.run(`CREATE INDEX IF NOT EXISTS idx_sites_created_at ON sites(created_at)`);
 
 export interface Site {
     id: string;
     name: string;
-    url: string;
+    domain: string;
     created_at: string;
-    updated_at: string;
+}
+
+// Helper function to extract domain from URL
+function extractDomain(url: string): string {
+    // Remove protocol if present
+    let domain = url.replace(/^https?:\/\//, '');
+    // Remove www. if present
+    domain = domain.replace(/^www\./, '');
+    // Remove path, query params, and hash
+    domain = domain.split('/')[0];
+    domain = domain.split('?')[0];
+    domain = domain.split('#')[0];
+    // Remove port if present
+    domain = domain.split(':')[0];
+    
+    return domain.toLowerCase();
+}
+
+// Validate domain format
+function isValidDomain(domain: string): boolean {
+    // Basic domain validation regex
+    const domainRegex = /^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$|^localhost$|^([a-z0-9]+(-[a-z0-9]+)*)$/i;
+    return domainRegex.test(domain);
 }
 
 // Get all sites
@@ -38,28 +46,60 @@ export function getSiteById(id: string): Site | null {
     return stmt.get(id) as Site | null;
 }
 
+// Get site by domain
+export function getSiteByDomain(domain: string): Site | null {
+    const stmt = db.prepare('SELECT * FROM sites WHERE domain = ?');
+    return stmt.get(domain) as Site | null;
+}
+
 // Create a new site
-export function createSite(name: string, url: string): Site {
+export function createSite(name: string, domain: string): Site {
+    // Extract and validate domain
+    const cleanDomain = extractDomain(domain);
+    
+    if (!isValidDomain(cleanDomain)) {
+        throw new Error('Invalid domain format');
+    }
+    
+    // Check if domain already exists
+    const existing = getSiteByDomain(cleanDomain);
+    if (existing) {
+        throw new Error('A site with this domain already exists');
+    }
+    
     const id = nanoid(10); // Generate a short unique ID
     const stmt = db.prepare(`
-        INSERT INTO sites (id, name, url) 
+        INSERT INTO sites (id, name, domain) 
         VALUES (?, ?, ?)
     `);
     
-    stmt.run(id, name, url);
+    stmt.run(id, name, cleanDomain);
     
     return getSiteById(id)!;
 }
 
 // Update a site
-export function updateSite(id: string, name: string, url: string): Site | null {
+export function updateSite(id: string, name: string, domain: string): Site | null {
+    // Extract and validate domain
+    const cleanDomain = extractDomain(domain);
+    
+    if (!isValidDomain(cleanDomain)) {
+        throw new Error('Invalid domain format');
+    }
+    
+    // Check if domain already exists for a different site
+    const existing = getSiteByDomain(cleanDomain);
+    if (existing && existing.id !== id) {
+        throw new Error('A site with this domain already exists');
+    }
+    
     const stmt = db.prepare(`
         UPDATE sites 
-        SET name = ?, url = ?, updated_at = CURRENT_TIMESTAMP 
+        SET name = ?, domain = ?
         WHERE id = ?
     `);
     
-    const result = stmt.run(name, url, id);
+    const result = stmt.run(name, cleanDomain, id);
     
     if (result.changes > 0) {
         return getSiteById(id);
@@ -70,6 +110,10 @@ export function updateSite(id: string, name: string, url: string): Site | null {
 
 // Delete a site
 export function deleteSite(id: string): boolean {
+    // Also delete related events and stats
+    db.run('DELETE FROM events WHERE site_id = ?', [id]);
+    db.run('DELETE FROM daily_stats WHERE site_id = ?', [id]);
+    
     const stmt = db.prepare('DELETE FROM sites WHERE id = ?');
     const result = stmt.run(id);
     return result.changes > 0;
@@ -82,7 +126,10 @@ export const sitesRoutes = {
         try {
             const sites = getAllSites();
             return new Response(JSON.stringify(sites), {
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
             });
         } catch (error) {
             console.error('Error fetching sites:', error);
@@ -105,11 +152,21 @@ export const sitesRoutes = {
                 });
             }
             
-            const site = createSite(name, url);
-            return new Response(JSON.stringify(site), {
-                status: 201,
-                headers: { 'Content-Type': 'application/json' }
-            });
+            try {
+                const site = createSite(name, url);
+                return new Response(JSON.stringify(site), {
+                    status: 201,
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    }
+                });
+            } catch (err: any) {
+                return new Response(JSON.stringify({ error: err.message }), {
+                    status: 400,
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            }
         } catch (error) {
             console.error('Error creating site:', error);
             return new Response(JSON.stringify({ error: 'Failed to create site' }), {
@@ -131,18 +188,28 @@ export const sitesRoutes = {
                 });
             }
             
-            const site = updateSite(id, name, url);
-            
-            if (!site) {
-                return new Response(JSON.stringify({ error: 'Site not found' }), {
-                    status: 404,
+            try {
+                const site = updateSite(id, name, url);
+                
+                if (!site) {
+                    return new Response(JSON.stringify({ error: 'Site not found' }), {
+                        status: 404,
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                }
+                
+                return new Response(JSON.stringify(site), {
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*'
+                    }
+                });
+            } catch (err: any) {
+                return new Response(JSON.stringify({ error: err.message }), {
+                    status: 400,
                     headers: { 'Content-Type': 'application/json' }
                 });
             }
-            
-            return new Response(JSON.stringify(site), {
-                headers: { 'Content-Type': 'application/json' }
-            });
         } catch (error) {
             console.error('Error updating site:', error);
             return new Response(JSON.stringify({ error: 'Failed to update site' }), {
@@ -165,7 +232,10 @@ export const sitesRoutes = {
             }
             
             return new Response(JSON.stringify({ success: true }), {
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
             });
         } catch (error) {
             console.error('Error deleting site:', error);
