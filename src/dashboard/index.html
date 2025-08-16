@@ -276,6 +276,50 @@ title: Analytics Dashboard
           </li>
         </ul>
       </div>
+
+      <!-- Top Countries -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🌍</span>
+          Top Countries
+        </div>
+        <ul class="data-list">
+          <template x-for="country in topCountries.slice(0, 8)" :key="country.countryCode">
+            <li class="list-item">
+              <span>
+                <span x-text="getFlagEmoji(country.countryCode)"></span>
+                <span x-text="country.country || 'Unknown'"></span>
+              </span>
+              <span class="badge primary" x-text="country.count"></span>
+            </li>
+          </template>
+          <li class="list-item" x-show="topCountries.length === 0">
+            <span style="color: #999;">No location data yet</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Top Cities -->
+      <div class="card">
+        <div class="card-header">
+          <span class="emoji-icon">🏙️</span>
+          Top Cities
+        </div>
+        <ul class="data-list">
+          <template x-for="city in topCities.slice(0, 8)" :key="city.city + city.country">
+            <li class="list-item">
+              <span>
+                <span x-text="city.city || 'Unknown'"></span>
+                <span style="color: #666; font-size: 0.9em;" x-text="city.country ? ', ' + city.country : ''"></span>
+              </span>
+              <span class="badge primary" x-text="city.count"></span>
+            </li>
+          </template>
+          <li class="list-item" x-show="topCities.length === 0">
+            <span style="color: #999;">No city data yet</span>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <!-- Column 2 -->

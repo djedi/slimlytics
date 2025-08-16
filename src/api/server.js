@@ -5,9 +5,13 @@ import { Database } from 'bun:sqlite';
 import { trackEvent, getStats } from '../db/queries.js';
 import { sitesRoutes } from './sites.ts';
 import { statsRoutes } from './stats.ts';
+import geoip from '../../api/services/geoip.js';
 
 const app = new Hono();
 const db = new Database('./data/analytics.db');
+
+// Initialize GeoIP service
+await geoip.initialize();
 
 // WebSocket clients tracked by site ID
 const wsClients = new Map();
@@ -46,6 +50,9 @@ app.post('/track', async (c) => {
 
   const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
   
+  // Perform GeoIP lookup
+  const geoData = await geoip.lookup(ip);
+  
   trackEvent(db, {
     site_id,
     page_url,
@@ -54,7 +61,17 @@ app.post('/track', async (c) => {
     ip_hash: hashIP(ip),
     screen_resolution,
     language,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    // Add geo data
+    country: geoData.country,
+    country_code: geoData.countryCode,
+    region: geoData.region,
+    city: geoData.city,
+    latitude: geoData.latitude,
+    longitude: geoData.longitude,
+    timezone: geoData.timezone,
+    asn: geoData.asn,
+    asn_org: geoData.asnOrg
   });
 
   // Broadcast update to WebSocket clients watching this site

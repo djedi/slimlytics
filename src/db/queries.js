@@ -1,7 +1,12 @@
 export function trackEvent(db, eventData) {
   const stmt = db.prepare(`
-    INSERT INTO events (site_id, page_url, referrer, user_agent, ip_hash, screen_resolution, language, timestamp)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO events (
+      site_id, page_url, referrer, user_agent, ip_hash, 
+      screen_resolution, language, timestamp,
+      country, country_code, region, city, 
+      latitude, longitude, timezone, asn, asn_org
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
@@ -12,7 +17,16 @@ export function trackEvent(db, eventData) {
     eventData.ip_hash,
     eventData.screen_resolution,
     eventData.language,
-    eventData.timestamp
+    eventData.timestamp,
+    eventData.country || null,
+    eventData.country_code || null,
+    eventData.region || null,
+    eventData.city || null,
+    eventData.latitude || null,
+    eventData.longitude || null,
+    eventData.timezone || null,
+    eventData.asn || null,
+    eventData.asn_org || null
   );
 }
 
@@ -70,11 +84,35 @@ export function getStats(db, siteId, startDate, endDate) {
     ORDER BY count DESC
   `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
 
+  const topCountries = db.prepare(`
+    SELECT country, country_code, COUNT(*) as count
+    FROM events
+    WHERE site_id = ?
+    AND country IS NOT NULL
+    AND timestamp BETWEEN ? AND ?
+    GROUP BY country, country_code
+    ORDER BY count DESC
+    LIMIT 10
+  `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
+
+  const topCities = db.prepare(`
+    SELECT city, country, COUNT(*) as count
+    FROM events
+    WHERE site_id = ?
+    AND city IS NOT NULL
+    AND timestamp BETWEEN ? AND ?
+    GROUP BY city, country
+    ORDER BY count DESC
+    LIMIT 10
+  `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
+
   return {
     pageViews: pageViews.count,
     uniqueVisitors: uniqueVisitors.count,
     topPages,
     topReferrers,
-    browserStats
+    browserStats,
+    topCountries,
+    topCities
   };
 }

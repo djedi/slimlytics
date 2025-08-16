@@ -32,6 +32,8 @@ function dashboard() {
 		},
 		topPages: [],
 		topReferrers: [],
+		topCountries: [],
+		topCities: [],
 		realtimeVisitors: 0,
 		trendLabels: [],
 		trendData: [],
@@ -149,6 +151,8 @@ function dashboard() {
 
 					this.topPages = data.topPages || [];
 					this.topReferrers = data.topReferrers || [];
+					this.topCountries = data.topCountries || [];
+					this.topCities = data.topCities || [];
 					this.realtimeVisitors = data.realtimeVisitors || 0;
 				} else {
 					// Use mock data as fallback
@@ -198,6 +202,22 @@ function dashboard() {
 				{ referrer: "direct", count: 189 },
 				{ referrer: "facebook.com", count: 123 },
 				{ referrer: "github.com", count: 78 },
+			];
+
+			this.topCountries = [
+				{ country: "United States", countryCode: "US", count: 523 },
+				{ country: "United Kingdom", countryCode: "GB", count: 234 },
+				{ country: "Canada", countryCode: "CA", count: 189 },
+				{ country: "Germany", countryCode: "DE", count: 156 },
+				{ country: "France", countryCode: "FR", count: 134 },
+			];
+
+			this.topCities = [
+				{ city: "New York", country: "United States", count: 234 },
+				{ city: "London", country: "United Kingdom", count: 189 },
+				{ city: "San Francisco", country: "United States", count: 145 },
+				{ city: "Toronto", country: "Canada", count: 112 },
+				{ city: "Berlin", country: "Germany", count: 98 },
 			];
 
 			this.realtimeVisitors = Math.floor(Math.random() * 20) + 1;
@@ -432,6 +452,14 @@ function dashboard() {
 				this.topReferrers = newStats.topReferrers;
 			}
 			
+			if (newStats.topCountries) {
+				this.topCountries = newStats.topCountries;
+			}
+			
+			if (newStats.topCities) {
+				this.topCities = newStats.topCities;
+			}
+			
 			if (newStats.realtimeVisitors !== undefined) {
 				this.realtimeVisitors = newStats.realtimeVisitors;
 			}
@@ -442,6 +470,18 @@ function dashboard() {
 				this.trendData = newStats.timeSeriesData.pageViews;
 				this.updateChart();
 			}
+		},
+		
+		getFlagEmoji(countryCode) {
+			// Convert country code to flag emoji
+			if (!countryCode || countryCode.length !== 2) return '';
+			
+			const codePoints = countryCode
+				.toUpperCase()
+				.split('')
+				.map(char => 127397 + char.charCodeAt(0));
+			
+			return String.fromCodePoint(...codePoints);
 		},
 
 		chartSvg: "",

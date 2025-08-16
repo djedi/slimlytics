@@ -9,6 +9,8 @@ export interface DashboardStats {
     bounceRate: number;
     topPages: Array<{ url: string; views: number }>;
     topReferrers: Array<{ referrer: string; count: number }>;
+    topCountries: Array<{ country: string; countryCode: string; count: number }>;
+    topCities: Array<{ city: string; country: string; count: number }>;
     realtimeVisitors: number;
     visitorsTrend: number; // percentage change
     pageViewsTrend: number; // percentage change
@@ -77,6 +79,32 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     `);
     const topReferrers = topReferrersStmt.all(siteId, start, end) as Array<{ referrer: string; count: number }>;
     
+    // Get top countries
+    const topCountriesStmt = db.prepare(`
+        SELECT country, country_code as countryCode, COUNT(*) as count
+        FROM events
+        WHERE site_id = ?
+        AND timestamp BETWEEN ? AND ?
+        AND country IS NOT NULL
+        GROUP BY country, country_code
+        ORDER BY count DESC
+        LIMIT 10
+    `);
+    const topCountries = topCountriesStmt.all(siteId, start, end) as Array<{ country: string; countryCode: string; count: number }>;
+    
+    // Get top cities
+    const topCitiesStmt = db.prepare(`
+        SELECT city, country, COUNT(*) as count
+        FROM events
+        WHERE site_id = ?
+        AND timestamp BETWEEN ? AND ?
+        AND city IS NOT NULL
+        GROUP BY city, country
+        ORDER BY count DESC
+        LIMIT 10
+    `);
+    const topCities = topCitiesStmt.all(siteId, start, end) as Array<{ city: string; country: string; count: number }>;
+    
     return {
         visitors: currentStats.visitors,
         pageViews: currentStats.pageViews,
@@ -84,6 +112,8 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
         bounceRate: currentStats.bounceRate,
         topPages,
         topReferrers,
+        topCountries,
+        topCities,
         realtimeVisitors: realtime?.count || 0,
         visitorsTrend,
         pageViewsTrend
