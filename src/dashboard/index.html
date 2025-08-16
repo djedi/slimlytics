@@ -101,28 +101,28 @@ title: Analytics Dashboard
         </div>
         <div class="stats-grid">
           <div class="stat-item">
-            <div class="stat-value">1,234</div>
+            <div class="stat-value" x-text="stats.visitors">0</div>
             <div class="stat-label">👥 Visitors</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">5,678</div>
-            <div class="stat-label">🎯 Actions</div>
+            <div class="stat-value" x-text="stats.pageViews">0</div>
+            <div class="stat-label">📄 Page Views</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">4.6</div>
-            <div class="stat-label">📈 Avg Actions</div>
+            <div class="stat-value" x-text="stats.avgSessionDuration">0s</div>
+            <div class="stat-label">⏳ Avg Session</div>
           </div>
           <div class="stat-item">
-            <div class="stat-value">2h 34m</div>
-            <div class="stat-label">⏱️ Total Time</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-value">1m 15s</div>
-            <div class="stat-label">⏳ Avg Time</div>
-          </div>
-          <div class="stat-item">
-            <div class="stat-value">32%</div>
+            <div class="stat-value" x-text="stats.bounceRate">0%</div>
             <div class="stat-label">📉 Bounce Rate</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" x-text="realtimeVisitors">0</div>
+            <div class="stat-label">🟢 Online Now</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" x-text="topPages.length">0</div>
+            <div class="stat-label">📊 Active Pages</div>
           </div>
         </div>
       </div>
@@ -214,37 +214,14 @@ title: Analytics Dashboard
           Links
         </div>
         <ul class="data-list">
-          <li class="list-item">
-            <span><a href="#" class="link">google.com</a></span>
-            <span class="badge primary">234</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">reddit.com/r/webdev</a></span>
-            <span class="badge primary">189</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">hackernews.com</a></span>
-            <span class="badge primary">156</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">twitter.com</a></span>
-            <span class="badge primary">123</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">dev.to</a></span>
-            <span class="badge primary">98</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">linkedin.com</a></span>
-            <span class="badge primary">76</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">facebook.com</a></span>
-            <span class="badge primary">54</span>
-          </li>
-          <li class="list-item">
-            <span><a href="#" class="link">github.com</a></span>
-            <span class="badge primary">45</span>
+          <template x-for="referrer in topReferrers.slice(0, 8)" :key="referrer.referrer">
+            <li class="list-item">
+              <span><a href="#" class="link" x-text="referrer.referrer || 'direct'"></a></span>
+              <span class="badge primary" x-text="referrer.count"></span>
+            </li>
+          </template>
+          <li class="list-item" x-show="topReferrers.length === 0">
+            <span style="color: #999;">No referrers yet</span>
           </li>
         </ul>
       </div>
@@ -314,77 +291,19 @@ title: Analytics Dashboard
           Content
         </div>
         <ul class="data-list">
-          <li class="list-item">
-            <span>/</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">456 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 85%"></div>
+          <template x-for="(page, index) in topPages.slice(0, 10)" :key="page.url">
+            <li class="list-item">
+              <span x-text="page.url"></span>
+              <div style="display: flex; align-items: center; gap: 10px">
+                <span class="badge" x-text="`${page.views} views`"></span>
+                <div class="progress-bar" style="width: 100px">
+                  <div class="progress-fill" :style="`width: ${topPages[0] ? (page.views / topPages[0].views * 100) : 0}%`"></div>
+                </div>
               </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/blog/getting-started</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">234 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 65%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/products</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">189 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 55%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/about</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">167 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 45%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/pricing</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">145 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 40%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/contact</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">123 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 35%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/docs</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">98 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 25%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>/blog/update-v2</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge">76 views</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 20%"></div>
-              </div>
-            </div>
+            </li>
+          </template>
+          <li class="list-item" x-show="topPages.length === 0">
+            <span style="color: #999;">No page views yet</span>
           </li>
         </ul>
       </div>

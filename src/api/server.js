@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { Database } from 'bun:sqlite';
 import { trackEvent, getStats } from '../db/queries.js';
 import { sitesRoutes } from './sites.ts';
+import { statsRoutes } from './stats.ts';
 
 const app = new Hono();
 const db = new Database('./data/analytics.db');
@@ -55,33 +56,25 @@ app.post('/track', async (c) => {
   return c.json({ success: true });
 });
 
+// Stats API routes
 app.get('/api/stats/:siteId', async (c) => {
   const { siteId } = c.req.param();
-  const { start, end } = c.req.query();
-  
-  const stats = getStats(db, siteId, start, end);
-  return c.json(stats);
+  return statsRoutes.getStats(c.req.raw, siteId);
 });
 
-app.get('/api/realtime/:siteId', async (c) => {
+app.get('/api/stats/:siteId/timeseries', async (c) => {
   const { siteId } = c.req.param();
-  const realtimeData = getRealtimeVisitors(db, siteId);
-  return c.json(realtimeData);
+  return statsRoutes.getTimeSeries(c.req.raw, siteId);
+});
+
+app.get('/api/stats/:siteId/realtime', async (c) => {
+  const { siteId } = c.req.param();
+  return statsRoutes.getRealtime(c.req.raw, siteId);
 });
 
 function hashIP(ip) {
   const crypto = require('crypto');
   return crypto.createHash('sha256').update(ip + process.env.SALT || 'default-salt').digest('hex').substring(0, 16);
-}
-
-function getRealtimeVisitors(db, siteId) {
-  const stmt = db.prepare(`
-    SELECT COUNT(DISTINCT ip_hash) as visitors 
-    FROM events 
-    WHERE site_id = ? 
-    AND timestamp > datetime('now', '-5 minutes')
-  `);
-  return stmt.get(siteId);
 }
 
 const port = process.env.PORT || 3000;

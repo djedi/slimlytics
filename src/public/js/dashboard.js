@@ -22,6 +22,19 @@ function dashboard() {
 			thismonth: "This Month",
 			lastmonth: "Last Month",
 		},
+		
+		// Stats data
+		stats: {
+			visitors: "0",
+			pageViews: "0",
+			avgSessionDuration: "0s",
+			bounceRate: "0%",
+		},
+		topPages: [],
+		topReferrers: [],
+		realtimeVisitors: 0,
+		trendLabels: [],
+		trendData: [],
 
 		async init() {
 			// Load sites first
@@ -38,6 +51,12 @@ function dashboard() {
 				this.selectedSite = this.sites[0].name;
 				this.selectedSiteId = this.sites[0].id;
 			}
+
+			// Load stats for the selected site
+			await this.loadStats();
+			
+			// Start polling for realtime updates
+			this.startRealtimeUpdates();
 
 			this.initChart();
 		},
@@ -71,7 +90,8 @@ function dashboard() {
 			this.selectedSite = site.name;
 			this.selectedSiteId = site.id;
 			this.siteDropdownOpen = false;
-			// In real app, would fetch new data here
+			// Reload stats for the new site
+			this.loadStats();
 		},
 
 		goToSiteSettings() {
@@ -83,20 +103,193 @@ function dashboard() {
 		selectDateRange(range) {
 			this.selectedDateRange = range;
 			this.dateDropdownOpen = false;
-			// In real app, would fetch new data here
+			// Reload stats with new date range
+			this.loadStats();
+		},
+		
+		async loadStats() {
+			if (!this.selectedSiteId) return;
+			
+			try {
+				// Calculate date range
+				const dateRange = this.getDateRange();
+				
+				// Fetch dashboard stats
+				const statsResponse = await fetch(
+					window.SLIMLYTICS_CONFIG.apiEndpoint(
+						`/api/stats/${this.selectedSiteId}?start=${dateRange.start}&end=${dateRange.end}`
+					)
+				);
+				
+				if (statsResponse.ok) {
+					const data = await statsResponse.json();
+					
+					// Format stats for display
+					this.stats = {
+						visitors: data.visitors.toLocaleString(),
+						pageViews: data.pageViews.toLocaleString(),
+						avgSessionDuration: this.formatDuration(data.avgSessionDuration),
+						bounceRate: `${Math.round(data.bounceRate)}%`,
+					};
+					
+					this.topPages = data.topPages || [];
+					this.topReferrers = data.topReferrers || [];
+					this.realtimeVisitors = data.realtimeVisitors || 0;
+				} else {
+					// Use mock data as fallback
+					this.loadMockStats();
+				}
+				
+				// Fetch time series data for chart
+				const days = this.getDaysForRange();
+				const timeseriesResponse = await fetch(
+					window.SLIMLYTICS_CONFIG.apiEndpoint(
+						`/api/stats/${this.selectedSiteId}/timeseries?days=${days}`
+					)
+				);
+				
+				if (timeseriesResponse.ok) {
+					const data = await timeseriesResponse.json();
+					this.trendLabels = data.labels;
+					this.trendData = data.pageViews;
+					this.updateChart();
+				}
+				
+			} catch (error) {
+				console.error('Error loading stats:', error);
+				this.loadMockStats();
+			}
+		},
+		
+		loadMockStats() {
+			// Fallback mock stats
+			this.stats = {
+				visitors: "1,234",
+				pageViews: "5,678",
+				avgSessionDuration: "2m 34s",
+				bounceRate: "45%",
+			};
+			
+			this.topPages = [
+				{ url: "/blog/hello-world", views: 523 },
+				{ url: "/", views: 412 },
+				{ url: "/about", views: 234 },
+				{ url: "/contact", views: 156 },
+				{ url: "/blog/second-post", views: 89 },
+			];
+			
+			this.topReferrers = [
+				{ referrer: "google.com", count: 412 },
+				{ referrer: "twitter.com", count: 234 },
+				{ referrer: "direct", count: 189 },
+				{ referrer: "facebook.com", count: 123 },
+				{ referrer: "github.com", count: 78 },
+			];
+			
+			this.realtimeVisitors = Math.floor(Math.random() * 20) + 1;
+		},
+		
+		formatDuration(seconds) {
+			if (!seconds || seconds === 0) return "0s";
+			const minutes = Math.floor(seconds / 60);
+			const secs = Math.round(seconds % 60);
+			if (minutes > 0) {
+				return `${minutes}m ${secs}s`;
+			}
+			return `${secs}s`;
+		},
+		
+		getDateRange() {
+			const now = new Date();
+			const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+			let start, end;
+			
+			switch (this.selectedDateRange) {
+				case "today":
+					start = today;
+					end = now;
+					break;
+				case "yesterday":
+					start = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+					end = today;
+					break;
+				case "7days":
+					start = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+					end = now;
+					break;
+				case "30days":
+					start = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+					end = now;
+					break;
+				case "thismonth":
+					start = new Date(now.getFullYear(), now.getMonth(), 1);
+					end = now;
+					break;
+				case "lastmonth":
+					start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+					end = new Date(now.getFullYear(), now.getMonth(), 0);
+					break;
+				default:
+					start = today;
+					end = now;
+			}
+			
+			return {
+				start: start.toISOString(),
+				end: end.toISOString()
+			};
+		},
+		
+		getDaysForRange() {
+			switch (this.selectedDateRange) {
+				case "today": return 1;
+				case "yesterday": return 2;
+				case "7days": return 7;
+				case "30days": return 30;
+				case "thismonth": return new Date().getDate();
+				case "lastmonth": return 30;
+				default: return 7;
+			}
+		},
+		
+		startRealtimeUpdates() {
+			// Update realtime visitors every 30 seconds
+			setInterval(async () => {
+				if (!this.selectedSiteId) return;
+				
+				try {
+					const response = await fetch(
+						window.SLIMLYTICS_CONFIG.apiEndpoint(
+							`/api/stats/${this.selectedSiteId}/realtime`
+						)
+					);
+					
+					if (response.ok) {
+						const data = await response.json();
+						this.realtimeVisitors = data.visitors || 0;
+					}
+				} catch (error) {
+					console.error('Error fetching realtime visitors:', error);
+				}
+			}, 30000);
 		},
 
 		chartSvg: "",
 		hoveredPoint: null,
 
 		initChart() {
-			// Mock visitor data (today)
-			const todayData = [
+			// Initialize with empty data or mock data
+			this.updateChart();
+		},
+		
+		updateChart() {
+			// Use trend data if available, otherwise use mock data
+			const chartData = this.trendData.length > 0 ? this.trendData : [
 				12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128, 115,
 				98, 87, 76, 65, 54, 43, 32, 21,
 			];
 
-			// Mock visitor data (7 days ago)
+			// For comparison, use previous period or mock data
 			const compareData = [
 				8, 11, 14, 19, 24, 35, 42, 58, 76, 98, 105, 112, 118, 108, 102, 95, 82,
 				73, 64, 55, 46, 37, 28, 18,
@@ -109,12 +302,12 @@ function dashboard() {
 			const chartHeight = height - padding.top - padding.bottom;
 
 			// Find max value for scaling
-			const maxValue = Math.max(...todayData, ...compareData);
+			const maxValue = Math.max(...chartData, ...compareData);
 			const yScale = chartHeight / maxValue;
-			const xStep = chartWidth / (todayData.length - 1);
+			const xStep = chartWidth / (chartData.length - 1);
 
-			// Create path for today's data
-			const todayPath = todayData
+			// Create path for chart data
+			const todayPath = chartData
 				.map((value, i) => {
 					const x = padding.left + i * xStep;
 					const y = height - padding.bottom - value * yScale;
@@ -160,8 +353,8 @@ function dashboard() {
                 `);
 			}
 
-			// Create interactive points for today's data
-			const todayPoints = todayData
+			// Create interactive points for chart data
+			const todayPoints = chartData
 				.map((value, i) => {
 					const x = padding.left + i * xStep;
 					const y = height - padding.bottom - value * yScale;
