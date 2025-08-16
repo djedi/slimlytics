@@ -27,3 +27,7 @@ The system uses a Bun-based ingest API to efficiently receive tracking data, whi
 ## Why
 
 This stack is ideal for small websites running on a $5 DigitalOcean droplet because it combines simplicity, performance, and minimal resource usage. Bun and SQLite provide fast and efficient backend processing, while 11ty, HTMX, and Alpine.js deliver a dynamic yet lightweight frontend without the complexity of heavier frameworks.
+
+## Coding Style
+
+- Put CSS and JS in their own files rather than mixing with html

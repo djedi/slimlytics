@@ -1,0 +1,51 @@
+---
+layout: base.njk
+title: Test Events - Slimlytics
+---
+
+<link rel="stylesheet" href="/css/test-events.css">
+
+<div class="test-container">
+    <h1>Test Event Generator</h1>
+    <p>Use this page to send test events to your sites and verify the dashboard is updating correctly.</p>
+    
+    <div class="control-group">
+        <label for="site-select">Select Site:</label>
+        <select id="site-select">
+            <option value="">Loading sites...</option>
+        </select>
+    </div>
+    
+    <div class="control-group">
+        <label for="event-count">Number of Events to Send:</label>
+        <input type="number" id="event-count" value="10" min="1" max="1000">
+    </div>
+    
+    <div class="control-group">
+        <label for="delay-ms">Delay Between Events (ms):</label>
+        <input type="number" id="delay-ms" value="100" min="0" max="5000">
+    </div>
+    
+    <div class="button-group">
+        <button class="btn-primary" onclick="sendRandomPageViews()">Send Random Page Views</button>
+        <button class="btn-success" onclick="sendBurstEvents()">Send Burst (50 instant)</button>
+        <button class="btn-warning" onclick="sendCustomEvents()">Send Custom Events</button>
+        <button class="btn-danger" onclick="clearEventLog()">Clear Log</button>
+    </div>
+    
+    <div id="status-message" class="status-message"></div>
+    
+    <div class="event-log">
+        <h3>Event Log</h3>
+        <div id="event-log-content"></div>
+    </div>
+    
+    <div class="stats-display">
+        <h3>Quick Stats</h3>
+        <div id="stats-content">
+            <p>Select a site and send some events to see stats here.</p>
+        </div>
+    </div>
+</div>
+
+<script src="/js/test-events.js"></script>

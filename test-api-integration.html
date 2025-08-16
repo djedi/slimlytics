@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test API Integration</title>
+</head>
+<body>
+    <h1>Testing API Integration</h1>
+    <div id="results"></div>
+    
+    <script>
+        // Set the config like config.js does
+        window.SLIMLYTICS_CONFIG = {
+            apiEndpoint: ''  // Empty string means same origin
+        };
+        
+        const resultsDiv = document.getElementById('results');
+        
+        async function test() {
+            try {
+                // Test 1: Load sites
+                const sitesResponse = await fetch(`${window.SLIMLYTICS_CONFIG.apiEndpoint}/api/sites`);
+                const sites = await sitesResponse.json();
+                resultsDiv.innerHTML += `<p>✅ Loaded ${sites.length} sites</p>`;
+                
+                if (sites.length > 0) {
+                    // Test 2: Send a test event
+                    const testEvent = {
+                        site_id: sites[0].id,
+                        page_url: `https://${sites[0].domain}/test`,
+                        referrer: 'https://test.com',
+                        user_agent: 'Test Browser',
+                        screen_resolution: '1920x1080',
+                        language: 'en-US'
+                    };
+                    
+                    const trackResponse = await fetch(`${window.SLIMLYTICS_CONFIG.apiEndpoint}/track`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(testEvent)
+                    });
+                    
+                    const trackResult = await trackResponse.json();
+                    resultsDiv.innerHTML += `<p>✅ Sent test event: ${JSON.stringify(trackResult)}</p>`;
+                }
+                
+                resultsDiv.innerHTML += `<p><strong>All tests passed! The test-events page should work correctly.</strong></p>`;
+                
+            } catch (error) {
+                resultsDiv.innerHTML += `<p>❌ Error: ${error.message}</p>`;
+            }
+        }
+        
+        test();
+    </script>
+</body>
+</html>

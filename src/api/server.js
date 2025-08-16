@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { serveStatic } from 'hono/bun';
 import { Database } from 'bun:sqlite';
 import { trackEvent, getStats } from '../db/queries.js';
 import { sitesRoutes } from './sites.ts';
@@ -71,6 +72,9 @@ app.get('/api/stats/:siteId/realtime', async (c) => {
   const { siteId } = c.req.param();
   return statsRoutes.getRealtime(c.req.raw, siteId);
 });
+
+// Serve static files from dist directory - MUST be after API routes
+app.use('/*', serveStatic({ root: './dist' }));
 
 function hashIP(ip) {
   const crypto = require('crypto');

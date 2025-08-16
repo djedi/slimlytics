@@ -22,7 +22,7 @@ function dashboard() {
 			thismonth: "This Month",
 			lastmonth: "Last Month",
 		},
-		
+
 		// Stats data
 		stats: {
 			visitors: "0",
@@ -54,7 +54,7 @@ function dashboard() {
 
 			// Load stats for the selected site
 			await this.loadStats();
-			
+
 			// Start polling for realtime updates
 			this.startRealtimeUpdates();
 
@@ -63,7 +63,9 @@ function dashboard() {
 
 		async loadSites() {
 			try {
-				const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
+				const response = await fetch(
+					window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"),
+				);
 				if (response.ok) {
 					const sitesData = await response.json();
 					this.sites = sitesData || [];
@@ -106,24 +108,24 @@ function dashboard() {
 			// Reload stats with new date range
 			this.loadStats();
 		},
-		
+
 		async loadStats() {
 			if (!this.selectedSiteId) return;
-			
+
 			try {
 				// Calculate date range
 				const dateRange = this.getDateRange();
-				
+
 				// Fetch dashboard stats
 				const statsResponse = await fetch(
 					window.SLIMLYTICS_CONFIG.apiEndpoint(
-						`/api/stats/${this.selectedSiteId}?start=${dateRange.start}&end=${dateRange.end}`
-					)
+						`/api/stats/${this.selectedSiteId}?start=${dateRange.start}&end=${dateRange.end}`,
+					),
 				);
-				
+
 				if (statsResponse.ok) {
 					const data = await statsResponse.json();
-					
+
 					// Format stats for display
 					this.stats = {
 						visitors: data.visitors.toLocaleString(),
@@ -131,7 +133,7 @@ function dashboard() {
 						avgSessionDuration: this.formatDuration(data.avgSessionDuration),
 						bounceRate: `${Math.round(data.bounceRate)}%`,
 					};
-					
+
 					this.topPages = data.topPages || [];
 					this.topReferrers = data.topReferrers || [];
 					this.realtimeVisitors = data.realtimeVisitors || 0;
@@ -139,28 +141,27 @@ function dashboard() {
 					// Use mock data as fallback
 					this.loadMockStats();
 				}
-				
+
 				// Fetch time series data for chart
 				const days = this.getDaysForRange();
 				const timeseriesResponse = await fetch(
 					window.SLIMLYTICS_CONFIG.apiEndpoint(
-						`/api/stats/${this.selectedSiteId}/timeseries?days=${days}`
-					)
+						`/api/stats/${this.selectedSiteId}/timeseries?days=${days}`,
+					),
 				);
-				
+
 				if (timeseriesResponse.ok) {
 					const data = await timeseriesResponse.json();
 					this.trendLabels = data.labels;
 					this.trendData = data.pageViews;
 					this.updateChart();
 				}
-				
 			} catch (error) {
-				console.error('Error loading stats:', error);
+				console.error("Error loading stats:", error);
 				this.loadMockStats();
 			}
 		},
-		
+
 		loadMockStats() {
 			// Fallback mock stats
 			this.stats = {
@@ -169,7 +170,7 @@ function dashboard() {
 				avgSessionDuration: "2m 34s",
 				bounceRate: "45%",
 			};
-			
+
 			this.topPages = [
 				{ url: "/blog/hello-world", views: 523 },
 				{ url: "/", views: 412 },
@@ -177,7 +178,7 @@ function dashboard() {
 				{ url: "/contact", views: 156 },
 				{ url: "/blog/second-post", views: 89 },
 			];
-			
+
 			this.topReferrers = [
 				{ referrer: "google.com", count: 412 },
 				{ referrer: "twitter.com", count: 234 },
@@ -185,10 +186,10 @@ function dashboard() {
 				{ referrer: "facebook.com", count: 123 },
 				{ referrer: "github.com", count: 78 },
 			];
-			
+
 			this.realtimeVisitors = Math.floor(Math.random() * 20) + 1;
 		},
-		
+
 		formatDuration(seconds) {
 			if (!seconds || seconds === 0) return "0s";
 			const minutes = Math.floor(seconds / 60);
@@ -198,12 +199,13 @@ function dashboard() {
 			}
 			return `${secs}s`;
 		},
-		
+
 		getDateRange() {
 			const now = new Date();
 			const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-			let start, end;
-			
+			let start;
+			let end;
+
 			switch (this.selectedDateRange) {
 				case "today":
 					start = today;
@@ -233,43 +235,50 @@ function dashboard() {
 					start = today;
 					end = now;
 			}
-			
+
 			return {
 				start: start.toISOString(),
-				end: end.toISOString()
+				end: end.toISOString(),
 			};
 		},
-		
+
 		getDaysForRange() {
 			switch (this.selectedDateRange) {
-				case "today": return 1;
-				case "yesterday": return 2;
-				case "7days": return 7;
-				case "30days": return 30;
-				case "thismonth": return new Date().getDate();
-				case "lastmonth": return 30;
-				default: return 7;
+				case "today":
+					return 1;
+				case "yesterday":
+					return 2;
+				case "7days":
+					return 7;
+				case "30days":
+					return 30;
+				case "thismonth":
+					return new Date().getDate();
+				case "lastmonth":
+					return 30;
+				default:
+					return 7;
 			}
 		},
-		
+
 		startRealtimeUpdates() {
 			// Update realtime visitors every 30 seconds
 			setInterval(async () => {
 				if (!this.selectedSiteId) return;
-				
+
 				try {
 					const response = await fetch(
 						window.SLIMLYTICS_CONFIG.apiEndpoint(
-							`/api/stats/${this.selectedSiteId}/realtime`
-						)
+							`/api/stats/${this.selectedSiteId}/realtime`,
+						),
 					);
-					
+
 					if (response.ok) {
 						const data = await response.json();
 						this.realtimeVisitors = data.visitors || 0;
 					}
 				} catch (error) {
-					console.error('Error fetching realtime visitors:', error);
+					console.error("Error fetching realtime visitors:", error);
 				}
 			}, 30000);
 		},
@@ -281,13 +290,16 @@ function dashboard() {
 			// Initialize with empty data or mock data
 			this.updateChart();
 		},
-		
+
 		updateChart() {
 			// Use trend data if available, otherwise use mock data
-			const chartData = this.trendData.length > 0 ? this.trendData : [
-				12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128, 115,
-				98, 87, 76, 65, 54, 43, 32, 21,
-			];
+			const chartData =
+				this.trendData.length > 0
+					? this.trendData
+					: [
+							12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128,
+							115, 98, 87, 76, 65, 54, 43, 32, 21,
+						];
 
 			// For comparison, use previous period or mock data
 			const compareData = [
@@ -316,9 +328,7 @@ function dashboard() {
 				.join(" ");
 
 			// Create area fill for today's data
-			const todayArea =
-				todayPath +
-				` L ${padding.left + chartWidth} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
+			const todayArea = `${todayPath} L ${padding.left + chartWidth} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
 
 			// Create path for comparison data
 			const comparePath = compareData

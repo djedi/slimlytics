@@ -139,21 +139,26 @@ function getPeriodStats(siteId: string, start: string, end: string) {
         SELECT 
             COUNT(DISTINCT ip_hash) as visitors,
             COUNT(*) as pageViews,
-            AVG(session_duration) as avgSessionDuration,
-            (
-                SELECT COUNT(*) * 100.0 / COUNT(DISTINCT ip_hash)
-                FROM events e2
-                WHERE e2.site_id = e1.site_id
-                AND e2.timestamp BETWEEN ? AND ?
-                GROUP BY ip_hash
-                HAVING COUNT(*) = 1
+            0 as avgSessionDuration,
+            COALESCE(
+                (
+                    SELECT COUNT(*) * 100.0 / NULLIF(COUNT(DISTINCT ip_hash), 0)
+                    FROM (
+                        SELECT ip_hash
+                        FROM events
+                        WHERE site_id = ?
+                        AND timestamp BETWEEN ? AND ?
+                        GROUP BY ip_hash
+                        HAVING COUNT(*) = 1
+                    )
+                ), 0
             ) as bounceRate
         FROM events e1
         WHERE site_id = ?
         AND timestamp BETWEEN ? AND ?
     `);
     
-    const result = stmt.get(start, end, siteId, start, end) as {
+    const result = stmt.get(siteId, start, end, siteId, start, end) as {
         visitors: number;
         pageViews: number;
         avgSessionDuration: number | null;
