@@ -35,7 +35,7 @@ function siteSettings() {
 
 		async loadSite(siteId) {
 			try {
-				const response = await fetch("http://localhost:3000/api/sites");
+				const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
 				if (response.ok) {
 					const sites = await response.json();
 					this.site = sites.find((s) => s.id === siteId);
@@ -107,7 +107,7 @@ ${scriptClose}
 
 			try {
 				const response = await fetch(
-					`http://localhost:3000/api/sites/${this.site.id}`,
+					window.SLIMLYTICS_CONFIG.apiEndpoint(`/api/sites/${this.site.id}`),
 					{
 						method: "PUT",
 						headers: {
@@ -149,7 +149,7 @@ ${scriptClose}
 
 			try {
 				const response = await fetch(
-					`http://localhost:3000/api/sites/${this.site.id}`,
+					window.SLIMLYTICS_CONFIG.apiEndpoint(`/api/sites/${this.site.id}`),
 					{
 						method: "DELETE",
 					},

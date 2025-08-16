@@ -15,7 +15,7 @@ function addSite() {
         async init() {
             // Check if we have existing sites
             try {
-                const response = await fetch('http://localhost:3000/api/sites');
+                const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
                 const sites = await response.json();
                 if (sites && sites.length > 0) {
                     // Sites exist, but user wants to add another
@@ -37,7 +37,7 @@ function addSite() {
                     url = 'https://' + url;
                 }
                 
-                const response = await fetch('http://localhost:3000/api/sites', {
+                const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

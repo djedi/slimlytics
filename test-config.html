@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Config</title>
+    <script src="dist/js/config.js"></script>
+</head>
+<body>
+    <h1>Slimlytics Configuration Test</h1>
+    <div id="output"></div>
+    
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const output = document.getElementById('output');
+        
+        output.innerHTML = `
+            <h2>Current Environment:</h2>
+            <p>Hostname: ${window.location.hostname}</p>
+            <p>Protocol: ${window.location.protocol}</p>
+            <p>Port: ${window.location.port || '(default)'}</p>
+            
+            <h2>Configured API URL:</h2>
+            <p>API Base: ${window.SLIMLYTICS_CONFIG.API_URL}</p>
+            <p>Sites Endpoint: ${window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites')}</p>
+            <p>Track Endpoint: ${window.SLIMLYTICS_CONFIG.apiEndpoint('/track')}</p>
+        `;
+    });
+    </script>
+</body>
+</html>

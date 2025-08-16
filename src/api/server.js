@@ -85,7 +85,8 @@ function getRealtimeVisitors(db, siteId) {
 }
 
 const port = process.env.PORT || 3000;
-console.log(`Analytics API running on port ${port}`);
+const host = process.env.HOST || 'localhost';
+console.log(`Analytics API running on ${host}:${port}`);
 
 export default {
   port,

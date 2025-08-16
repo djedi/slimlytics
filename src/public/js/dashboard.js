@@ -44,7 +44,7 @@ function dashboard() {
 
 		async loadSites() {
 			try {
-				const response = await fetch("http://localhost:3000/api/sites");
+				const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
 				if (response.ok) {
 					const sitesData = await response.json();
 					this.sites = sitesData || [];
