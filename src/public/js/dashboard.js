@@ -35,6 +35,12 @@ function dashboard() {
 		realtimeVisitors: 0,
 		trendLabels: [],
 		trendData: [],
+		
+		// WebSocket connection
+		ws: null,
+		wsConnected: false,
+		wsReconnectTimeout: null,
+		wsHeartbeatInterval: null,
 
 		async init() {
 			// Load sites first
@@ -55,10 +61,15 @@ function dashboard() {
 			// Load stats for the selected site
 			await this.loadStats();
 
-			// Start polling for realtime updates
-			this.startRealtimeUpdates();
+			// Connect to WebSocket for real-time updates
+			this.connectWebSocket();
 
 			this.initChart();
+			
+			// Clean up on page unload
+			window.addEventListener('beforeunload', () => {
+				this.disconnectWebSocket();
+			});
 		},
 
 		async loadSites() {
@@ -94,6 +105,8 @@ function dashboard() {
 			this.siteDropdownOpen = false;
 			// Reload stats for the new site
 			this.loadStats();
+			// Reconnect WebSocket for the new site
+			this.reconnectWebSocket();
 		},
 
 		goToSiteSettings() {
@@ -261,26 +274,160 @@ function dashboard() {
 			}
 		},
 
-		startRealtimeUpdates() {
-			// Update realtime visitors every 30 seconds
-			setInterval(async () => {
-				if (!this.selectedSiteId) return;
-
-				try {
-					const response = await fetch(
-						window.SLIMLYTICS_CONFIG.apiEndpoint(
-							`/api/stats/${this.selectedSiteId}/realtime`,
-						),
-					);
-
-					if (response.ok) {
-						const data = await response.json();
-						this.realtimeVisitors = data.visitors || 0;
+		connectWebSocket() {
+			if (!this.selectedSiteId) return;
+			
+			// Get WebSocket URL from API endpoint
+			const apiUrl = window.SLIMLYTICS_CONFIG.apiEndpoint("");
+			const wsUrl = apiUrl.replace(/^http/, 'ws').replace(/\/$/, '');
+			
+			try {
+				this.ws = new WebSocket(wsUrl);
+				
+				this.ws.onopen = () => {
+					console.log('WebSocket connected');
+					this.wsConnected = true;
+					// Subscribe to updates for the selected site
+					this.ws.send(JSON.stringify({
+						type: 'subscribe',
+						siteId: this.selectedSiteId
+					}));
+					
+					// Start heartbeat to keep connection alive
+					this.startHeartbeat();
+				};
+				
+				this.ws.onmessage = (event) => {
+					try {
+						const data = JSON.parse(event.data);
+						
+						if (data.type === 'stats-update') {
+							this.handleStatsUpdate(data.stats);
+						} else if (data.type === 'subscribed') {
+							console.log('Successfully subscribed to real-time updates');
+						}
+					} catch (error) {
+						console.error('Error parsing WebSocket message:', error);
 					}
-				} catch (error) {
-					console.error("Error fetching realtime visitors:", error);
+				};
+				
+				this.ws.onerror = (error) => {
+					console.error('WebSocket error:', error);
+				};
+				
+				this.ws.onclose = () => {
+					console.log('WebSocket disconnected');
+					this.wsConnected = false;
+					this.stopHeartbeat();
+					// Attempt to reconnect after 5 seconds
+					this.wsReconnectTimeout = setTimeout(() => {
+						this.connectWebSocket();
+					}, 5000);
+				};
+			} catch (error) {
+				console.error('Failed to connect WebSocket:', error);
+			}
+		},
+		
+		disconnectWebSocket() {
+			if (this.wsReconnectTimeout) {
+				clearTimeout(this.wsReconnectTimeout);
+				this.wsReconnectTimeout = null;
+			}
+			
+			this.stopHeartbeat();
+			
+			if (this.ws) {
+				this.ws.close();
+				this.ws = null;
+			}
+		},
+		
+		reconnectWebSocket() {
+			this.disconnectWebSocket();
+			this.connectWebSocket();
+		},
+		
+		startHeartbeat() {
+			this.wsHeartbeatInterval = setInterval(() => {
+				if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+					this.ws.send(JSON.stringify({ type: 'ping' }));
 				}
-			}, 30000);
+			}, 30000); // Send ping every 30 seconds
+		},
+		
+		stopHeartbeat() {
+			if (this.wsHeartbeatInterval) {
+				clearInterval(this.wsHeartbeatInterval);
+				this.wsHeartbeatInterval = null;
+			}
+		},
+		
+		handleStatsUpdate(newStats) {
+			// Update stats with animation effect
+			const updateStat = (key, value) => {
+				const element = document.querySelector(`[x-text="stats.${key}"]`);
+				if (element) {
+					element.style.transition = 'color 0.3s';
+					element.style.color = '#3498db';
+					setTimeout(() => {
+						element.style.color = '';
+					}, 300);
+				}
+			};
+			
+			// Format and update stats
+			if (newStats.visitors !== undefined) {
+				const formatted = newStats.visitors.toLocaleString();
+				if (this.stats.visitors !== formatted) {
+					this.stats.visitors = formatted;
+					updateStat('visitors', formatted);
+				}
+			}
+			
+			if (newStats.pageViews !== undefined) {
+				const formatted = newStats.pageViews.toLocaleString();
+				if (this.stats.pageViews !== formatted) {
+					this.stats.pageViews = formatted;
+					updateStat('pageViews', formatted);
+				}
+			}
+			
+			if (newStats.avgSessionDuration !== undefined) {
+				const formatted = this.formatDuration(newStats.avgSessionDuration);
+				if (this.stats.avgSessionDuration !== formatted) {
+					this.stats.avgSessionDuration = formatted;
+					updateStat('avgSessionDuration', formatted);
+				}
+			}
+			
+			if (newStats.bounceRate !== undefined) {
+				const formatted = `${Math.round(newStats.bounceRate)}%`;
+				if (this.stats.bounceRate !== formatted) {
+					this.stats.bounceRate = formatted;
+					updateStat('bounceRate', formatted);
+				}
+			}
+			
+			// Update other data
+			if (newStats.topPages) {
+				this.topPages = newStats.topPages;
+			}
+			
+			if (newStats.topReferrers) {
+				this.topReferrers = newStats.topReferrers;
+			}
+			
+			if (newStats.realtimeVisitors !== undefined) {
+				this.realtimeVisitors = newStats.realtimeVisitors;
+			}
+			
+			// Optionally refresh the chart with new data
+			if (newStats.timeSeriesData) {
+				this.trendLabels = newStats.timeSeriesData.labels;
+				this.trendData = newStats.timeSeriesData.pageViews;
+				this.updateChart();
+			}
 		},
 
 		chartSvg: "",

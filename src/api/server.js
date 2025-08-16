@@ -9,6 +9,9 @@ import { statsRoutes } from './stats.ts';
 const app = new Hono();
 const db = new Database('./data/analytics.db');
 
+// WebSocket clients tracked by site ID
+const wsClients = new Map();
+
 app.use('*', cors());
 
 // Sites API routes
@@ -54,6 +57,9 @@ app.post('/track', async (c) => {
     timestamp: new Date().toISOString()
   });
 
+  // Broadcast update to WebSocket clients watching this site
+  broadcastStatsUpdate(site_id);
+
   return c.json({ success: true });
 });
 
@@ -81,11 +87,108 @@ function hashIP(ip) {
   return crypto.createHash('sha256').update(ip + process.env.SALT || 'default-salt').digest('hex').substring(0, 16);
 }
 
+// Broadcast stats update to all WebSocket clients watching a specific site
+async function broadcastStatsUpdate(siteId) {
+  const clients = wsClients.get(siteId);
+  if (!clients || clients.size === 0) return;
+
+  try {
+    // Get the latest stats for this site
+    const dateRange = {
+      start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(),
+      end: new Date().toISOString()
+    };
+    
+    // Fetch stats (you'll need to import or implement getStatsForSite)
+    const stats = await statsRoutes.getStatsData(siteId, dateRange.start, dateRange.end);
+    
+    const message = JSON.stringify({
+      type: 'stats-update',
+      siteId,
+      stats,
+      timestamp: new Date().toISOString()
+    });
+
+    // Send to all connected clients for this site
+    for (const ws of clients) {
+      if (ws.readyState === 1) { // WebSocket.OPEN
+        ws.send(message);
+      }
+    }
+  } catch (error) {
+    console.error('Error broadcasting stats update:', error);
+  }
+}
+
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || 'localhost';
-console.log(`Analytics API running on ${host}:${port}`);
+console.log(`Analytics API running on ${host}:${port} with WebSocket support`);
 
-export default {
+Bun.serve({
   port,
-  fetch: app.fetch,
-};
+  hostname: host,
+  fetch(req, server) {
+    // Try to upgrade to WebSocket
+    if (server.upgrade(req)) {
+      return; // WebSocket upgrade successful
+    }
+    // Otherwise handle as normal HTTP request
+    return app.fetch(req, server);
+  },
+  websocket: {
+    open(ws) {
+      console.log('WebSocket client connected');
+      ws.isAlive = true;
+    },
+    
+    close(ws) {
+      console.log('WebSocket client disconnected');
+      
+      // Remove from all subscriber lists
+      if (ws.siteId && wsClients.has(ws.siteId)) {
+        wsClients.get(ws.siteId).delete(ws);
+        
+        // Clean up empty sets
+        if (wsClients.get(ws.siteId).size === 0) {
+          wsClients.delete(ws.siteId);
+        }
+      }
+    },
+    
+    error(ws, error) {
+      console.error('WebSocket error:', error);
+    },
+    
+    message(ws, message) {
+      // Handle messages
+      try {
+        const data = JSON.parse(message);
+        
+        if (data.type === 'subscribe' && data.siteId) {
+          // Add client to the site's subscriber list
+          if (!wsClients.has(data.siteId)) {
+            wsClients.set(data.siteId, new Set());
+          }
+          wsClients.get(data.siteId).add(ws);
+          ws.siteId = data.siteId;
+          
+          // Send initial stats
+          broadcastStatsUpdate(data.siteId);
+          
+          ws.send(JSON.stringify({ 
+            type: 'subscribed', 
+            siteId: data.siteId,
+            message: 'Successfully subscribed to real-time updates'
+          }));
+        }
+        
+        // Handle ping/pong for connection health
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+        }
+      } catch (error) {
+        console.error('WebSocket message error:', error);
+      }
+    },
+  },
+});

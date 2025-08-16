@@ -175,6 +175,11 @@ function getPeriodStats(siteId: string, start: string, end: string) {
 
 // API route handlers
 export const statsRoutes = {
+    // Helper method for WebSocket broadcasts
+    async getStatsData(siteId: string, startDate: string, endDate: string) {
+        return getDashboardStats(siteId, startDate, endDate);
+    },
+    
     // GET /api/stats/:siteId
     async getStats(req: Request, siteId: string) {
         try {

@@ -16,6 +16,9 @@ So I want a small, fun, easy to read analytics app that can run in docker on a $
 
 The system uses a Bun-based ingest API to efficiently receive tracking data, which is stored in SQLite for lightweight and reliable persistence. The dashboard is built as a static site using 11ty, with HTMX and Alpine.js enabling server-driven UI updates and small client-side enhancements for a responsive and dynamic interface without heavy frontend frameworks.
 
+### Real-time Updates
+The dashboard features WebSocket-based real-time updates. When new tracking events are received, the server broadcasts updated statistics to all connected dashboard clients watching that specific site. This provides instant feedback without polling, reducing server load while improving user experience.
+
 ## Features
 
 - Lightweight tracking optimized for low-traffic sites.
@@ -23,6 +26,7 @@ The system uses a Bun-based ingest API to efficiently receive tracking data, whi
 - Privacy-friendly design avoiding invasive tracking techniques.
 - Daily rollups of analytics data for efficient reporting.
 - Retention strategy to manage data size and relevance over time.
+- Real-time dashboard updates via WebSockets for instant analytics feedback.
 
 ## Why
 
@@ -31,3 +35,47 @@ This stack is ideal for small websites running on a $5 DigitalOcean droplet beca
 ## Coding Style
 
 - Put CSS and JS in their own files rather than mixing with html
+
+## Development
+
+### Running the Application
+
+```bash
+# Start both API and dashboard development servers
+npm run dev
+
+# Or run them separately:
+npm run dev:api      # Starts Bun API server with WebSocket support on port 3000
+npm run dev:dashboard # Starts 11ty dashboard with live reload on port 8080
+
+# Build the dashboard for production
+npm run build
+
+# Initialize the database
+npm run db:init
+```
+
+### API Endpoints
+
+- `POST /track` - Receive tracking events
+- `GET /api/sites` - List all sites
+- `POST /api/sites` - Create a new site
+- `PUT /api/sites/:id` - Update a site
+- `DELETE /api/sites/:id` - Delete a site
+- `GET /api/stats/:siteId` - Get dashboard statistics
+- `GET /api/stats/:siteId/timeseries` - Get time series data for charts
+- `GET /api/stats/:siteId/realtime` - Get real-time visitor count
+- WebSocket endpoint at `ws://localhost:3000/` - Real-time stats updates
+
+### WebSocket Protocol
+
+The dashboard connects to the WebSocket server and subscribes to updates for a specific site:
+
+1. Client connects to `ws://localhost:3000/`
+2. Client sends: `{ "type": "subscribe", "siteId": "site-id-here" }`
+3. Server responds: `{ "type": "subscribed", "siteId": "...", "message": "..." }`
+4. When new events are tracked, server broadcasts: `{ "type": "stats-update", "siteId": "...", "stats": {...} }`
+5. Client sends periodic heartbeat: `{ "type": "ping" }`
+6. Server responds: `{ "type": "pong" }`
+
+The dashboard automatically reconnects if the connection is lost and displays a live connection status indicator.

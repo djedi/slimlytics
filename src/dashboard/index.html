@@ -13,6 +13,17 @@ title: Analytics Dashboard
           alt="Slimlytics"
           style="height: 40px; width: auto"
       /></a>
+      
+      <!-- Real-time Status Indicator -->
+      <div class="realtime-status" 
+           :class="{ 'connected': wsConnected, 'disconnected': !wsConnected }"
+           :title="wsConnected ? 'Real-time updates active' : 'Connecting to real-time updates...'"
+           style="display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 8px; border-radius: 12px; background: rgba(52, 152, 219, 0.1);">
+        <span class="status-dot" 
+              style="width: 8px; height: 8px; border-radius: 50%; animation: pulse 2s infinite;"
+              :style="{ background: wsConnected ? '#27ae60' : '#e74c3c' }"></span>
+        <span x-text="wsConnected ? 'Live' : 'Connecting...'"></span>
+      </div>
 
       <!-- Site Selector -->
       <div class="site-selector">
