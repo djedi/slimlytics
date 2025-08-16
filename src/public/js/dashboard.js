@@ -287,11 +287,25 @@ function dashboard() {
 				this.ws.onopen = () => {
 					console.log('WebSocket connected');
 					this.wsConnected = true;
-					// Subscribe to updates for the selected site
-					this.ws.send(JSON.stringify({
-						type: 'subscribe',
-						siteId: this.selectedSiteId
-					}));
+					
+					// Ensure WebSocket is in OPEN state before sending
+					if (this.ws.readyState === WebSocket.OPEN) {
+						// Subscribe to updates for the selected site
+						this.ws.send(JSON.stringify({
+							type: 'subscribe',
+							siteId: this.selectedSiteId
+						}));
+					} else {
+						// If not open yet, wait a bit and retry
+						setTimeout(() => {
+							if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+								this.ws.send(JSON.stringify({
+									type: 'subscribe',
+									siteId: this.selectedSiteId
+								}));
+							}
+						}, 100);
+					}
 					
 					// Start heartbeat to keep connection alive
 					this.startHeartbeat();
@@ -460,10 +474,22 @@ function dashboard() {
 			const chartWidth = width - padding.left - padding.right;
 			const chartHeight = height - padding.top - padding.bottom;
 
-			// Find max value for scaling
-			const maxValue = Math.max(...chartData, ...compareData);
+			// Ensure we have at least 2 data points to draw a line
+			if (chartData.length < 2) {
+				this.chartSvg = `
+					<svg width="100%" height="300" viewBox="0 0 600 300">
+						<text x="300" y="150" text-anchor="middle" font-size="14" fill="#7f8c8d">
+							No data available yet
+						</text>
+					</svg>
+				`;
+				return;
+			}
+
+			// Find max value for scaling (ensure min value of 1 to prevent division by 0)
+			const maxValue = Math.max(...chartData, ...compareData, 1);
 			const yScale = chartHeight / maxValue;
-			const xStep = chartWidth / (chartData.length - 1);
+			const xStep = chartWidth / Math.max(chartData.length - 1, 1); // Prevent division by 0
 
 			// Create path for chart data
 			const todayPath = chartData

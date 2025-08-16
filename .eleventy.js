@@ -1,5 +1,6 @@
 module.exports = (eleventyConfig) => {
 	eleventyConfig.addPassthroughCopy({ "src/public/images": "images" });
+	eleventyConfig.addPassthroughCopy({ "src/public/images/icons/favicon.ico": "favicon.ico" });
 	eleventyConfig.addPassthroughCopy({ "src/public/css": "css" });
 	eleventyConfig.addPassthroughCopy({ "src/public/js": "js" });
 	eleventyConfig.addPassthroughCopy({ "src/public/t.js": "t.js" });
