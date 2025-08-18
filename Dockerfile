@@ -18,8 +18,8 @@ COPY .eleventy.js* ./
 # Build the dashboard
 RUN npm run build
 
-# Stage 2: Production image
-FROM oven/bun:1-alpine
+# Stage 2: API Server
+FROM oven/bun:1-alpine AS api
 
 WORKDIR /app
 
@@ -42,12 +42,6 @@ COPY src/utils/ ./src/utils/
 COPY api/ ./api/
 COPY scripts/ ./scripts/
 
-# Copy built dashboard from previous stage
-COPY --from=dashboard-builder /build/dist ./dist
-
-# Copy public assets
-COPY src/public/ ./src/public/
-
 # Create data directory
 RUN mkdir -p /app/data
 
@@ -64,3 +58,17 @@ EXPOSE 3000
 
 # Run the application
 CMD ["sh", "-c", "bun run db:init && bun src/api/server.js"]
+
+# Stage 3: Web Server with Static Files
+FROM caddy:2-alpine AS web
+
+WORKDIR /srv
+
+# Copy built dashboard from dashboard-builder stage
+COPY --from=dashboard-builder /build/dist ./
+
+# Copy public assets
+COPY src/public/ ./public/
+
+# Default Caddyfile for serving static files (will be overridden in production)
+RUN echo ':80 { root * /srv; file_server; try_files {path} /index.html }' > /etc/caddy/Caddyfile

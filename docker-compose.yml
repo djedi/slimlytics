@@ -1,15 +1,28 @@
 version: '3.8'
 
 services:
-  slimlytics:
-    build: .
+  slimlytics-api:
+    build:
+      context: .
+      target: api
     ports:
       - "3000:3000"
-      - "8080:8080"
     volumes:
       - ./data:/app/data
     environment:
       - NODE_ENV=production
       - PORT=3000
       - SALT=change-this-salt-value
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      target: web
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - slimlytics-api
     restart: unless-stopped

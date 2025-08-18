@@ -235,12 +235,18 @@ async function buildAndPushImage(tag = "latest") {
 			await exec("docker buildx create --use --name slimlytics-builder");
 		}
 
-		// Build and push multi-architecture image (AMD64 and ARM64)
-		log.step("Building for linux/amd64 and linux/arm64...");
+		// Build and push multi-architecture images for each stage
+		log.step("Building API stage for linux/amd64 and linux/arm64...");
 		await exec(
-			`docker buildx build --platform linux/amd64,linux/arm64 -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${tag} --push .`,
+			`docker buildx build --platform linux/amd64,linux/arm64 --target api -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:api -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:api-${tag} --push .`,
 		);
-		log.success("Multi-architecture image built and pushed to Docker Hub");
+		
+		log.step("Building Web stage for linux/amd64 and linux/arm64...");
+		await exec(
+			`docker buildx build --platform linux/amd64,linux/arm64 --target web -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:web -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:web-${tag} --push .`,
+		);
+		
+		log.success("Multi-architecture images built and pushed to Docker Hub");
 	} catch (error) {
 		log.error("Failed to build or push Docker image");
 		log.warning("Make sure you are logged in to Docker Hub: docker login");
@@ -322,12 +328,31 @@ async function deploy(conn, server, isFirstDeployment = false) {
 		log.step("Starting services for the first time...");
 		await sshExec(conn, `cd ${server.path} && docker compose up -d`);
 	} else {
-		log.step("Updating services...");
-		await sshExec(conn, `cd ${server.path} && docker compose pull`);
-		await sshExec(
+		log.step("Updating configuration files...");
+		// Always update docker-compose.yml to handle service name changes
+		await scpUpload(
 			conn,
-			`cd ${server.path} && docker compose up -d --no-deps --force-recreate slimlytics`,
+			"docker-compose.production.yml",
+			`${server.path}/docker-compose.yml`,
 		);
+		
+		// Update Caddyfile if domain changed
+		const caddyfile = generateCaddyfile(server.domain);
+		writeFileSync(".tmp.caddyfile", caddyfile);
+		await scpUpload(conn, ".tmp.caddyfile", `${server.path}/Caddyfile`);
+		require("node:fs").unlinkSync(".tmp.caddyfile");
+		
+		log.step("Stopping old services...");
+		// Stop all services (handles both old and new service names)
+		try {
+			await sshExec(conn, `cd ${server.path} && docker compose down`);
+		} catch (e) {
+			log.warning("Could not stop services (they may not be running)");
+		}
+		
+		log.step("Starting updated services...");
+		await sshExec(conn, `cd ${server.path} && docker compose pull`);
+		await sshExec(conn, `cd ${server.path} && docker compose up -d`);
 	}
 
 	// Wait for services to be healthy

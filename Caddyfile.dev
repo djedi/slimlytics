@@ -1,0 +1,26 @@
+:80 {
+    # Root directory for static files
+    root * /srv
+
+    # Enable compression
+    encode gzip zstd
+
+    # Handle WebSocket connections for real-time updates
+    @websockets {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @websockets slimlytics-api:3000
+
+    # Proxy API requests to the Bun API server
+    @api {
+        path /api/* /track
+    }
+    reverse_proxy @api slimlytics-api:3000
+
+    # Serve static files for the dashboard
+    file_server
+
+    # SPA fallback for client-side routing (if needed)
+    try_files {path} /index.html
+}
