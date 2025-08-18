@@ -11,8 +11,9 @@ COPY package*.json ./
 # Install dependencies
 RUN npm ci
 
-# Copy dashboard source files
+# Copy dashboard source files and public assets
 COPY src/dashboard/ ./src/dashboard/
+COPY src/public/ ./src/public/
 COPY .eleventy.js* ./
 
 # Build the dashboard
@@ -64,11 +65,8 @@ FROM caddy:2-alpine AS web
 
 WORKDIR /srv
 
-# Copy built dashboard from dashboard-builder stage
+# Copy built dashboard from dashboard-builder stage (includes all static files)
 COPY --from=dashboard-builder /build/dist ./
-
-# Copy public assets
-COPY src/public/ ./public/
 
 # Default Caddyfile for serving static files (will be overridden in production)
 RUN echo ':80 { root * /srv; file_server; try_files {path} /index.html }' > /etc/caddy/Caddyfile

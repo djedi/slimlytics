@@ -336,7 +336,7 @@ async function deploy(conn, server, isFirstDeployment = false) {
 			`${server.path}/docker-compose.yml`,
 		);
 		
-		// Update Caddyfile if domain changed
+		// Update Caddyfile to ensure latest configuration
 		const caddyfile = generateCaddyfile(server.domain);
 		writeFileSync(".tmp.caddyfile", caddyfile);
 		await scpUpload(conn, ".tmp.caddyfile", `${server.path}/Caddyfile`);
@@ -351,8 +351,20 @@ async function deploy(conn, server, isFirstDeployment = false) {
 		}
 		
 		log.step("Starting updated services...");
+		// Pull latest images
 		await sshExec(conn, `cd ${server.path} && docker compose pull`);
-		await sshExec(conn, `cd ${server.path} && docker compose up -d`);
+		
+		// Start services with forced recreation to ensure config changes take effect
+		await sshExec(conn, `cd ${server.path} && docker compose up -d --force-recreate`);
+		
+		// Reload Caddy configuration to ensure it picks up the new Caddyfile
+		log.step("Reloading Caddy configuration...");
+		try {
+			await sshExec(conn, `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`);
+			log.success("Caddy configuration reloaded");
+		} catch (e) {
+			log.warning("Could not reload Caddy config (container may be restarting)");
+		}
 	}
 
 	// Wait for services to be healthy
