@@ -3,17 +3,12 @@ layout: base.njk
 title: Analytics Dashboard
 ---
 
+{% include "header.njk" %}
+
 <div class="container" x-data="dashboard()" x-init="init()">
-  <!-- Header with Site and Date Selectors -->
-  <div class="header">
-    <div style="display: flex; align-items: center; gap: 20px">
-      <a href="/"
-        ><img
-          src="/images/slimlytics.png"
-          alt="Slimlytics"
-          style="height: 40px; width: auto"
-      /></a>
-      
+  <!-- Dashboard Controls -->
+  <div class="dashboard-controls" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem;">
+    <div style="display: flex; align-items: center; gap: 1rem;">
       <!-- Real-time Status Indicator -->
       <div class="realtime-status" 
            :class="{ 'connected': wsConnected, 'disconnected': !wsConnected }"
@@ -23,63 +18,6 @@ title: Analytics Dashboard
               style="width: 8px; height: 8px; border-radius: 50%; animation: pulse 2s infinite;"
               :style="{ background: wsConnected ? '#27ae60' : '#e74c3c' }"></span>
         <span x-text="wsConnected ? 'Live' : 'Connecting...'"></span>
-      </div>
-
-      <!-- Site Selector -->
-      <div class="site-selector">
-        <button
-          class="dropdown-btn"
-          @click="siteDropdownOpen = !siteDropdownOpen"
-        >
-          <span class="emoji-icon">🌐</span>
-          <span x-text="selectedSite"></span>
-          <span style="margin-left: auto">▼</span>
-        </button>
-        <div
-          class="dropdown-menu"
-          x-show="siteDropdownOpen"
-          @click.outside="siteDropdownOpen = false"
-          x-cloak
-        >
-          <template x-for="site in sites" :key="site.id">
-            <div
-              class="dropdown-item"
-              :class="{'active': selectedSite === site.name}"
-              @click="selectSite(site)"
-            >
-              <span x-text="site.name"></span>
-            </div>
-          </template>
-          <div
-            style="
-              border-top: 1px solid #e9ecef;
-              margin-top: 5px;
-              padding-top: 5px;
-            "
-          >
-            <div class="dropdown-item" @click="goToSiteSettings()">
-              <span>⚙️ Site Settings</span>
-            </div>
-            <div
-              class="dropdown-item"
-              @click="window.location.href='/add-site'"
-            >
-              <span>➕ Add New Site</span>
-            </div>
-            <div
-              class="dropdown-item"
-              @click="window.location.href='/test-events'"
-            >
-              <span>🧪 Test Events</span>
-            </div>
-            <div
-              class="dropdown-item"
-              @click="window.location.href='/anti-adblock'"
-            >
-              <span>🛡️ Anti-Adblock Setup</span>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
 

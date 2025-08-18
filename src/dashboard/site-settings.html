@@ -3,17 +3,10 @@ layout: base.njk
 title: Site Settings
 ---
 
+{% include "header.njk" %}
+
 <div class="container" x-data="siteSettings()" x-init="init()">
-    <!-- Header -->
-    <div class="header">
-        <div style="display: flex; align-items: center; gap: 20px;">
-            <a href="/"><img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;"></a>
-            <h1 style="font-size: 24px; color: #2c3e50; margin: 0;">Site Settings</h1>
-        </div>
-        <a href="/" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 16px; border-radius: 5px; font-size: 14px;">
-            ← Back to Dashboard
-        </a>
-    </div>
+    <h1>Site Settings</h1>
 
     <!-- Loading State -->
     <div x-show="loading" class="card" style="text-align: center; padding: 40px;">
@@ -154,7 +147,7 @@ title: Site Settings
                 </div>
 
                 <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e9ecef;">
-                    <a :href="`/?site=${site.id}`"
+                    <a href="/"
                        style="display: block; text-align: center; background: #3498db; color: white; text-decoration: none; padding: 10px; border-radius: 5px; font-weight: 600;">
                         📊 View Full Analytics
                     </a>

@@ -66,33 +66,16 @@ const languages = [
 
 let eventCount = 0;
 
-// Load sites on page load
-async function loadSites() {
-	try {
-		const response = await fetch(
-			window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"),
-		);
-		const sites = await response.json();
-
-		const select = document.getElementById("site-select");
-		select.innerHTML = '<option value="">Select a site...</option>';
-
-		for (const site of sites) {
-			const option = document.createElement("option");
-			option.value = site.id;
-			option.textContent = `${site.name} (${site.domain})`;
-			select.appendChild(option);
-		}
-	} catch (error) {
-		console.error("Failed to load sites:", error);
-		showStatus("Failed to load sites", "error");
-	}
+// Initialize on page load
+async function initTestEvents() {
+	// Nothing to load since site is managed by the header
+	updateStats();
 }
 
 // Generate random event data
-function generateRandomEvent(siteId) {
-	const site = document.querySelector(`#site-select option[value="${siteId}"]`);
-	const domain = site ? site.textContent.match(/\((.*?)\)/)[1] : "example.com";
+async function generateRandomEvent(siteId) {
+	const currentSite = await window.SiteManager.getSelectedSite();
+	const domain = currentSite ? currentSite.domain : "example.com";
 
 	return {
 		site_id: siteId,
@@ -138,11 +121,12 @@ async function sendEvent(eventData) {
 
 // Send random page views
 async function sendRandomPageViews() {
-	const siteId = document.getElementById("site-select").value;
-	if (!siteId) {
+	const currentSite = await window.SiteManager.getSelectedSite();
+	if (!currentSite) {
 		showStatus("Please select a site first", "error");
 		return;
 	}
+	const siteId = currentSite.id;
 
 	const count = Number.parseInt(document.getElementById("event-count").value);
 	const delay = Number.parseInt(document.getElementById("delay-ms").value);
@@ -151,7 +135,7 @@ async function sendRandomPageViews() {
 
 	let successCount = 0;
 	for (let i = 0; i < count; i++) {
-		const eventData = generateRandomEvent(siteId);
+		const eventData = await generateRandomEvent(siteId);
 		const success = await sendEvent(eventData);
 		if (success) successCount++;
 
@@ -168,17 +152,18 @@ async function sendRandomPageViews() {
 
 // Send burst of events
 async function sendBurstEvents() {
-	const siteId = document.getElementById("site-select").value;
-	if (!siteId) {
+	const currentSite = await window.SiteManager.getSelectedSite();
+	if (!currentSite) {
 		showStatus("Please select a site first", "error");
 		return;
 	}
+	const siteId = currentSite.id;
 
 	showStatus("Sending burst of 50 events...", "success");
 
 	const promises = [];
 	for (let i = 0; i < 50; i++) {
-		const eventData = generateRandomEvent(siteId);
+		const eventData = await generateRandomEvent(siteId);
 		promises.push(sendEvent(eventData));
 	}
 
@@ -193,11 +178,12 @@ async function sendBurstEvents() {
 
 // Send custom events
 async function sendCustomEvents() {
-	const siteId = document.getElementById("site-select").value;
-	if (!siteId) {
+	const currentSite = await window.SiteManager.getSelectedSite();
+	if (!currentSite) {
 		showStatus("Please select a site first", "error");
 		return;
 	}
+	const siteId = currentSite.id;
 
 	const count = Number.parseInt(document.getElementById("event-count").value);
 	const delay = Number.parseInt(document.getElementById("delay-ms").value);
@@ -208,7 +194,7 @@ async function sendCustomEvents() {
 
 	let successCount = 0;
 	for (let i = 0; i < count; i++) {
-		const baseEvent = generateRandomEvent(siteId);
+		const baseEvent = await generateRandomEvent(siteId);
 		const eventData = {
 			...baseEvent,
 			event_name:
@@ -283,4 +269,4 @@ function updateStats() {
 }
 
 // Initialize on page load
-document.addEventListener("DOMContentLoaded", loadSites);
+document.addEventListener("DOMContentLoaded", initTestEvents);

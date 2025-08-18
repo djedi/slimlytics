@@ -5,16 +5,11 @@ title: Test Events - Slimlytics
 
 <link rel="stylesheet" href="/css/test-events.css">
 
+{% include "header.njk" %}
+
 <div class="test-container">
     <h1>Test Event Generator</h1>
     <p>Use this page to send test events to your sites and verify the dashboard is updating correctly.</p>
-    
-    <div class="control-group">
-        <label for="site-select">Select Site:</label>
-        <select id="site-select">
-            <option value="">Loading sites...</option>
-        </select>
-    </div>
     
     <div class="control-group">
         <label for="event-count">Number of Events to Send:</label>

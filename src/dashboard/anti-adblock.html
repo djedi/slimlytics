@@ -5,6 +5,8 @@ title: Anti-Adblock Setup
 
 <link rel="stylesheet" href="/css/anti-adblock.css">
 
+{% include "header.njk" %}
+
 <div class="container">
   <h1>Anti-Adblock Tracking Setup</h1>
   
@@ -14,13 +16,6 @@ title: Anti-Adblock Setup
   </div>
 
   <form id="anti-adblock-form">
-    <div class="form-group">
-      <label for="site-select">Select Site:</label>
-      <select id="site-select" name="siteId" required>
-        <option value="">Loading sites...</option>
-      </select>
-    </div>
-
     <div class="form-group">
       <label for="server-type">Server Type / Method:</label>
       <select id="server-type" name="serverType">

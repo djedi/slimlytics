@@ -2,8 +2,13 @@
 
 function siteSettings() {
 	return {
-		site: null,
-		originalSite: null,
+		site: {
+			id: '',
+			name: '',
+			domain: '',
+			created_at: ''
+		},
+		originalSite: {},
 		stats: {},
 		loading: true,
 		updateLoading: false,
@@ -16,20 +21,37 @@ function siteSettings() {
 		clearDataRange: "all",
 		trackingCode: "",
 		copyButtonText: "📋 Copy",
+		
+		formatDate(dateString) {
+			if (!dateString) return '';
+			const date = new Date(dateString);
+			return date.toLocaleDateString('en-US', { 
+				month: 'short', 
+				day: 'numeric', 
+				year: 'numeric' 
+			});
+		},
 
 		async init() {
-			// Get site ID from URL params
-			const urlParams = new URLSearchParams(window.location.search);
-			const siteId = urlParams.get("id");
-			console.log("Initializing site settings for site ID:", siteId);
+			// Get current site from SiteManager
+			const currentSite = await window.SiteManager.getSelectedSite();
+			console.log("Initializing site settings for site:", currentSite);
 
-			if (!siteId) {
-				window.location.href = "/";
-				return;
+			if (!currentSite) {
+				// No site selected, try to auto-select
+				const sites = await window.SiteManager.getAllSites();
+				if (sites.length === 0) {
+					window.location.href = "/add-site";
+					return;
+				}
+				// Auto-select first site
+				window.SiteManager.setSelectedSite(sites[0]);
+				await this.loadSite(sites[0].id);
+			} else {
+				await this.loadSite(currentSite.id);
 			}
-
-			await this.loadSite(siteId);
-			await this.loadStats(siteId);
+			
+			await this.loadStats(this.site.id);
 			this.generateTrackingCode();
 		},
 
@@ -38,12 +60,15 @@ function siteSettings() {
 				const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
 				if (response.ok) {
 					const sites = await response.json();
-					this.site = sites.find((s) => s.id === siteId);
-					this.originalSite = { ...this.site };
-
-					if (!this.site) {
+					const foundSite = sites.find((s) => s.id === siteId);
+					
+					if (!foundSite) {
 						window.location.href = "/";
+						return; // Don't update site if not found
 					}
+					
+					this.site = foundSite;
+					this.originalSite = { ...this.site };
 				} else {
 					// Mock data for development
 					this.site = {
@@ -63,7 +88,10 @@ function siteSettings() {
 					created_at: "2024-01-15T10:00:00Z",
 				};
 				this.originalSite = { ...this.site };
-			} finally {
+			}
+			
+			// Only set loading to false if we have a valid site
+			if (this.site && this.site.id) {
 				this.loading = false;
 			}
 		},
@@ -82,21 +110,19 @@ function siteSettings() {
 		generateTrackingCode() {
 			if (!this.site) return;
 
-			const baseUrl = window.location.origin;
+			const apiBase = window.location.hostname === 'localhost' 
+				? 'http://localhost:3000' 
+				: window.location.origin;
+			
 			// Split the script tags to avoid parsing issues
 			const scriptOpen = "<scr" + "ipt>";
 			const scriptClose = "</scr" + "ipt>";
+			const noscriptOpen = "<noscr" + "ipt>";
+			const noscriptClose = "</noscr" + "ipt>";
 
 			this.trackingCode = `<!-- Slimlytics Tracking Code -->
-${scriptOpen}
-(function() {
-    var script = document.createElement('script');
-    script.src = '${baseUrl}/t.js';
-    script.async = true;
-    script.dataset.site = '${this.site.id}';
-    document.head.appendChild(script);
-})();
-${scriptClose}
+${scriptOpen} async data-id="${this.site.id}" src="${apiBase}/sa.js"${scriptClose}
+${noscriptOpen}<p><img alt="Slimlytics" width="1" height="1" src="${apiBase}/${this.site.id}ns.gif" /></p>${noscriptClose}
 <!-- End Slimlytics Tracking Code -->`;
 		},
 
@@ -122,6 +148,12 @@ ${scriptClose}
 
 				if (response.ok) {
 					this.originalSite = { ...this.site };
+					// Update the site in SiteManager so the header reflects changes
+					window.SiteManager.setSelectedSite({
+						id: this.site.id,
+						name: this.site.name,
+						domain: this.site.domain
+					});
 					this.updateSuccess = true;
 					setTimeout(() => {
 						this.updateSuccess = false;

@@ -1,43 +1,22 @@
 document.addEventListener("DOMContentLoaded", async () => {
 	const form = document.getElementById("anti-adblock-form");
-	const siteSelect = document.getElementById("site-select");
 	const configOutput = document.getElementById("config-output");
-
-	// Load sites
-	try {
-		const response = await fetch(
-			window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"),
-		);
-		const sites = await response.json();
-
-		siteSelect.innerHTML = '<option value="">Select a site...</option>';
-		for (const site of sites) {
-			const option = document.createElement("option");
-			option.value = site.id;
-			option.textContent = `${site.name} (${site.domain})`;
-			siteSelect.appendChild(option);
-		}
-	} catch (error) {
-		console.error("Failed to load sites:", error);
-		siteSelect.innerHTML = '<option value="">Failed to load sites</option>';
-	}
 
 	form.addEventListener("submit", async (e) => {
 		e.preventDefault();
 
-		const formData = new FormData(form);
-		const siteId = formData.get("siteId");
-		const jsPath = formData.get("jsPath");
-		const beaconPath = formData.get("beaconPath");
-
-		if (!siteId) {
-			alert("Please select a site");
+		// Get current site from SiteManager
+		const currentSite = await window.SiteManager.getSelectedSite();
+		if (!currentSite) {
+			alert("Please select a site first");
 			return;
 		}
 
-		// Get selected site info
-		const selectedOption = siteSelect.options[siteSelect.selectedIndex];
-		const siteDomain = selectedOption.textContent.match(/\(([^)]+)\)/)[1];
+		const formData = new FormData(form);
+		const siteId = currentSite.id;
+		const siteDomain = currentSite.domain;
+		const jsPath = formData.get("jsPath");
+		const beaconPath = formData.get("beaconPath");
 
 		// Generate random-looking paths if user wants to obfuscate
 		const jsPathClean = jsPath.startsWith("/") ? jsPath.substring(1) : jsPath;
@@ -62,7 +41,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 # TRACKING SCRIPT
 handle /${jsPathClean} {
-    rewrite /${jsPathClean} /js/${jsPathClean}?siteId=${siteId}
+    rewrite /${jsPathClean} /sa.js
     reverse_proxy ${apiBase} {
         header_up Host {upstream_hostport}
     }
@@ -74,19 +53,18 @@ handle /${beaconPathClean} {
     reverse_proxy ${apiBase} {
         header_up Host {upstream_hostport}
     }
+}
+
+# NOSCRIPT GIF BEACON
+handle /${beaconPathClean}/*.gif {
+    reverse_proxy ${apiBase} {
+        header_up Host {upstream_hostport}
+    }
 }`;
 
-		// Generate tracking code
-		const trackingCode = `<script>
-  (function() {
-    var script = document.createElement('script');
-    script.async = true;
-    script.src = '/${jsPathClean}';
-    script.setAttribute('data-site-id', '${siteId}');
-    script.setAttribute('data-beacon-url', '/${beaconPathClean}');
-    document.head.appendChild(script);
-  })();
-</script>`;
+		// Generate tracking code (simplified like Clicky)
+		const trackingCode = `<script async data-id="${siteId}" src="/${jsPathClean}"></script>
+<noscript><p><img alt="Slimlytics" width="1" height="1" src="/${beaconPathClean}/${siteId}ns.gif" /></p></noscript>`;
 
 		// Generate test URLs
 		const testUrls = `

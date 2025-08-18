@@ -1,0 +1,67 @@
+---
+layout: base.njk
+title: Tracking Code
+---
+
+<link rel="stylesheet" href="/css/tracking-code.css">
+
+{% include "header.njk" %}
+
+<div class="container">
+  <h1>Tracking Code</h1>
+
+  <div class="yellow-box">
+    Copy the code below into your website's HTML to start tracking!
+  </div>
+
+  <div class="options-section">
+    <a href="#" class="link">Plugins</a>
+    <a href="#" class="link">Verify tracking code</a>
+  </div>
+
+  <div class="checkbox-options">
+    <label>
+      <input type="checkbox" id="affiliate-badge"> Affiliate badge (<a href="#" class="help-link">What is this?</a>)
+    </label>
+    <label>
+      <input type="checkbox" id="noscript-tracking" checked> Track visitors that have JavaScript disabled
+    </label>
+    <div class="note">Your site must set a "referrer-policy: no-referrer-when-downgrade" header in order for the noscript code to log full page URLs.</div>
+  </div>
+
+  <div class="checkbox-options">
+    <label>
+      <input type="checkbox" id="tag-manager"> Tag manager code (GTM, etc)
+    </label>
+  </div>
+
+  <h2>Tracking code</h2>
+  
+  <div class="code-section">
+    <div class="code-container">
+      <pre><code id="tracking-code"></code></pre>
+      <button class="copy-btn" onclick="copyCode()">Copy</button>
+    </div>
+  </div>
+
+  <h2>Anti-adblock tracking code</h2>
+
+  <div class="yellow-box warning">
+    <strong>Note:</strong> This is an <em>alternative</em> tracking method, for advanced users only. Please use the standard code <em>above</em>, unless you know what you are doing.
+  </div>
+
+  <p class="description">
+    Approximately 15% of people use ad-blockers, most of which also block trackers — even <a href="#" class="link">privacy-friendly trackers</a> like Slimlytics. 
+    This means that a very significant portion of your traffic may not be logged by most services. But with Slimlytics's 
+    <a href="/anti-adblock" class="link">reverse proxy</a> tracking configuration, the tracking code and all tracking beacons will 
+    route through generic pathnames on <em>your</em> website's domain name, instead of ours, allowing tracking to occur on almost every device and browser.
+  </p>
+
+  <div class="anti-adblock-form">
+    <button onclick="window.location.href='/anti-adblock'" class="btn btn-secondary">
+      Configure Anti-Adblock Tracking →
+    </button>
+  </div>
+</div>
+
+<script src="/js/tracking-code.js"></script>

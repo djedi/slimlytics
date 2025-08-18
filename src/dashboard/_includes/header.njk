@@ -1,0 +1,285 @@
+<!-- Global Header Component -->
+<div class="global-header" x-data="globalHeader()" x-init="init()">
+  <div class="header-content">
+    <div class="header-left">
+      <!-- Logo -->
+      <a href="/" class="logo-link">
+        <img src="/images/slimlytics.png" alt="Slimlytics" class="logo">
+      </a>
+      
+      <!-- Site Selector -->
+      <div class="site-selector" x-show="sites.length > 0">
+        <button class="site-selector-btn" @click="siteDropdownOpen = !siteDropdownOpen">
+          <span class="emoji-icon">🌐</span>
+          <span x-text="selectedSiteName || 'Select Site'"></span>
+          <span class="dropdown-arrow">▼</span>
+        </button>
+        
+        <div class="site-dropdown" 
+             x-show="siteDropdownOpen" 
+             @click.outside="siteDropdownOpen = false"
+             x-cloak>
+          <template x-for="site in sites" :key="site.id">
+            <div class="site-option" 
+                 :class="{'active': selectedSiteId === site.id}"
+                 @click="selectSite(site)">
+              <span x-text="site.name"></span>
+              <span class="site-domain" x-text="'(' + site.domain + ')'"></span>
+            </div>
+          </template>
+          
+          <div class="dropdown-divider"></div>
+          
+          <div class="site-option" @click="navigateTo('/add-site')">
+            <span>➕ Add New Site</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <!-- Navigation Links -->
+      <nav class="header-nav">
+        <a href="/" class="nav-link" :class="{'active': isCurrentPage('/')}">
+          <span>📊 Dashboard</span>
+        </a>
+        <a href="/tracking-code" class="nav-link" :class="{'active': isCurrentPage('/tracking-code')}">
+          <span>📋 Tracking Code</span>
+        </a>
+        <a href="/site-settings" class="nav-link" :class="{'active': isCurrentPage('/site-settings')}">
+          <span>⚙️ Settings</span>
+        </a>
+        <a href="/test-events" class="nav-link" :class="{'active': isCurrentPage('/test-events')}">
+          <span>🧪 Test</span>
+        </a>
+      </nav>
+    </div>
+  </div>
+</div>
+
+<style>
+.global-header {
+  background: white;
+  border-bottom: 1px solid #e1e8ed;
+  padding: 1rem 0;
+  margin-bottom: 2rem;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.header-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.logo-link {
+  display: flex;
+  align-items: center;
+}
+
+.logo {
+  height: 32px;
+  width: auto;
+}
+
+.site-selector {
+  position: relative;
+}
+
+.site-selector-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  min-width: 200px;
+  transition: all 0.2s;
+}
+
+.site-selector-btn:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.emoji-icon {
+  font-size: 1.1rem;
+}
+
+.dropdown-arrow {
+  margin-left: auto;
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+.site-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.5rem;
+  background: white;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  min-width: 250px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.site-option {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.site-option:hover {
+  background: #f8f9fa;
+}
+
+.site-option.active {
+  background: #e7f3ff;
+  color: #0066cc;
+}
+
+.site-domain {
+  font-size: 0.85rem;
+  color: #6c757d;
+  margin-left: 0.25rem;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #e1e8ed;
+  margin: 0.5rem 0;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+}
+
+.header-nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.nav-link {
+  padding: 0.5rem 1rem;
+  color: #495057;
+  text-decoration: none;
+  border-radius: 6px;
+  transition: all 0.2s;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+.nav-link:hover {
+  background: #f8f9fa;
+  color: #212529;
+}
+
+.nav-link.active {
+  background: #e7f3ff;
+  color: #0066cc;
+  font-weight: 500;
+}
+
+[x-cloak] {
+  display: none !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+  
+  .header-left,
+  .header-right {
+    width: 100%;
+  }
+  
+  .header-nav {
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+  
+  .site-selector-btn {
+    width: 100%;
+  }
+}
+</style>
+
+<script>
+function globalHeader() {
+  return {
+    sites: [],
+    selectedSiteId: null,
+    selectedSiteName: null,
+    siteDropdownOpen: false,
+    
+    async init() {
+      // Load sites
+      this.sites = await window.SiteManager.getAllSites();
+      
+      // Get current selected site
+      const currentSite = await window.SiteManager.getSelectedSite();
+      if (currentSite) {
+        this.selectedSiteId = currentSite.id;
+        this.selectedSiteName = currentSite.name;
+      } else if (this.sites.length === 1) {
+        // Auto-select if only one site
+        this.selectSite(this.sites[0]);
+      }
+      
+      // Listen for site changes from other components
+      window.addEventListener('site-changed', (e) => {
+        this.selectedSiteId = e.detail.id;
+        this.selectedSiteName = e.detail.name;
+      });
+    },
+    
+    selectSite(site) {
+      this.selectedSiteId = site.id;
+      this.selectedSiteName = site.name;
+      this.siteDropdownOpen = false;
+      
+      // Save selection
+      window.SiteManager.setSelectedSite(site);
+      
+      // Reload current page to refresh data
+      window.location.reload();
+    },
+    
+    navigateTo(path) {
+      window.location.href = path;
+    },
+    
+    isCurrentPage(path) {
+      // Normalize paths by removing trailing slashes for comparison
+      const currentPath = window.location.pathname.replace(/\/$/, '') || '/';
+      const checkPath = path.replace(/\/$/, '') || '/';
+      return currentPath === checkPath;
+    }
+  };
+}
+</script>

@@ -6,6 +6,7 @@ import { trackEvent, getStats } from '../db/queries.js';
 import { sitesRoutes } from './sites.ts';
 import { statsRoutes } from './stats.ts';
 import { setupTrackingScriptRoute } from './routes/tracking-script.js';
+import { setupSimplifiedTrackingRoutes } from './routes/simplified-tracking.js';
 import geoip from '../../api/services/geoip.js';
 
 const app = new Hono();
@@ -19,8 +20,9 @@ const wsClients = new Map();
 
 app.use('*', cors());
 
-// Setup tracking script route
+// Setup tracking script routes
 setupTrackingScriptRoute(app);
+setupSimplifiedTrackingRoutes(app);
 
 // Sites API routes
 app.get('/api/sites', async (c) => {

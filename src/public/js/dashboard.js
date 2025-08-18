@@ -3,10 +3,7 @@
 function dashboard() {
 	return {
 		// Site management
-		sites: [],
-		selectedSite: null,
 		selectedSiteId: null,
-		siteDropdownOpen: false,
 
 		// Date range management
 		selectedDateRange: "today",
@@ -51,19 +48,21 @@ function dashboard() {
 		wsHeartbeatInterval: null,
 
 		async init() {
-			// Load sites first
-			await this.loadSites();
-
-			// Check if we have sites, if not redirect to add-site page
-			if (this.sites.length === 0) {
-				window.location.href = "/add-site";
-				return;
-			}
-
-			// Initialize with the first site
-			if (!this.selectedSite && this.sites.length > 0) {
-				this.selectedSite = this.sites[0].name;
-				this.selectedSiteId = this.sites[0].id;
+			// Get current site from SiteManager
+			const currentSite = await window.SiteManager.getSelectedSite();
+			
+			if (!currentSite) {
+				// No site selected, check if we need to redirect
+				const sites = await window.SiteManager.getAllSites();
+				if (sites.length === 0) {
+					window.location.href = "/add-site";
+					return;
+				}
+				// Auto-select first site
+				window.SiteManager.setSelectedSite(sites[0]);
+				this.selectedSiteId = sites[0].id;
+			} else {
+				this.selectedSiteId = currentSite.id;
 			}
 
 			// Load stats for the selected site
@@ -78,49 +77,6 @@ function dashboard() {
 			window.addEventListener('beforeunload', () => {
 				this.disconnectWebSocket();
 			});
-		},
-
-		async loadSites() {
-			try {
-				const response = await fetch(
-					window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"),
-				);
-				if (response.ok) {
-					const sitesData = await response.json();
-					this.sites = sitesData || [];
-				} else {
-					// If API doesn't exist yet, use mock data for now
-					this.sites = [
-						{ id: "1", name: "example.com", domain: "example.com" },
-						{ id: "2", name: "blog.example.com", domain: "blog.example.com" },
-						{ id: "3", name: "shop.example.com", domain: "shop.example.com" },
-					];
-				}
-			} catch (err) {
-				console.log("Sites API not available, using mock data");
-				// Use mock data if API isn't ready
-				this.sites = [
-					{ id: "1", name: "example.com", domain: "example.com" },
-					{ id: "2", name: "blog.example.com", domain: "blog.example.com" },
-					{ id: "3", name: "shop.example.com", domain: "shop.example.com" },
-				];
-			}
-		},
-
-		selectSite(site) {
-			this.selectedSite = site.name;
-			this.selectedSiteId = site.id;
-			this.siteDropdownOpen = false;
-			// Reload stats for the new site
-			this.loadStats();
-			// Reconnect WebSocket for the new site
-			this.reconnectWebSocket();
-		},
-
-		goToSiteSettings() {
-			if (this.selectedSiteId) {
-				window.location.href = `/site-settings/?id=${this.selectedSiteId}`;
-			}
 		},
 
 		selectDateRange(range) {

@@ -3,17 +3,10 @@ layout: base.njk
 title: Add Site
 ---
 
+{% include "header.njk" %}
+
 <div class="container" x-data="addSite()" x-init="init()">
-    <!-- Header -->
-    <div class="header">
-        <div style="display: flex; align-items: center; gap: 20px;">
-            <a href="/"><img src="/images/slimlytics.png" alt="Slimlytics" style="height: 40px; width: auto;"></a>
-            <h1 style="font-size: 24px; color: #2c3e50; margin: 0;" x-text="hasExistingSites ? 'Add New Site' : 'Add Your First Site'">Add Your First Site</h1>
-        </div>
-        <a x-show="hasExistingSites" href="/" style="background: #6c757d; color: white; text-decoration: none; padding: 8px 16px; border-radius: 5px; font-size: 14px;">
-            ← Back to Dashboard
-        </a>
-    </div>
+    <h1 x-text="hasExistingSites ? 'Add New Site' : 'Add Your First Site'">Add Your First Site</h1>
 
     <!-- Add Site Form -->
     <div class="card" style="max-width: 600px; margin: 0 auto;">

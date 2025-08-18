@@ -17,6 +17,7 @@ So I want a small, fun, easy to read analytics app that can run in docker on a $
 The system uses a Bun-based ingest API to efficiently receive tracking data, which is stored in SQLite for lightweight and reliable persistence. The dashboard is built as a static site using 11ty, with HTMX and Alpine.js enabling server-driven UI updates and small client-side enhancements for a responsive and dynamic interface without heavy frontend frameworks.
 
 ### Real-time Updates
+
 The dashboard features WebSocket-based real-time updates. When new tracking events are received, the server broadcasts updated statistics to all connected dashboard clients watching that specific site. This provides instant feedback without polling, reducing server load while improving user experience.
 
 ## Features
@@ -92,6 +93,7 @@ The dashboard automatically reconnects if the connection is lost and displays a 
 The application uses MaxMind GeoLite2 databases to provide geographic information about visitors:
 
 ### Setup
+
 1. Create a free MaxMind account at https://www.maxmind.com/en/geolite2/signup
 2. Add your credentials to `.env`:
    ```
@@ -101,19 +103,27 @@ The application uses MaxMind GeoLite2 databases to provide geographic informatio
 3. Download databases: `npm run maxmind:download`
 
 ### Features
+
 - **Location Data**: Tracks country, city, region, coordinates, timezone, and ASN for each visitor
 - **Dashboard Display**: Shows top countries with flag emojis and top cities
 - **Privacy-Friendly**: IP addresses are hashed, only location data is stored
 - **Database Storage**: Location data is stored in additional columns in the events table
 
 ### Architecture
+
 - **GeoIP Service** (`api/services/geoip.js`): Handles database loading and IP lookups
 - **Download Script** (`scripts/download-maxmind.js`): Downloads and extracts MaxMind databases
 - **Database Migration** (`scripts/add-geo-columns.js`): Adds geo columns to existing database
 - **Integration**: The `/track` endpoint automatically performs GeoIP lookups for incoming events
 
 ### Database Updates
+
 MaxMind updates their databases twice weekly (Tuesdays and Fridays). You can download updates up to 30 times per day. To keep data current:
+
 - Run `npm run maxmind:download` periodically (weekly recommended)
 - Consider setting up a cron job for automatic updates
 - Databases are stored in `data/maxmind/` (gitignored)
+
+## Notes
+
+- Don't do this `await fetch('/api/sites')`; Instead, do this: `await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"));`
