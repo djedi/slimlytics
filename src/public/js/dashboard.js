@@ -125,10 +125,9 @@ function dashboard() {
 				}
 
 				// Fetch time series data for chart
-				const days = this.getDaysForRange();
 				const timeseriesResponse = await fetch(
 					window.SLIMLYTICS_CONFIG.apiEndpoint(
-						`/api/stats/${this.selectedSiteId}/timeseries?days=${days}`,
+						`/api/stats/${this.selectedSiteId}/timeseries?start=${dateRange.start}&end=${dateRange.end}`,
 					),
 				);
 
@@ -138,18 +137,25 @@ function dashboard() {
 					this.trendVisitors = data.visitors;
 					this.trendPageViews = data.pageViews;
 					
+					// Calculate previous period for comparison
+					const currentStart = new Date(dateRange.start);
+					const currentEnd = new Date(dateRange.end);
+					const duration = currentEnd.getTime() - currentStart.getTime();
+					
+					const compareStart = new Date(currentStart.getTime() - duration);
+					const compareEnd = currentStart;
+					
 					// Fetch comparison data (previous period)
 					const compareResponse = await fetch(
 						window.SLIMLYTICS_CONFIG.apiEndpoint(
-							`/api/stats/${this.selectedSiteId}/timeseries?days=${days * 2}`,
+							`/api/stats/${this.selectedSiteId}/timeseries?start=${compareStart.toISOString()}&end=${compareEnd.toISOString()}`,
 						),
 					);
 					
 					if (compareResponse.ok) {
 						const compareData = await compareResponse.json();
-						// Take the first half as comparison (previous period)
-						this.compareVisitors = compareData.visitors.slice(0, days);
-						this.comparePageViews = compareData.pageViews.slice(0, days);
+						this.compareVisitors = compareData.visitors;
+						this.comparePageViews = compareData.pageViews;
 					}
 					
 					this.updateChart();
@@ -229,6 +235,24 @@ function dashboard() {
 					start = new Date(today.getTime() - 24 * 60 * 60 * 1000);
 					end = today;
 					break;
+				case "2days":
+					start = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
+					end = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+					break;
+				case "thisweek":
+					// Start from Monday of current week
+					const dayOfWeek = now.getDay();
+					const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+					start = new Date(today.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
+					end = now;
+					break;
+				case "lastweek":
+					// Full previous week (Monday to Sunday)
+					const currentDayOfWeek = now.getDay();
+					const daysToLastMonday = currentDayOfWeek === 0 ? 13 : currentDayOfWeek + 6;
+					start = new Date(today.getTime() - daysToLastMonday * 24 * 60 * 60 * 1000);
+					end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
+					break;
 				case "7days":
 					start = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
 					end = now;
@@ -262,6 +286,14 @@ function dashboard() {
 					return 1;
 				case "yesterday":
 					return 2;
+				case "2days":
+					return 3;
+				case "thisweek":
+					const dayOfWeek = new Date().getDay();
+					const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+					return daysFromMonday + 1;
+				case "lastweek":
+					return 7;
 				case "7days":
 					return 7;
 				case "30days":
@@ -269,7 +301,9 @@ function dashboard() {
 				case "thismonth":
 					return new Date().getDate();
 				case "lastmonth":
-					return 30;
+					const now = new Date();
+					const lastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+					return lastMonth.getDate();
 				default:
 					return 7;
 			}

@@ -119,8 +119,8 @@ export function getTrafficSources(siteId: string, startDate: string, endDate: st
 }
 
 // Get recent visitors for a site
-export function getRecentVisitors(siteId: string, limit: number = 20): RecentVisitor[] {
-    const stmt = db.prepare(`
+export function getRecentVisitors(siteId: string, limit: number = 20, startDate?: string, endDate?: string): RecentVisitor[] {
+    let query = `
         SELECT 
             ip_hash,
             page_url,
@@ -131,11 +131,21 @@ export function getRecentVisitors(siteId: string, limit: number = 20): RecentVis
             region
         FROM events
         WHERE site_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    `);
+    `;
     
-    return stmt.all(siteId, limit) as RecentVisitor[];
+    const params: any[] = [siteId];
+    
+    if (startDate && endDate) {
+        query += ` AND timestamp BETWEEN ? AND ?`;
+        params.push(startDate, endDate);
+    }
+    
+    query += ` ORDER BY timestamp DESC LIMIT ?`;
+    params.push(limit);
+    
+    const stmt = db.prepare(query);
+    
+    return stmt.all(...params) as RecentVisitor[];
 }
 
 // Get dashboard stats for a site
@@ -306,7 +316,7 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     });
     
     // Get recent visitors
-    const recentVisitors = getRecentVisitors(siteId, 10);
+    const recentVisitors = getRecentVisitors(siteId, 10, start, end);
     
     // Get traffic sources
     const trafficSources = getTrafficSources(siteId, start, end);
@@ -330,7 +340,12 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
 }
 
 // Get time series data for charts
-export function getTimeSeriesData(siteId: string, days: number = 30): TimeSeriesData {
+export function getTimeSeriesData(siteId: string, startDate?: string, endDate?: string): TimeSeriesData {
+    // If dates not provided, use last 30 days as default
+    const now = new Date();
+    const end = endDate || now.toISOString();
+    const start = startDate || new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    
     const stmt = db.prepare(`
         SELECT 
             DATE(timestamp) as date,
@@ -338,13 +353,12 @@ export function getTimeSeriesData(siteId: string, days: number = 30): TimeSeries
             COUNT(*) as pageViews
         FROM events
         WHERE site_id = ?
-        AND DATE(timestamp) >= DATE('now', '-' || (? - 1) || ' days')
-        AND DATE(timestamp) <= DATE('now')
+        AND timestamp BETWEEN ? AND ?
         GROUP BY DATE(timestamp)
         ORDER BY date ASC
     `);
     
-    const results = stmt.all(siteId, days) as Array<{
+    const results = stmt.all(siteId, start, end) as Array<{
         date: string;
         visitors: number;
         pageViews: number;
@@ -355,13 +369,19 @@ export function getTimeSeriesData(siteId: string, days: number = 30): TimeSeries
     const visitors: number[] = [];
     const pageViews: number[] = [];
     
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days + 1); // Include today
+    const startDateObj = new Date(start);
+    const endDateObj = new Date(end);
+    
+    // Calculate number of days
+    const days = Math.ceil((endDateObj.getTime() - startDateObj.getTime()) / (24 * 60 * 60 * 1000)) + 1;
     
     for (let i = 0; i < days; i++) {
-        const currentDate = new Date(startDate);
-        currentDate.setDate(startDate.getDate() + i);
+        const currentDate = new Date(startDateObj);
+        currentDate.setDate(startDateObj.getDate() + i);
         const dateStr = currentDate.toISOString().split('T')[0];
+        
+        // Stop if we've passed the end date
+        if (currentDate > endDateObj) break;
         
         const dayData = results.find(r => r.date === dateStr);
         
@@ -448,9 +468,10 @@ export const statsRoutes = {
     async getTimeSeries(req: Request, siteId: string) {
         try {
             const url = new URL(req.url);
-            const days = parseInt(url.searchParams.get('days') || '30');
+            const startDate = url.searchParams.get('start');
+            const endDate = url.searchParams.get('end');
             
-            const data = getTimeSeriesData(siteId, days);
+            const data = getTimeSeriesData(siteId, startDate || undefined, endDate || undefined);
             
             return new Response(JSON.stringify(data), {
                 headers: { 
