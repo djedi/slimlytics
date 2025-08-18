@@ -30,6 +30,7 @@ export interface DashboardStats {
     topCities: Array<{ city: string; country: string; count: number }>;
     topLocales: Array<{ locale: string; language: string; country: string; count: number; percentage: number }>;
     trafficSources: TrafficSource[];
+    searchQueries: Array<{ query: string; count: number }>;
     realtimeVisitors: number;
     visitorsTrend: number; // percentage change
     pageViewsTrend: number; // percentage change
@@ -40,6 +41,91 @@ export interface TimeSeriesData {
     labels: string[];
     visitors: number[];
     pageViews: number[];
+}
+
+// Extract search query from referrer URL
+function extractSearchQuery(referrer: string): string | null {
+    if (!referrer) return null;
+    
+    try {
+        const url = new URL(referrer);
+        const params = url.searchParams;
+        
+        // Common search query parameters used by different search engines
+        const queryParams = ['q', 'query', 'search', 'searchTerm', 'text', 'p', 'wd', 'keyword'];
+        
+        for (const param of queryParams) {
+            const query = params.get(param);
+            if (query) {
+                return decodeURIComponent(query).trim();
+            }
+        }
+        
+        // Special handling for specific search engines
+        if (url.hostname.includes('google')) {
+            return params.get('q') || params.get('query') || null;
+        } else if (url.hostname.includes('bing')) {
+            return params.get('q') || null;
+        } else if (url.hostname.includes('yahoo')) {
+            return params.get('p') || params.get('q') || null;
+        } else if (url.hostname.includes('duckduckgo')) {
+            return params.get('q') || null;
+        } else if (url.hostname.includes('baidu')) {
+            return params.get('wd') || params.get('word') || null;
+        } else if (url.hostname.includes('yandex')) {
+            return params.get('text') || params.get('query') || null;
+        }
+    } catch (e) {
+        // Invalid URL
+        return null;
+    }
+    
+    return null;
+}
+
+// Get search queries from referrers
+export function getSearchQueries(siteId: string, startDate: string, endDate: string, limit: number = 10): Array<{ query: string; count: number }> {
+    // Get all referrers from search engines
+    const stmt = db.prepare(`
+        SELECT referrer, COUNT(*) as count
+        FROM events
+        WHERE site_id = ?
+        AND timestamp BETWEEN ? AND ?
+        AND referrer IS NOT NULL
+        AND referrer != ''
+        AND (
+            referrer LIKE '%google.%' OR
+            referrer LIKE '%bing.%' OR
+            referrer LIKE '%yahoo.%' OR
+            referrer LIKE '%duckduckgo.%' OR
+            referrer LIKE '%baidu.%' OR
+            referrer LIKE '%yandex.%' OR
+            referrer LIKE '%ask.com%' OR
+            referrer LIKE '%aol.%'
+        )
+        GROUP BY referrer
+        ORDER BY count DESC
+    `);
+    
+    const referrers = stmt.all(siteId, startDate, endDate) as Array<{ referrer: string; count: number }>;
+    
+    // Extract and aggregate search queries
+    const queryMap = new Map<string, number>();
+    
+    for (const ref of referrers) {
+        const query = extractSearchQuery(ref.referrer);
+        if (query) {
+            queryMap.set(query, (queryMap.get(query) || 0) + ref.count);
+        }
+    }
+    
+    // Convert to array and sort by count
+    const queries = Array.from(queryMap.entries())
+        .map(([query, count]) => ({ query, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+    
+    return queries;
 }
 
 // Categorize traffic sources
@@ -321,6 +407,9 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     // Get traffic sources
     const trafficSources = getTrafficSources(siteId, start, end);
     
+    // Get search queries
+    const searchQueries = getSearchQueries(siteId, start, end, 6);
+    
     return {
         visitors: currentStats.visitors,
         pageViews: currentStats.pageViews,
@@ -332,6 +421,7 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
         topCities,
         topLocales,
         trafficSources,
+        searchQueries,
         realtimeVisitors: realtime?.count || 0,
         visitorsTrend,
         pageViewsTrend,

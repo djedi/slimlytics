@@ -148,29 +148,14 @@ title: Analytics Dashboard
           Searches
         </div>
         <ul class="data-list">
-          <li class="list-item">
-            <span>"analytics dashboard"</span>
-            <span class="badge success">89</span>
-          </li>
-          <li class="list-item">
-            <span>"web analytics tool"</span>
-            <span class="badge success">67</span>
-          </li>
-          <li class="list-item">
-            <span>"google analytics alternative"</span>
-            <span class="badge success">45</span>
-          </li>
-          <li class="list-item">
-            <span>"website statistics"</span>
-            <span class="badge success">34</span>
-          </li>
-          <li class="list-item">
-            <span>"visitor tracking"</span>
-            <span class="badge success">28</span>
-          </li>
-          <li class="list-item">
-            <span>"real time analytics"</span>
-            <span class="badge success">23</span>
+          <template x-for="search in searchQueries" :key="search.query">
+            <li class="list-item">
+              <span x-text="`"${search.query}"`"></span>
+              <span class="badge success" x-text="search.count"></span>
+            </li>
+          </template>
+          <li class="list-item" x-show="searchQueries.length === 0">
+            <span style="color: #999;">No search queries yet</span>
           </li>
         </ul>
       </div>

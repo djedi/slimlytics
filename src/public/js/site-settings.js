@@ -3,10 +3,10 @@
 function siteSettings() {
 	return {
 		site: {
-			id: '',
-			name: '',
-			domain: '',
-			created_at: ''
+			id: "",
+			name: "",
+			domain: "",
+			created_at: "",
 		},
 		originalSite: {},
 		stats: {},
@@ -21,16 +21,6 @@ function siteSettings() {
 		clearDataRange: "all",
 		trackingCode: "",
 		copyButtonText: "📋 Copy",
-		
-		formatDate(dateString) {
-			if (!dateString) return '';
-			const date = new Date(dateString);
-			return date.toLocaleDateString('en-US', { 
-				month: 'short', 
-				day: 'numeric', 
-				year: 'numeric' 
-			});
-		},
 
 		async init() {
 			// Get current site from SiteManager
@@ -50,23 +40,25 @@ function siteSettings() {
 			} else {
 				await this.loadSite(currentSite.id);
 			}
-			
+
 			await this.loadStats(this.site.id);
 			this.generateTrackingCode();
 		},
 
 		async loadSite(siteId) {
 			try {
-				const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
+				const response = await fetch(
+					window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"),
+				);
 				if (response.ok) {
 					const sites = await response.json();
 					const foundSite = sites.find((s) => s.id === siteId);
-					
+
 					if (!foundSite) {
 						window.location.href = "/";
 						return; // Don't update site if not found
 					}
-					
+
 					this.site = foundSite;
 					this.originalSite = { ...this.site };
 				} else {
@@ -89,9 +81,9 @@ function siteSettings() {
 				};
 				this.originalSite = { ...this.site };
 			}
-			
+
 			// Only set loading to false if we have a valid site
-			if (this.site && this.site.id) {
+			if (this.site?.id) {
 				this.loading = false;
 			}
 		},
@@ -110,10 +102,11 @@ function siteSettings() {
 		generateTrackingCode() {
 			if (!this.site) return;
 
-			const apiBase = window.location.hostname === 'localhost' 
-				? 'http://localhost:3000' 
-				: window.location.origin;
-			
+			const apiBase =
+				window.location.hostname === "localhost"
+					? "http://localhost:3000"
+					: window.location.origin;
+
 			// Split the script tags to avoid parsing issues
 			const scriptOpen = "<scr" + "ipt>";
 			const scriptClose = "</scr" + "ipt>";
@@ -152,7 +145,7 @@ ${noscriptOpen}<p><img alt="Slimlytics" width="1" height="1" src="${apiBase}/${t
 					window.SiteManager.setSelectedSite({
 						id: this.site.id,
 						name: this.site.name,
-						domain: this.site.domain
+						domain: this.site.domain,
 					});
 					this.updateSuccess = true;
 					setTimeout(() => {

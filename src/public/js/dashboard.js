@@ -33,6 +33,7 @@ function dashboard() {
 		topCities: [],
 		topLocales: [],
 		trafficSources: [],
+		searchQueries: [],
 		recentVisitors: [],
 		realtimeVisitors: 0,
 		trendLabels: [],
@@ -40,7 +41,7 @@ function dashboard() {
 		trendPageViews: [],
 		compareVisitors: [],
 		comparePageViews: [],
-		
+
 		// WebSocket connection
 		ws: null,
 		wsConnected: false,
@@ -50,7 +51,7 @@ function dashboard() {
 		async init() {
 			// Get current site from SiteManager
 			const currentSite = await window.SiteManager.getSelectedSite();
-			
+
 			if (!currentSite) {
 				// No site selected, check if we need to redirect
 				const sites = await window.SiteManager.getAllSites();
@@ -72,9 +73,9 @@ function dashboard() {
 			this.connectWebSocket();
 
 			this.initChart();
-			
+
 			// Clean up on page unload
-			window.addEventListener('beforeunload', () => {
+			window.addEventListener("beforeunload", () => {
 				this.disconnectWebSocket();
 			});
 		},
@@ -117,6 +118,7 @@ function dashboard() {
 					this.topCities = data.topCities || [];
 					this.topLocales = data.topLocales || [];
 					this.trafficSources = data.trafficSources || [];
+					this.searchQueries = data.searchQueries || [];
 					this.recentVisitors = data.recentVisitors || [];
 					this.realtimeVisitors = data.realtimeVisitors || 0;
 				} else {
@@ -136,28 +138,28 @@ function dashboard() {
 					this.trendLabels = data.labels;
 					this.trendVisitors = data.visitors;
 					this.trendPageViews = data.pageViews;
-					
+
 					// Calculate previous period for comparison
 					const currentStart = new Date(dateRange.start);
 					const currentEnd = new Date(dateRange.end);
 					const duration = currentEnd.getTime() - currentStart.getTime();
-					
+
 					const compareStart = new Date(currentStart.getTime() - duration);
 					const compareEnd = currentStart;
-					
+
 					// Fetch comparison data (previous period)
 					const compareResponse = await fetch(
 						window.SLIMLYTICS_CONFIG.apiEndpoint(
 							`/api/stats/${this.selectedSiteId}/timeseries?start=${compareStart.toISOString()}&end=${compareEnd.toISOString()}`,
 						),
 					);
-					
+
 					if (compareResponse.ok) {
 						const compareData = await compareResponse.json();
 						this.compareVisitors = compareData.visitors;
 						this.comparePageViews = compareData.pageViews;
 					}
-					
+
 					this.updateChart();
 				}
 			} catch (error) {
@@ -207,6 +209,15 @@ function dashboard() {
 				{ city: "Berlin", country: "Germany", count: 98 },
 			];
 
+			this.searchQueries = [
+				{ query: "analytics dashboard", count: 89 },
+				{ query: "web analytics tool", count: 67 },
+				{ query: "google analytics alternative", count: 45 },
+				{ query: "website statistics", count: 34 },
+				{ query: "visitor tracking", count: 28 },
+				{ query: "real time analytics", count: 23 },
+			];
+
 			this.realtimeVisitors = Math.floor(Math.random() * 20) + 1;
 		},
 
@@ -239,20 +250,27 @@ function dashboard() {
 					start = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
 					end = new Date(today.getTime() - 24 * 60 * 60 * 1000);
 					break;
-				case "thisweek":
+				case "thisweek": {
 					// Start from Monday of current week
 					const dayOfWeek = now.getDay();
 					const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-					start = new Date(today.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
+					start = new Date(
+						today.getTime() - daysFromMonday * 24 * 60 * 60 * 1000,
+					);
 					end = now;
 					break;
-				case "lastweek":
+				}
+				case "lastweek": {
 					// Full previous week (Monday to Sunday)
 					const currentDayOfWeek = now.getDay();
-					const daysToLastMonday = currentDayOfWeek === 0 ? 13 : currentDayOfWeek + 6;
-					start = new Date(today.getTime() - daysToLastMonday * 24 * 60 * 60 * 1000);
+					const daysToLastMonday =
+						currentDayOfWeek === 0 ? 13 : currentDayOfWeek + 6;
+					start = new Date(
+						today.getTime() - daysToLastMonday * 24 * 60 * 60 * 1000,
+					);
 					end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
 					break;
+				}
 				case "7days":
 					start = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
 					end = now;
@@ -288,10 +306,11 @@ function dashboard() {
 					return 2;
 				case "2days":
 					return 3;
-				case "thisweek":
+				case "thisweek": {
 					const dayOfWeek = new Date().getDay();
 					const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
 					return daysFromMonday + 1;
+				}
 				case "lastweek":
 					return 7;
 				case "7days":
@@ -300,10 +319,11 @@ function dashboard() {
 					return 30;
 				case "thismonth":
 					return new Date().getDate();
-				case "lastmonth":
+				case "lastmonth": {
 					const now = new Date();
 					const lastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 					return lastMonth.getDate();
+				}
 				default:
 					return 7;
 			}
@@ -311,61 +331,65 @@ function dashboard() {
 
 		connectWebSocket() {
 			if (!this.selectedSiteId) return;
-			
+
 			// Get WebSocket URL from API endpoint
 			const apiUrl = window.SLIMLYTICS_CONFIG.apiEndpoint("");
-			const wsUrl = apiUrl.replace(/^http/, 'ws').replace(/\/$/, '');
-			
+			const wsUrl = apiUrl.replace(/^http/, "ws").replace(/\/$/, "");
+
 			try {
 				this.ws = new WebSocket(wsUrl);
-				
+
 				this.ws.onopen = () => {
-					console.log('WebSocket connected');
+					console.log("WebSocket connected");
 					this.wsConnected = true;
-					
+
 					// Ensure WebSocket is in OPEN state before sending
 					if (this.ws.readyState === WebSocket.OPEN) {
 						// Subscribe to updates for the selected site
-						this.ws.send(JSON.stringify({
-							type: 'subscribe',
-							siteId: this.selectedSiteId
-						}));
+						this.ws.send(
+							JSON.stringify({
+								type: "subscribe",
+								siteId: this.selectedSiteId,
+							}),
+						);
 					} else {
 						// If not open yet, wait a bit and retry
 						setTimeout(() => {
 							if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-								this.ws.send(JSON.stringify({
-									type: 'subscribe',
-									siteId: this.selectedSiteId
-								}));
+								this.ws.send(
+									JSON.stringify({
+										type: "subscribe",
+										siteId: this.selectedSiteId,
+									}),
+								);
 							}
 						}, 100);
 					}
-					
+
 					// Start heartbeat to keep connection alive
 					this.startHeartbeat();
 				};
-				
+
 				this.ws.onmessage = (event) => {
 					try {
 						const data = JSON.parse(event.data);
-						
-						if (data.type === 'stats-update') {
+
+						if (data.type === "stats-update") {
 							this.handleStatsUpdate(data.stats);
-						} else if (data.type === 'subscribed') {
-							console.log('Successfully subscribed to real-time updates');
+						} else if (data.type === "subscribed") {
+							console.log("Successfully subscribed to real-time updates");
 						}
 					} catch (error) {
-						console.error('Error parsing WebSocket message:', error);
+						console.error("Error parsing WebSocket message:", error);
 					}
 				};
-				
+
 				this.ws.onerror = (error) => {
-					console.error('WebSocket error:', error);
+					console.error("WebSocket error:", error);
 				};
-				
+
 				this.ws.onclose = () => {
-					console.log('WebSocket disconnected');
+					console.log("WebSocket disconnected");
 					this.wsConnected = false;
 					this.stopHeartbeat();
 					// Attempt to reconnect after 5 seconds
@@ -374,123 +398,127 @@ function dashboard() {
 					}, 5000);
 				};
 			} catch (error) {
-				console.error('Failed to connect WebSocket:', error);
+				console.error("Failed to connect WebSocket:", error);
 			}
 		},
-		
+
 		disconnectWebSocket() {
 			if (this.wsReconnectTimeout) {
 				clearTimeout(this.wsReconnectTimeout);
 				this.wsReconnectTimeout = null;
 			}
-			
+
 			this.stopHeartbeat();
-			
+
 			if (this.ws) {
 				this.ws.close();
 				this.ws = null;
 			}
 		},
-		
+
 		reconnectWebSocket() {
 			this.disconnectWebSocket();
 			this.connectWebSocket();
 		},
-		
+
 		startHeartbeat() {
 			this.wsHeartbeatInterval = setInterval(() => {
 				if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-					this.ws.send(JSON.stringify({ type: 'ping' }));
+					this.ws.send(JSON.stringify({ type: "ping" }));
 				}
 			}, 30000); // Send ping every 30 seconds
 		},
-		
+
 		stopHeartbeat() {
 			if (this.wsHeartbeatInterval) {
 				clearInterval(this.wsHeartbeatInterval);
 				this.wsHeartbeatInterval = null;
 			}
 		},
-		
+
 		handleStatsUpdate(newStats) {
 			// Update stats with animation effect
 			const updateStat = (key, value) => {
 				const element = document.querySelector(`[x-text="stats.${key}"]`);
 				if (element) {
-					element.style.transition = 'color 0.3s';
-					element.style.color = '#3498db';
+					element.style.transition = "color 0.3s";
+					element.style.color = "#3498db";
 					setTimeout(() => {
-						element.style.color = '';
+						element.style.color = "";
 					}, 300);
 				}
 			};
-			
+
 			// Format and update stats
 			if (newStats.visitors !== undefined) {
 				const formatted = newStats.visitors.toLocaleString();
 				if (this.stats.visitors !== formatted) {
 					this.stats.visitors = formatted;
-					updateStat('visitors', formatted);
+					updateStat("visitors", formatted);
 				}
 			}
-			
+
 			if (newStats.pageViews !== undefined) {
 				const formatted = newStats.pageViews.toLocaleString();
 				if (this.stats.pageViews !== formatted) {
 					this.stats.pageViews = formatted;
-					updateStat('pageViews', formatted);
+					updateStat("pageViews", formatted);
 				}
 			}
-			
+
 			if (newStats.avgSessionDuration !== undefined) {
 				const formatted = this.formatDuration(newStats.avgSessionDuration);
 				if (this.stats.avgSessionDuration !== formatted) {
 					this.stats.avgSessionDuration = formatted;
-					updateStat('avgSessionDuration', formatted);
+					updateStat("avgSessionDuration", formatted);
 				}
 			}
-			
+
 			if (newStats.bounceRate !== undefined) {
 				const formatted = `${Math.round(newStats.bounceRate)}%`;
 				if (this.stats.bounceRate !== formatted) {
 					this.stats.bounceRate = formatted;
-					updateStat('bounceRate', formatted);
+					updateStat("bounceRate", formatted);
 				}
 			}
-			
+
 			// Update other data
 			if (newStats.topPages) {
 				this.topPages = newStats.topPages;
 			}
-			
+
 			if (newStats.topReferrers) {
 				this.topReferrers = newStats.topReferrers;
 			}
-			
+
 			if (newStats.topCountries) {
 				this.topCountries = newStats.topCountries;
 			}
-			
+
 			if (newStats.topCities) {
 				this.topCities = newStats.topCities;
 			}
-			
+
 			if (newStats.topLocales) {
 				this.topLocales = newStats.topLocales;
 			}
-			
+
 			if (newStats.trafficSources) {
 				this.trafficSources = newStats.trafficSources;
 			}
-			
+
+			if (newStats.searchQueries) {
+				this.searchQueries = newStats.searchQueries;
+			}
+
 			if (newStats.recentVisitors) {
 				this.recentVisitors = newStats.recentVisitors;
 			}
-			
+
 			if (newStats.realtimeVisitors !== undefined) {
 				this.realtimeVisitors = newStats.realtimeVisitors;
 			}
-			
+
 			// Optionally refresh the chart with new data
 			if (newStats.timeSeriesData) {
 				this.trendLabels = newStats.timeSeriesData.labels;
@@ -498,75 +526,76 @@ function dashboard() {
 				this.updateChart();
 			}
 		},
-		
+
 		getFlagEmoji(countryCode) {
 			// Convert country code to flag emoji
-			if (!countryCode || countryCode.length !== 2) return '';
-			
+			if (!countryCode || countryCode.length !== 2) return "";
+
 			const codePoints = countryCode
 				.toUpperCase()
-				.split('')
-				.map(char => 127397 + char.charCodeAt(0));
-			
+				.split("")
+				.map((char) => 127397 + char.charCodeAt(0));
+
 			return String.fromCodePoint(...codePoints);
 		},
-		
+
 		getLocaleFlagEmoji(locale) {
 			// Extract country code from locale (e.g., "en-US" -> "US")
-			const parts = locale.split('-');
+			const parts = locale.split("-");
 			if (parts.length > 1) {
 				return this.getFlagEmoji(parts[1]);
 			}
 			// Default flags for common language codes without country
 			const languageDefaults = {
-				'en': 'GB',
-				'es': 'ES',
-				'fr': 'FR',
-				'de': 'DE',
-				'it': 'IT',
-				'pt': 'PT',
-				'ru': 'RU',
-				'ja': 'JP',
-				'ko': 'KR',
-				'zh': 'CN',
-				'ar': 'SA',
-				'hi': 'IN'
+				en: "GB",
+				es: "ES",
+				fr: "FR",
+				de: "DE",
+				it: "IT",
+				pt: "PT",
+				ru: "RU",
+				ja: "JP",
+				ko: "KR",
+				zh: "CN",
+				ar: "SA",
+				hi: "IN",
 			};
-			return this.getFlagEmoji(languageDefaults[locale] || '');
+			return this.getFlagEmoji(languageDefaults[locale] || "");
 		},
-		
+
 		formatTimeAgo(timestamp) {
 			const now = new Date();
 			const visitTime = new Date(timestamp);
 			const diffInSeconds = Math.floor((now - visitTime) / 1000);
-			
+
 			if (diffInSeconds < 60) {
-				return 'just now';
-			} else if (diffInSeconds < 3600) {
-				const minutes = Math.floor(diffInSeconds / 60);
-				return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
-			} else if (diffInSeconds < 86400) {
-				const hours = Math.floor(diffInSeconds / 3600);
-				return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-			} else {
-				const days = Math.floor(diffInSeconds / 86400);
-				return `${days} day${days > 1 ? 's' : ''} ago`;
+				return "just now";
 			}
+			if (diffInSeconds < 3600) {
+				const minutes = Math.floor(diffInSeconds / 60);
+				return `${minutes} min${minutes > 1 ? "s" : ""} ago`;
+			}
+			if (diffInSeconds < 86400) {
+				const hours = Math.floor(diffInSeconds / 3600);
+				return `${hours} hour${hours > 1 ? "s" : ""} ago`;
+			}
+			const days = Math.floor(diffInSeconds / 86400);
+			return `${days} day${days > 1 ? "s" : ""} ago`;
 		},
-		
+
 		formatLocation(visitor) {
 			const parts = [];
 			if (visitor.city) parts.push(visitor.city);
 			if (visitor.country) parts.push(visitor.country);
-			return parts.length > 0 ? parts.join(', ') : 'Unknown';
+			return parts.length > 0 ? parts.join(", ") : "Unknown";
 		},
-		
+
 		maskIpAddress(ipHash) {
 			// Since we're storing hashed IPs, just show a masked format
 			// Take first 8 chars of hash and format like an IP
-			if (!ipHash) return '***.***.***';
+			if (!ipHash) return "***.***.***";
 			const shortHash = ipHash.substring(0, 8);
-			return `${shortHash.substring(0,3)}.${shortHash.substring(3,6)}.***`;
+			return `${shortHash.substring(0, 3)}.${shortHash.substring(3, 6)}.***`;
 		},
 
 		chartSvg: "",
@@ -579,19 +608,22 @@ function dashboard() {
 
 		updateChart() {
 			// Use visitors data (not pageviews) for the chart
-			const chartData = this.trendVisitors.length > 0
-				? this.trendVisitors
-				: [12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128];
+			const chartData =
+				this.trendVisitors.length > 0
+					? this.trendVisitors
+					: [12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128];
 
 			// Use comparison visitors data if available
-			const compareData = this.compareVisitors.length > 0
-				? this.compareVisitors
-				: chartData.map(v => Math.floor(v * 0.8)); // Default to 80% of current if no comparison data
-			
+			const compareData =
+				this.compareVisitors.length > 0
+					? this.compareVisitors
+					: chartData.map((v) => Math.floor(v * 0.8)); // Default to 80% of current if no comparison data
+
 			// Use the actual labels from API
-			const labels = this.trendLabels.length > 0
-				? this.trendLabels
-				: ['Jan 1', 'Jan 2', 'Jan 3', 'Jan 4', 'Jan 5'];
+			const labels =
+				this.trendLabels.length > 0
+					? this.trendLabels
+					: ["Jan 1", "Jan 2", "Jan 3", "Jan 4", "Jan 5"];
 
 			const width = 600;
 			const height = 300;
@@ -629,16 +661,17 @@ function dashboard() {
 			const todayArea = `${todayPath} L ${padding.left + chartWidth} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
 
 			// Create path for comparison data (only if we have data)
-			const comparePath = compareData.length > 0 
-				? compareData
-					.slice(0, chartData.length) // Ensure same length as current data
-					.map((value, i) => {
-						const x = padding.left + i * xStep;
-						const y = height - padding.bottom - value * yScale;
-						return `${i === 0 ? "M" : "L"} ${x} ${y}`;
-					})
-					.join(" ")
-				: "";
+			const comparePath =
+				compareData.length > 0
+					? compareData
+							.slice(0, chartData.length) // Ensure same length as current data
+							.map((value, i) => {
+								const x = padding.left + i * xStep;
+								const y = height - padding.bottom - value * yScale;
+								return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+							})
+							.join(" ")
+					: "";
 
 			// Create Y-axis labels
 			const yAxisLabels = [];
@@ -657,7 +690,7 @@ function dashboard() {
 			// Create X-axis labels - show every Nth label to avoid crowding
 			const xAxisLabels = [];
 			const labelInterval = Math.ceil(labels.length / 7); // Show max 7 labels
-			
+
 			labels.forEach((label, i) => {
 				if (i % labelInterval === 0 || i === labels.length - 1) {
 					const x = padding.left + i * xStep;
@@ -673,12 +706,13 @@ function dashboard() {
 				.map((value, i) => {
 					const x = padding.left + i * xStep;
 					const y = height - padding.bottom - value * yScale;
-					const label = labels[i] || '';
+					const label = labels[i] || "";
 					const compareValue = compareData[i] || 0;
 					const diff = value - compareValue;
-					const diffPercent = compareValue > 0 ? Math.round((diff / compareValue) * 100) : 0;
-					const diffSign = diff >= 0 ? '+' : '';
-					
+					const diffPercent =
+						compareValue > 0 ? Math.round((diff / compareValue) * 100) : 0;
+					const diffSign = diff >= 0 ? "+" : "";
+
 					return `
                     <circle cx="${x}" cy="${y}" r="3" fill="#3498db" opacity="0"
                             style="cursor: pointer; transition: all 0.2s;"
@@ -692,7 +726,7 @@ function dashboard() {
                         <text x="${x}" y="${y - 24}" text-anchor="middle"
                               font-size="12" fill="white">${value.toLocaleString()} visitors</text>
                         <text x="${x}" y="${y - 10}" text-anchor="middle"
-                              font-size="10" fill="${diff >= 0 ? '#27ae60' : '#e74c3c'}">${diffSign}${diffPercent}% vs prev</text>
+                              font-size="10" fill="${diff >= 0 ? "#27ae60" : "#e74c3c"}">${diffSign}${diffPercent}% vs prev</text>
                     </g>
                 `;
 				})
