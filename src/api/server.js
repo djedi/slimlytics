@@ -20,6 +20,14 @@ const wsClients = new Map();
 
 app.use('*', cors());
 
+// Health check endpoint
+app.get('/health', (c) => {
+  return c.json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Setup tracking script routes
 setupTrackingScriptRoute(app);
 setupSimplifiedTrackingRoutes(app);

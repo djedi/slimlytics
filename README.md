@@ -232,6 +232,11 @@ For production, set these environment variables:
 - `MAXMIND_ACCOUNT_ID` - Your MaxMind account ID (for GeoIP)
 - `MAXMIND_LICENSE_KEY` - Your MaxMind license key (for GeoIP)
 
+### Production-Only Variables
+
+- `DOCKER_REGISTRY` - Your Docker Hub username (configured in deploy.js)
+- Server configuration in `.deploy.json` (auto-generated during first deployment)
+
 ## Docker Development
 
 Build and run with Docker:
@@ -239,6 +244,130 @@ Build and run with Docker:
 ```bash
 docker-compose up --build
 ```
+
+## Production Deployment
+
+Slimlytics includes a smart deployment system that handles Docker builds, server setup, and zero-downtime updates.
+
+### Prerequisites
+
+- Docker Hub account (free tier works)
+- Ubuntu/Debian server (tested on Ubuntu 20.04+)
+- SSH access to your server
+- Domain name pointing to your server (for SSL)
+
+### Initial Setup
+
+1. **Configure Docker Hub**:
+   ```bash
+   docker login
+   # Username: your-docker-username
+   # Password: your-docker-password
+   ```
+   
+2. **Update deploy.js with your Docker Hub username** (line 14):
+   ```javascript
+   const DOCKER_REGISTRY = 'your-username';  // Default is 'xhenxhe'
+   ```
+
+3. **Run the deployment**:
+   ```bash
+   ./deploy
+   # or
+   npm run deploy
+   # or
+   bun run deploy
+   ```
+
+   On first run, the script will:
+   - Prompt for server IP/domain
+   - Prompt for SSH username (default: root)
+   - Prompt for application domain (for SSL)
+   - Install Docker on the server if needed
+   - Build and push Docker image to Docker Hub
+   - Set up Caddy for automatic SSL
+   - Deploy the application
+
+### Updating an Existing Deployment
+
+Simply run the deploy script again:
+```bash
+./deploy
+```
+
+The script will:
+- Backup your database to `prod_db_backups/`
+- Build and push new Docker image
+- Deploy with zero downtime
+- Verify service health
+
+### Server Requirements
+
+- **Minimum**: 1GB RAM, 1 CPU (works on $5 DigitalOcean droplet)
+- **Recommended**: 2GB RAM, 2 CPUs for better performance
+- **Storage**: ~500MB for application + database growth
+
+### Configuration
+
+The deployment configuration is stored in `.deploy.json` (created on first run):
+```json
+{
+  "servers": {
+    "production": {
+      "host": "your-server-ip",
+      "username": "root",
+      "domain": "analytics.yourdomain.com",
+      "path": "/opt/slimlytics"
+    }
+  }
+}
+```
+
+### SSL/HTTPS
+
+SSL certificates are automatically provisioned and renewed by Caddy. Just ensure:
+- Your domain points to the server
+- Ports 80 and 443 are open
+- No other services are using these ports
+
+### Database Management
+
+- **Location on server**: `/opt/slimlytics/data/slimlytics.db`
+- **Automatic backups**: Created before each deployment in `prod_db_backups/`
+- **Manual backup**: 
+  ```bash
+  scp root@your-server:/opt/slimlytics/data/slimlytics.db ./backup.db
+  ```
+
+### Monitoring
+
+Check service status on the server:
+```bash
+ssh root@your-server
+cd /opt/slimlytics
+docker compose ps
+docker compose logs -f
+```
+
+### Troubleshooting Deployment
+
+**Build fails:**
+- Ensure you're logged into Docker Hub: `docker login`
+- Check Docker Hub rate limits
+
+**Connection issues:**
+- Verify SSH key is set up: `ssh-copy-id root@your-server`
+- Check firewall allows SSH (port 22)
+
+**SSL not working:**
+- Verify domain DNS points to server
+- Check Caddy logs: `docker compose logs caddy`
+- Ensure ports 80/443 are accessible
+
+**Application errors:**
+- Check logs: `docker compose logs slimlytics`
+- Verify `.env` file exists on server
+- Check database permissions
 
 ## Features
 
@@ -264,7 +393,7 @@ docker-compose up --build
 - Location tracking works for both IPv4 and IPv6 addresses
 - Private/local IP addresses are detected and labeled appropriately
 
-## Production Deployment
+## Production Best Practices
 
 For production environments:
 

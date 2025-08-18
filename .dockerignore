@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database and data
+data/
+prod_db_backups/
+*.db
+*.sqlite
+
+# Environment and config
+.env
+.env.*
+.deploy.json
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+docs/
+README.md
+CLAUDE.md
+DEPLOYMENT.md
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Test files
+test/
+tests/
+coverage/
+.nyc_output/
+test-*.html
+
+# Build artifacts
+dist/
+_site/
+.cache/
+
+# Docker files (we don't want to include these in the build context)
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile.*
+.dockerignore
+
+# Deployment files
+deploy.js
+Caddyfile.template
+scripts/setup-*.sh
+scripts/dev.sh
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+.tmp.*
+
+# Log files
+logs/
+*.log

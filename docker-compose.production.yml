@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  slimlytics:
+    image: xhenxhe/slimlytics:latest
+    container_name: slimlytics
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    env_file:
+      - .env
+    volumes:
+      # Persistent database - mounted as a file
+      - ./data/slimlytics.db:/app/data/slimlytics.db
+      # MaxMind GeoIP databases
+      - ./data/maxmind:/app/data/maxmind
+    networks:
+      - caddy_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Caddy configuration
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # SSL certificates persistence
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+    networks:
+      - caddy_network
+    depends_on:
+      - slimlytics
+
+networks:
+  caddy_network:
+    driver: bridge

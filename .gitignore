@@ -8,3 +8,9 @@ data/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Deployment configuration
+.deploy.json
+
+# Database backups
+prod_db_backups/
