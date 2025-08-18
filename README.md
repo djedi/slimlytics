@@ -91,6 +91,18 @@ Run geo columns migration (for existing databases):
 bun run db:migrate
 ```
 
+### Deployment & Production Commands
+
+Deploy to production server:
+```bash
+bun run deploy    # Deploy application to configured server
+```
+
+Debug production server:
+```bash
+bun run logs      # Interactive server debugging and log viewer
+```
+
 ### GeoIP Database Management
 
 #### Manual Updates
@@ -341,7 +353,33 @@ SSL certificates are automatically provisioned and renewed by Caddy. Just ensure
 
 ### Monitoring
 
-Check service status on the server:
+#### Quick Debugging with Server Logs Script
+
+Use the built-in server logs helper for comprehensive debugging:
+```bash
+./server-logs.js
+# or
+npm run logs
+# or
+bun run logs
+```
+
+This interactive script will:
+- Show container status and health
+- Display recent application and web server logs
+- Run internal health checks
+- Verify database and environment files
+- Provide interactive options for:
+  - Following live logs (Slimlytics, Caddy, or both)
+  - Restarting containers
+  - Checking configurations
+  - Testing database connections
+  - Viewing system resources (disk, memory)
+  - Showing masked environment variables
+
+#### Manual Monitoring
+
+Alternatively, check service status manually on the server:
 ```bash
 ssh root@your-server
 cd /opt/slimlytics
@@ -350,6 +388,23 @@ docker compose logs -f
 ```
 
 ### Troubleshooting Deployment
+
+#### 502 Bad Gateway Errors
+
+If you encounter a 502 error after deployment, run the server logs script:
+```bash
+./server-logs.js
+```
+
+Common causes and fixes:
+1. **Container not running**: Check container status, restart if needed
+2. **Application crash on startup**: Review Slimlytics logs for errors
+3. **Missing environment file**: Ensure `.env` exists on server
+4. **Database not initialized**: Run `docker compose exec slimlytics bun run db:init`
+5. **Port mismatch**: Verify app is listening on port 3000
+6. **Network issues**: Ensure containers are on the same Docker network
+
+#### Other Common Issues
 
 **Build fails:**
 - Ensure you're logged into Docker Hub: `docker login`
@@ -365,9 +420,19 @@ docker compose logs -f
 - Ensure ports 80/443 are accessible
 
 **Application errors:**
+- Use `./server-logs.js` for comprehensive debugging
 - Check logs: `docker compose logs slimlytics`
 - Verify `.env` file exists on server
 - Check database permissions
+
+**Quick recovery steps:**
+```bash
+ssh root@your-server
+cd /opt/slimlytics
+docker compose down
+docker compose up -d
+docker compose logs -f
+```
 
 ## Features
 

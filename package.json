@@ -13,7 +13,8 @@
     "maxmind:download": "bun scripts/download-maxmind.js",
     "maxmind:update": "bun scripts/update-maxmind.js",
     "maxmind:setup-auto-update": "./scripts/setup-auto-update.sh",
-    "deploy": "bun run deploy.js"
+    "deploy": "bun run deploy.js",
+    "logs": "bun run server-logs.js"
   },
   "dependencies": {
     "@11ty/eleventy": "^2.0.1",

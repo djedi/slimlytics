@@ -209,18 +209,25 @@ async function installDocker(conn) {
 
 // Build and push Docker image
 async function buildAndPushImage(tag = 'latest') {
-  log.step(`Building Docker image: ${DOCKER_REGISTRY}/${IMAGE_NAME}:${tag}`);
+  log.step(`Building multi-architecture Docker image: ${DOCKER_REGISTRY}/${IMAGE_NAME}:${tag}`);
   
   try {
-    await exec(`docker build -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${tag} .`);
-    log.success('Docker image built successfully');
+    // Check if buildx is available
+    try {
+      await exec('docker buildx version', { silent: true });
+    } catch {
+      log.step('Setting up Docker buildx for multi-architecture builds...');
+      await exec('docker buildx create --use --name slimlytics-builder');
+    }
     
-    log.step('Pushing image to Docker Hub...');
-    await exec(`docker push ${DOCKER_REGISTRY}/${IMAGE_NAME}:${tag}`);
-    log.success('Image pushed to Docker Hub');
+    // Build and push multi-architecture image (AMD64 and ARM64)
+    log.step('Building for linux/amd64 and linux/arm64...');
+    await exec(`docker buildx build --platform linux/amd64,linux/arm64 -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:${tag} --push .`);
+    log.success('Multi-architecture image built and pushed to Docker Hub');
   } catch (error) {
     log.error('Failed to build or push Docker image');
     log.warning('Make sure you are logged in to Docker Hub: docker login');
+    log.warning('If buildx fails, you may need to run: docker buildx create --use');
     throw error;
   }
 }

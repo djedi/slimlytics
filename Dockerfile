@@ -39,6 +39,7 @@ RUN bun install --production
 COPY src/api/ ./src/api/
 COPY src/db/ ./src/db/
 COPY src/utils/ ./src/utils/
+COPY api/ ./api/
 COPY scripts/ ./scripts/
 
 # Copy built dashboard from previous stage
