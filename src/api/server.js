@@ -5,6 +5,7 @@ import { Database } from 'bun:sqlite';
 import { trackEvent, getStats } from '../db/queries.js';
 import { sitesRoutes } from './sites.ts';
 import { statsRoutes } from './stats.ts';
+import { setupTrackingScriptRoute } from './routes/tracking-script.js';
 import geoip from '../../api/services/geoip.js';
 
 const app = new Hono();
@@ -17,6 +18,9 @@ await geoip.initialize();
 const wsClients = new Map();
 
 app.use('*', cors());
+
+// Setup tracking script route
+setupTrackingScriptRoute(app);
 
 // Sites API routes
 app.get('/api/sites', async (c) => {
@@ -38,15 +42,41 @@ app.delete('/api/sites/:id', async (c) => {
 });
 
 app.post('/track', async (c) => {
-  const body = await c.req.json();
+  let body;
+  
+  // Handle both JSON and text/plain content types (for sendBeacon compatibility)
+  const contentType = c.req.header('content-type');
+  if (contentType && contentType.includes('text/plain')) {
+    const text = await c.req.text();
+    body = JSON.parse(text);
+  } else {
+    body = await c.req.json();
+  }
+  
   const { 
+    siteId,
     site_id, 
+    url,
     page_url, 
     referrer, 
+    userAgent,
     user_agent,
+    screenWidth,
+    screenHeight,
     screen_resolution,
-    language
+    language,
+    visitorId,
+    sessionId,
+    eventType,
+    eventData
   } = body;
+
+  // Handle both new and old field names for compatibility
+  const finalSiteId = siteId || site_id;
+  const finalUrl = url || page_url;
+  const finalUserAgent = userAgent || user_agent;
+  const finalScreenResolution = screen_resolution || 
+    (screenWidth && screenHeight ? `${screenWidth}x${screenHeight}` : null);
 
   const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown';
   
@@ -54,14 +84,18 @@ app.post('/track', async (c) => {
   const geoData = await geoip.lookup(ip);
   
   trackEvent(db, {
-    site_id,
-    page_url,
+    site_id: finalSiteId,
+    page_url: finalUrl,
     referrer: referrer || null,
-    user_agent,
+    user_agent: finalUserAgent,
     ip_hash: hashIP(ip),
-    screen_resolution,
+    screen_resolution: finalScreenResolution,
     language,
     timestamp: new Date().toISOString(),
+    visitor_id: visitorId,
+    session_id: sessionId,
+    event_type: eventType || 'pageview',
+    event_data: eventData ? JSON.stringify(eventData) : null,
     // Add geo data
     country: geoData.country,
     country_code: geoData.countryCode,
@@ -75,7 +109,19 @@ app.post('/track', async (c) => {
   });
 
   // Broadcast update to WebSocket clients watching this site
-  broadcastStatsUpdate(site_id);
+  broadcastStatsUpdate(finalSiteId);
+
+  // Return a 1x1 transparent pixel for beacon compatibility
+  if (c.req.header('accept')?.includes('image')) {
+    const pixel = Buffer.from('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64');
+    return new Response(pixel, {
+      headers: {
+        'Content-Type': 'image/gif',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
+    });
+  }
 
   return c.json({ success: true });
 });
@@ -94,6 +140,11 @@ app.get('/api/stats/:siteId/timeseries', async (c) => {
 app.get('/api/stats/:siteId/realtime', async (c) => {
   const { siteId } = c.req.param();
   return statsRoutes.getRealtime(c.req.raw, siteId);
+});
+
+app.get('/api/stats/:siteId/recent-visitors', async (c) => {
+  const { siteId } = c.req.param();
+  return statsRoutes.getRecentVisitorsEndpoint(c.req.raw, siteId);
 });
 
 // Serve static files from dist directory - MUST be after API routes

@@ -1,0 +1,82 @@
+---
+layout: base.njk
+title: Anti-Adblock Setup
+---
+
+<link rel="stylesheet" href="/css/anti-adblock.css">
+
+<div class="container">
+  <h1>Anti-Adblock Tracking Setup</h1>
+  
+  <div class="info-box">
+    <p><strong>Why use anti-adblock tracking?</strong></p>
+    <p>Ad blockers often block analytics scripts from third-party domains. By proxying the tracking through your own domain, you can bypass most ad blockers while still collecting analytics data.</p>
+  </div>
+
+  <form id="anti-adblock-form">
+    <div class="form-group">
+      <label for="site-select">Select Site:</label>
+      <select id="site-select" name="siteId" required>
+        <option value="">Loading sites...</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="server-type">Server Type / Method:</label>
+      <select id="server-type" name="serverType">
+        <option value="caddy" selected>Caddy</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="js-path">Javascript Path:</label>
+      <input type="text" id="js-path" name="jsPath" value="/analytics.js" required>
+      <small>The path on your domain where the tracking script will be served</small>
+    </div>
+
+    <div class="form-group">
+      <label for="beacon-path">Beacon Path:</label>
+      <input type="text" id="beacon-path" name="beaconPath" value="/beacon" required>
+      <small>The path on your domain where tracking events will be sent</small>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Generate Configuration</button>
+  </form>
+
+  <div id="config-output" style="display: none;">
+    <h2>Caddy Configuration</h2>
+    
+    <div class="warning-box">
+      <strong>BACKUP!</strong> Before you begin, make sure to back up your existing configuration files
+    </div>
+
+    <div class="section">
+      <h3>Install Notes</h3>
+      <p>Copy the code below into your website's Caddyfile</p>
+    </div>
+
+    <div class="section">
+      <h3>Configuration</h3>
+      <pre><code id="caddy-config"></code></pre>
+    </div>
+
+    <div class="section">
+      <h3>Reload Caddy</h3>
+      <pre><code>caddy reload</code></pre>
+    </div>
+
+    <div class="section">
+      <h3>Test</h3>
+      <p>Make sure the following URLs work before installing the code on your site:</p>
+      <div id="test-urls"></div>
+    </div>
+
+    <div class="section">
+      <h3>Tracking Code</h3>
+      <p>Add this tracking code to your website:</p>
+      <pre><code id="tracking-code"></code></pre>
+    </div>
+  </div>
+</div>
+
+<script src="/js/anti-adblock.js"></script>

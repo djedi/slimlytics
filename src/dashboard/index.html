@@ -72,6 +72,12 @@ title: Analytics Dashboard
             >
               <span>🧪 Test Events</span>
             </div>
+            <div
+              class="dropdown-item"
+              @click="window.location.href='/anti-adblock'"
+            >
+              <span>🛡️ Anti-Adblock Setup</span>
+            </div>
           </div>
         </div>
       </div>
@@ -150,7 +156,7 @@ title: Analytics Dashboard
           <span class="emoji-icon">🕐</span>
           Recent Visitors
         </div>
-        <table class="data-table">
+        <table class="data-table" x-show="recentVisitors.length > 0">
           <thead>
             <tr>
               <th>Location</th>
@@ -160,68 +166,22 @@ title: Analytics Dashboard
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td><span class="country-flag">🇺🇸</span> United States</td>
-              <td>192.168.1.***</td>
-              <td><a href="#" class="link">/blog/getting-started</a></td>
-              <td class="time-ago">2 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇬🇧</span> United Kingdom</td>
-              <td>10.0.0.***</td>
-              <td><a href="#" class="link">/products</a></td>
-              <td class="time-ago">5 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇩🇪</span> Germany</td>
-              <td>172.16.0.***</td>
-              <td><a href="#" class="link">/</a></td>
-              <td class="time-ago">8 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇫🇷</span> France</td>
-              <td>192.168.2.***</td>
-              <td><a href="#" class="link">/about</a></td>
-              <td class="time-ago">12 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇯🇵</span> Japan</td>
-              <td>10.1.1.***</td>
-              <td><a href="#" class="link">/contact</a></td>
-              <td class="time-ago">15 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇨🇦</span> Canada</td>
-              <td>172.17.0.***</td>
-              <td><a href="#" class="link">/pricing</a></td>
-              <td class="time-ago">18 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇦🇺</span> Australia</td>
-              <td>192.168.3.***</td>
-              <td><a href="#" class="link">/docs</a></td>
-              <td class="time-ago">22 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇧🇷</span> Brazil</td>
-              <td>10.2.2.***</td>
-              <td><a href="#" class="link">/blog/update-v2</a></td>
-              <td class="time-ago">25 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇮🇳</span> India</td>
-              <td>172.18.0.***</td>
-              <td><a href="#" class="link">/features</a></td>
-              <td class="time-ago">28 min ago</td>
-            </tr>
-            <tr>
-              <td><span class="country-flag">🇪🇸</span> Spain</td>
-              <td>192.168.4.***</td>
-              <td><a href="#" class="link">/support</a></td>
-              <td class="time-ago">30 min ago</td>
-            </tr>
+            <template x-for="visitor in recentVisitors.slice(0, 10)" :key="visitor.ip_hash + visitor.timestamp">
+              <tr>
+                <td>
+                  <span class="country-flag" x-text="getFlagEmoji(visitor.country_code)"></span>
+                  <span x-text="formatLocation(visitor)"></span>
+                </td>
+                <td x-text="maskIpAddress(visitor.ip_hash)"></td>
+                <td><a href="#" class="link" x-text="visitor.page_url"></a></td>
+                <td class="time-ago" x-text="formatTimeAgo(visitor.timestamp)"></td>
+              </tr>
+            </template>
           </tbody>
         </table>
+        <div x-show="recentVisitors.length === 0" style="padding: 20px; text-align: center; color: #999;">
+          No recent visitors yet
+        </div>
       </div>
 
       <!-- Links (Referrers) -->
@@ -376,59 +336,24 @@ title: Analytics Dashboard
           Locale
         </div>
         <ul class="data-list">
-          <li class="list-item">
-            <span><span class="country-flag">🇺🇸</span> United States</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge warning">345</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 75%"></div>
+          <template x-for="locale in topLocales.slice(0, 6)" :key="locale.locale">
+            <li class="list-item">
+              <span>
+                <span class="country-flag" x-text="getLocaleFlagEmoji(locale.locale)"></span>
+                <span x-text="locale.language"></span>
+                <span style="color: #7f8c8d; font-size: 0.85em;" x-text="locale.country ? `(${locale.country})` : ''"></span>
+              </span>
+              <div style="display: flex; align-items: center; gap: 10px">
+                <span class="badge warning" x-text="locale.count"></span>
+                <div class="progress-bar" style="width: 100px">
+                  <div class="progress-fill" :style="`width: ${locale.percentage}%`"></div>
+                </div>
+                <span style="color: #7f8c8d; font-size: 12px" x-text="`${locale.percentage}%`"></span>
               </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span><span class="country-flag">🇬🇧</span> United Kingdom</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge warning">234</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 55%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span><span class="country-flag">🇩🇪</span> Germany</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge warning">156</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 35%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span><span class="country-flag">🇫🇷</span> France</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge warning">123</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 28%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span><span class="country-flag">🇯🇵</span> Japan</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge warning">98</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 22%"></div>
-              </div>
-            </div>
-          </li>
-          <li class="list-item">
-            <span><span class="country-flag">🇨🇦</span> Canada</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge warning">87</span>
-              <div class="progress-bar" style="width: 100px">
-                <div class="progress-fill" style="width: 20%"></div>
-              </div>
-            </div>
+            </li>
+          </template>
+          <li class="list-item" x-show="topLocales.length === 0">
+            <span style="color: #999;">No locale data yet</span>
           </li>
         </ul>
       </div>
@@ -440,33 +365,20 @@ title: Analytics Dashboard
           Traffic Sources
         </div>
         <ul class="data-list">
-          <li class="list-item">
-            <span>🔍 Search Engines</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge primary">456</span>
-              <span style="color: #7f8c8d; font-size: 12px">38%</span>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>🔗 Direct</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge primary">345</span>
-              <span style="color: #7f8c8d; font-size: 12px">29%</span>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>📱 Social Media</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge primary">234</span>
-              <span style="color: #7f8c8d; font-size: 12px">20%</span>
-            </div>
-          </li>
-          <li class="list-item">
-            <span>🌐 Referral Sites</span>
-            <div style="display: flex; align-items: center; gap: 10px">
-              <span class="badge primary">156</span>
-              <span style="color: #7f8c8d; font-size: 12px">13%</span>
-            </div>
+          <template x-for="source in trafficSources" :key="source.source">
+            <li class="list-item">
+              <span>
+                <span x-text="source.icon"></span>
+                <span x-text="source.source"></span>
+              </span>
+              <div style="display: flex; align-items: center; gap: 10px">
+                <span class="badge primary" x-text="source.count"></span>
+                <span style="color: #7f8c8d; font-size: 12px" x-text="`${source.percentage}%`"></span>
+              </div>
+            </li>
+          </template>
+          <li class="list-item" x-show="trafficSources.length === 0">
+            <span style="color: #999;">No traffic data yet</span>
           </li>
         </ul>
       </div>

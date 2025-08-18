@@ -2,6 +2,23 @@ import { Database } from 'bun:sqlite';
 
 const db = new Database('data/analytics.db', { create: true });
 
+export interface RecentVisitor {
+    ip_hash: string;
+    page_url: string;
+    timestamp: string;
+    country: string;
+    country_code: string;
+    city: string;
+    region: string;
+}
+
+export interface TrafficSource {
+    source: string;
+    icon: string;
+    count: number;
+    percentage: number;
+}
+
 export interface DashboardStats {
     visitors: number;
     pageViews: number;
@@ -11,15 +28,114 @@ export interface DashboardStats {
     topReferrers: Array<{ referrer: string; count: number }>;
     topCountries: Array<{ country: string; countryCode: string; count: number }>;
     topCities: Array<{ city: string; country: string; count: number }>;
+    topLocales: Array<{ locale: string; language: string; country: string; count: number; percentage: number }>;
+    trafficSources: TrafficSource[];
     realtimeVisitors: number;
     visitorsTrend: number; // percentage change
     pageViewsTrend: number; // percentage change
+    recentVisitors?: RecentVisitor[];
 }
 
 export interface TimeSeriesData {
     labels: string[];
     visitors: number[];
     pageViews: number[];
+}
+
+// Categorize traffic sources
+function categorizeTrafficSource(referrer: string | null): { category: string; icon: string } {
+    if (!referrer || referrer === '' || referrer === 'direct') {
+        return { category: 'Direct', icon: '🔗' };
+    }
+    
+    const url = referrer.toLowerCase();
+    
+    // Email - check first to catch mail providers before they match search engines
+    if (url.includes('mail.') || url.includes('outlook.') || url.includes('gmail.') || 
+        url.includes('/mail') || url.includes('webmail') || url.includes('email')) {
+        return { category: 'Email', icon: '📧' };
+    }
+    
+    // Search engines
+    const searchEngines = ['google', 'bing', 'yahoo', 'duckduckgo', 'baidu', 'yandex', 'ask.com', 'aol'];
+    if (searchEngines.some(engine => url.includes(engine))) {
+        return { category: 'Search Engines', icon: '🔍' };
+    }
+    
+    // Social media
+    const socialMedia = ['facebook', 'twitter', 'linkedin', 'instagram', 'youtube', 'reddit', 
+                        'pinterest', 'tumblr', 'snapchat', 'tiktok', 'whatsapp', 'telegram',
+                        'discord', 'slack', 'medium', 'quora'];
+    if (socialMedia.some(social => url.includes(social))) {
+        return { category: 'Social Media', icon: '📱' };
+    }
+    
+    // All others are referral sites
+    return { category: 'Referral Sites', icon: '🌐' };
+}
+
+// Get traffic sources for a site
+export function getTrafficSources(siteId: string, startDate: string, endDate: string): TrafficSource[] {
+    // Get all referrers with counts
+    const stmt = db.prepare(`
+        SELECT 
+            COALESCE(referrer, 'direct') as referrer,
+            COUNT(*) as count
+        FROM events
+        WHERE site_id = ?
+        AND timestamp BETWEEN ? AND ?
+        GROUP BY referrer
+    `);
+    
+    const referrers = stmt.all(siteId, startDate, endDate) as Array<{ referrer: string; count: number }>;
+    
+    // Categorize and aggregate
+    const sourceMap = new Map<string, { icon: string; count: number }>();
+    let totalCount = 0;
+    
+    for (const ref of referrers) {
+        const { category, icon } = categorizeTrafficSource(ref.referrer);
+        const existing = sourceMap.get(category) || { icon, count: 0 };
+        existing.count += ref.count;
+        sourceMap.set(category, existing);
+        totalCount += ref.count;
+    }
+    
+    // Convert to array and calculate percentages
+    const sources: TrafficSource[] = [];
+    for (const [source, data] of sourceMap.entries()) {
+        sources.push({
+            source,
+            icon: data.icon,
+            count: data.count,
+            percentage: totalCount > 0 ? Math.round((data.count / totalCount) * 100) : 0
+        });
+    }
+    
+    // Sort by count descending
+    sources.sort((a, b) => b.count - a.count);
+    
+    return sources;
+}
+
+// Get recent visitors for a site
+export function getRecentVisitors(siteId: string, limit: number = 20): RecentVisitor[] {
+    const stmt = db.prepare(`
+        SELECT 
+            ip_hash,
+            page_url,
+            timestamp,
+            country,
+            country_code,
+            city,
+            region
+        FROM events
+        WHERE site_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+    `);
+    
+    return stmt.all(siteId, limit) as RecentVisitor[];
 }
 
 // Get dashboard stats for a site
@@ -105,6 +221,96 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     `);
     const topCities = topCitiesStmt.all(siteId, start, end) as Array<{ city: string; country: string; count: number }>;
     
+    // Get top locales (languages)
+    const topLocalesStmt = db.prepare(`
+        SELECT 
+            language as locale,
+            COUNT(*) as count
+        FROM events
+        WHERE site_id = ?
+        AND timestamp BETWEEN ? AND ?
+        AND language IS NOT NULL
+        GROUP BY language
+        ORDER BY count DESC
+        LIMIT 10
+    `);
+    const localesResult = topLocalesStmt.all(siteId, start, end) as Array<{ locale: string; count: number }>;
+    
+    // Calculate total for percentage
+    const totalWithLocale = localesResult.reduce((sum, l) => sum + l.count, 0);
+    
+    // Parse locale codes and add display information
+    const topLocales = localesResult.map(item => {
+        const [langCode, countryCode] = item.locale.split('-');
+        const languageNames: { [key: string]: string } = {
+            'en': 'English',
+            'es': 'Spanish', 
+            'fr': 'French',
+            'de': 'German',
+            'it': 'Italian',
+            'pt': 'Portuguese',
+            'ru': 'Russian',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'zh': 'Chinese',
+            'ar': 'Arabic',
+            'hi': 'Hindi',
+            'nl': 'Dutch',
+            'sv': 'Swedish',
+            'pl': 'Polish',
+            'tr': 'Turkish',
+            'vi': 'Vietnamese',
+            'th': 'Thai',
+            'id': 'Indonesian',
+            'ms': 'Malay'
+        };
+        
+        const countryNames: { [key: string]: string } = {
+            'US': 'United States',
+            'GB': 'United Kingdom',
+            'CA': 'Canada',
+            'AU': 'Australia',
+            'DE': 'Germany',
+            'FR': 'France',
+            'ES': 'Spain',
+            'IT': 'Italy',
+            'BR': 'Brazil',
+            'PT': 'Portugal',
+            'RU': 'Russia',
+            'JP': 'Japan',
+            'KR': 'South Korea',
+            'CN': 'China',
+            'TW': 'Taiwan',
+            'HK': 'Hong Kong',
+            'IN': 'India',
+            'MX': 'Mexico',
+            'AR': 'Argentina',
+            'NL': 'Netherlands',
+            'SE': 'Sweden',
+            'PL': 'Poland',
+            'TR': 'Turkey',
+            'VN': 'Vietnam',
+            'TH': 'Thailand',
+            'ID': 'Indonesia',
+            'MY': 'Malaysia',
+            'SG': 'Singapore'
+        };
+        
+        return {
+            locale: item.locale,
+            language: languageNames[langCode] || langCode.toUpperCase(),
+            country: countryNames[countryCode] || countryCode || '',
+            count: item.count,
+            percentage: totalWithLocale > 0 ? Math.round((item.count / totalWithLocale) * 100) : 0
+        };
+    });
+    
+    // Get recent visitors
+    const recentVisitors = getRecentVisitors(siteId, 10);
+    
+    // Get traffic sources
+    const trafficSources = getTrafficSources(siteId, start, end);
+    
     return {
         visitors: currentStats.visitors,
         pageViews: currentStats.pageViews,
@@ -114,9 +320,12 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
         topReferrers,
         topCountries,
         topCities,
+        topLocales,
+        trafficSources,
         realtimeVisitors: realtime?.count || 0,
         visitorsTrend,
-        pageViewsTrend
+        pageViewsTrend,
+        recentVisitors
     };
 }
 
@@ -129,7 +338,8 @@ export function getTimeSeriesData(siteId: string, days: number = 30): TimeSeries
             COUNT(*) as pageViews
         FROM events
         WHERE site_id = ?
-        AND timestamp > datetime('now', '-' || ? || ' days')
+        AND DATE(timestamp) >= DATE('now', '-' || (? - 1) || ' days')
+        AND DATE(timestamp) <= DATE('now')
         GROUP BY DATE(timestamp)
         ORDER BY date ASC
     `);
@@ -146,7 +356,7 @@ export function getTimeSeriesData(siteId: string, days: number = 30): TimeSeries
     const pageViews: number[] = [];
     
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
+    startDate.setDate(startDate.getDate() - days + 1); // Include today
     
     for (let i = 0; i < days; i++) {
         const currentDate = new Date(startDate);
@@ -277,6 +487,29 @@ export const statsRoutes = {
         } catch (error) {
             console.error('Error fetching realtime visitors:', error);
             return new Response(JSON.stringify({ error: 'Failed to fetch realtime visitors' }), {
+                status: 500,
+                headers: { 'Content-Type': 'application/json' }
+            });
+        }
+    },
+    
+    // GET /api/stats/:siteId/recent-visitors
+    async getRecentVisitorsEndpoint(req: Request, siteId: string) {
+        try {
+            const url = new URL(req.url);
+            const limit = parseInt(url.searchParams.get('limit') || '20');
+            
+            const visitors = getRecentVisitors(siteId, limit);
+            
+            return new Response(JSON.stringify(visitors), {
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                }
+            });
+        } catch (error) {
+            console.error('Error fetching recent visitors:', error);
+            return new Response(JSON.stringify({ error: 'Failed to fetch recent visitors' }), {
                 status: 500,
                 headers: { 'Content-Type': 'application/json' }
             });

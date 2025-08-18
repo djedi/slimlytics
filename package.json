@@ -10,7 +10,9 @@
     "build": "eleventy",
     "db:init": "bun src/db/init.js",
     "db:migrate": "bun scripts/add-geo-columns.js",
-    "maxmind:download": "bun scripts/download-maxmind.js"
+    "maxmind:download": "bun scripts/download-maxmind.js",
+    "maxmind:update": "bun scripts/update-maxmind.js",
+    "maxmind:setup-auto-update": "./scripts/setup-auto-update.sh"
   },
   "dependencies": {
     "@11ty/eleventy": "^2.0.1",

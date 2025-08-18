@@ -34,9 +34,15 @@ function dashboard() {
 		topReferrers: [],
 		topCountries: [],
 		topCities: [],
+		topLocales: [],
+		trafficSources: [],
+		recentVisitors: [],
 		realtimeVisitors: 0,
 		trendLabels: [],
-		trendData: [],
+		trendVisitors: [],
+		trendPageViews: [],
+		compareVisitors: [],
+		comparePageViews: [],
 		
 		// WebSocket connection
 		ws: null,
@@ -153,6 +159,9 @@ function dashboard() {
 					this.topReferrers = data.topReferrers || [];
 					this.topCountries = data.topCountries || [];
 					this.topCities = data.topCities || [];
+					this.topLocales = data.topLocales || [];
+					this.trafficSources = data.trafficSources || [];
+					this.recentVisitors = data.recentVisitors || [];
 					this.realtimeVisitors = data.realtimeVisitors || 0;
 				} else {
 					// Use mock data as fallback
@@ -170,7 +179,23 @@ function dashboard() {
 				if (timeseriesResponse.ok) {
 					const data = await timeseriesResponse.json();
 					this.trendLabels = data.labels;
-					this.trendData = data.pageViews;
+					this.trendVisitors = data.visitors;
+					this.trendPageViews = data.pageViews;
+					
+					// Fetch comparison data (previous period)
+					const compareResponse = await fetch(
+						window.SLIMLYTICS_CONFIG.apiEndpoint(
+							`/api/stats/${this.selectedSiteId}/timeseries?days=${days * 2}`,
+						),
+					);
+					
+					if (compareResponse.ok) {
+						const compareData = await compareResponse.json();
+						// Take the first half as comparison (previous period)
+						this.compareVisitors = compareData.visitors.slice(0, days);
+						this.comparePageViews = compareData.pageViews.slice(0, days);
+					}
+					
 					this.updateChart();
 				}
 			} catch (error) {
@@ -460,6 +485,18 @@ function dashboard() {
 				this.topCities = newStats.topCities;
 			}
 			
+			if (newStats.topLocales) {
+				this.topLocales = newStats.topLocales;
+			}
+			
+			if (newStats.trafficSources) {
+				this.trafficSources = newStats.trafficSources;
+			}
+			
+			if (newStats.recentVisitors) {
+				this.recentVisitors = newStats.recentVisitors;
+			}
+			
 			if (newStats.realtimeVisitors !== undefined) {
 				this.realtimeVisitors = newStats.realtimeVisitors;
 			}
@@ -483,6 +520,64 @@ function dashboard() {
 			
 			return String.fromCodePoint(...codePoints);
 		},
+		
+		getLocaleFlagEmoji(locale) {
+			// Extract country code from locale (e.g., "en-US" -> "US")
+			const parts = locale.split('-');
+			if (parts.length > 1) {
+				return this.getFlagEmoji(parts[1]);
+			}
+			// Default flags for common language codes without country
+			const languageDefaults = {
+				'en': 'GB',
+				'es': 'ES',
+				'fr': 'FR',
+				'de': 'DE',
+				'it': 'IT',
+				'pt': 'PT',
+				'ru': 'RU',
+				'ja': 'JP',
+				'ko': 'KR',
+				'zh': 'CN',
+				'ar': 'SA',
+				'hi': 'IN'
+			};
+			return this.getFlagEmoji(languageDefaults[locale] || '');
+		},
+		
+		formatTimeAgo(timestamp) {
+			const now = new Date();
+			const visitTime = new Date(timestamp);
+			const diffInSeconds = Math.floor((now - visitTime) / 1000);
+			
+			if (diffInSeconds < 60) {
+				return 'just now';
+			} else if (diffInSeconds < 3600) {
+				const minutes = Math.floor(diffInSeconds / 60);
+				return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
+			} else if (diffInSeconds < 86400) {
+				const hours = Math.floor(diffInSeconds / 3600);
+				return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+			} else {
+				const days = Math.floor(diffInSeconds / 86400);
+				return `${days} day${days > 1 ? 's' : ''} ago`;
+			}
+		},
+		
+		formatLocation(visitor) {
+			const parts = [];
+			if (visitor.city) parts.push(visitor.city);
+			if (visitor.country) parts.push(visitor.country);
+			return parts.length > 0 ? parts.join(', ') : 'Unknown';
+		},
+		
+		maskIpAddress(ipHash) {
+			// Since we're storing hashed IPs, just show a masked format
+			// Take first 8 chars of hash and format like an IP
+			if (!ipHash) return '***.***.***';
+			const shortHash = ipHash.substring(0, 8);
+			return `${shortHash.substring(0,3)}.${shortHash.substring(3,6)}.***`;
+		},
 
 		chartSvg: "",
 		hoveredPoint: null,
@@ -493,20 +588,20 @@ function dashboard() {
 		},
 
 		updateChart() {
-			// Use trend data if available, otherwise use mock data
-			const chartData =
-				this.trendData.length > 0
-					? this.trendData
-					: [
-							12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128,
-							115, 98, 87, 76, 65, 54, 43, 32, 21,
-						];
+			// Use visitors data (not pageviews) for the chart
+			const chartData = this.trendVisitors.length > 0
+				? this.trendVisitors
+				: [12, 15, 18, 25, 32, 45, 52, 68, 89, 112, 125, 134, 145, 132, 128];
 
-			// For comparison, use previous period or mock data
-			const compareData = [
-				8, 11, 14, 19, 24, 35, 42, 58, 76, 98, 105, 112, 118, 108, 102, 95, 82,
-				73, 64, 55, 46, 37, 28, 18,
-			];
+			// Use comparison visitors data if available
+			const compareData = this.compareVisitors.length > 0
+				? this.compareVisitors
+				: chartData.map(v => Math.floor(v * 0.8)); // Default to 80% of current if no comparison data
+			
+			// Use the actual labels from API
+			const labels = this.trendLabels.length > 0
+				? this.trendLabels
+				: ['Jan 1', 'Jan 2', 'Jan 3', 'Jan 4', 'Jan 5'];
 
 			const width = 600;
 			const height = 300;
@@ -543,14 +638,17 @@ function dashboard() {
 			// Create area fill for today's data
 			const todayArea = `${todayPath} L ${padding.left + chartWidth} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`;
 
-			// Create path for comparison data
-			const comparePath = compareData
-				.map((value, i) => {
-					const x = padding.left + i * xStep;
-					const y = height - padding.bottom - value * yScale;
-					return `${i === 0 ? "M" : "L"} ${x} ${y}`;
-				})
-				.join(" ");
+			// Create path for comparison data (only if we have data)
+			const comparePath = compareData.length > 0 
+				? compareData
+					.slice(0, chartData.length) // Ensure same length as current data
+					.map((value, i) => {
+						const x = padding.left + i * xStep;
+						const y = height - padding.bottom - value * yScale;
+						return `${i === 0 ? "M" : "L"} ${x} ${y}`;
+					})
+					.join(" ")
+				: "";
 
 			// Create Y-axis labels
 			const yAxisLabels = [];
@@ -566,31 +664,45 @@ function dashboard() {
                 `);
 			}
 
-			// Create X-axis labels (show every 3 hours)
+			// Create X-axis labels - show every Nth label to avoid crowding
 			const xAxisLabels = [];
-			for (let i = 0; i < 24; i += 3) {
-				const x = padding.left + i * xStep;
-				xAxisLabels.push(`
-                    <text x="${x}" y="${height - padding.bottom + 20}" text-anchor="middle"
-                          font-size="12" fill="#7f8c8d">${i.toString().padStart(2, "0")}:00</text>
-                `);
-			}
+			const labelInterval = Math.ceil(labels.length / 7); // Show max 7 labels
+			
+			labels.forEach((label, i) => {
+				if (i % labelInterval === 0 || i === labels.length - 1) {
+					const x = padding.left + i * xStep;
+					xAxisLabels.push(`
+						<text x="${x}" y="${height - padding.bottom + 20}" text-anchor="middle"
+							  font-size="11" fill="#7f8c8d">${label}</text>
+					`);
+				}
+			});
 
 			// Create interactive points for chart data
 			const todayPoints = chartData
 				.map((value, i) => {
 					const x = padding.left + i * xStep;
 					const y = height - padding.bottom - value * yScale;
+					const label = labels[i] || '';
+					const compareValue = compareData[i] || 0;
+					const diff = value - compareValue;
+					const diffPercent = compareValue > 0 ? Math.round((diff / compareValue) * 100) : 0;
+					const diffSign = diff >= 0 ? '+' : '';
+					
 					return `
-                    <circle cx="${x}" cy="${y}" r="4" fill="#3498db" opacity="0"
-                            style="cursor: pointer; transition: opacity 0.2s;"
-                            onmouseover="this.style.opacity='1'; this.nextElementSibling.style.display='block'"
-                            onmouseout="this.style.opacity='0'; this.nextElementSibling.style.display='none'" />
-                    <g style="display: none;">
-                        <rect x="${x - 30}" y="${y - 35}" width="60" height="25" rx="3"
-                              fill="rgba(0,0,0,0.8)" />
-                        <text x="${x}" y="${y - 18}" text-anchor="middle"
-                              font-size="12" fill="white">${value} visitors</text>
+                    <circle cx="${x}" cy="${y}" r="3" fill="#3498db" opacity="0"
+                            style="cursor: pointer; transition: all 0.2s;"
+                            onmouseover="this.style.opacity='1'; this.setAttribute('r', '5'); this.nextElementSibling.style.display='block'"
+                            onmouseout="this.style.opacity='0'; this.setAttribute('r', '3'); this.nextElementSibling.style.display='none'" />
+                    <g style="display: none; pointer-events: none;">
+                        <rect x="${x - 50}" y="${y - 55}" width="100" height="45" rx="4"
+                              fill="rgba(0,0,0,0.85)" />
+                        <text x="${x}" y="${y - 38}" text-anchor="middle"
+                              font-size="11" fill="white" font-weight="bold">${label}</text>
+                        <text x="${x}" y="${y - 24}" text-anchor="middle"
+                              font-size="12" fill="white">${value.toLocaleString()} visitors</text>
+                        <text x="${x}" y="${y - 10}" text-anchor="middle"
+                              font-size="10" fill="${diff >= 0 ? '#27ae60' : '#e74c3c'}">${diffSign}${diffPercent}% vs prev</text>
                     </g>
                 `;
 				})
@@ -628,13 +740,13 @@ function dashboard() {
                     ${todayPoints}
 
                     <!-- Legend -->
-                    <g transform="translate(${width / 2 - 80}, ${height - 15})">
+                    <g transform="translate(${width / 2 - 100}, ${height - 15})">
                         <line x1="0" y1="0" x2="20" y2="0" stroke="#3498db" stroke-width="2" />
-                        <text x="25" y="4" font-size="12" fill="#2c3e50">Today</text>
+                        <text x="25" y="4" font-size="11" fill="#2c3e50">Current Period</text>
 
-                        <line x1="80" y1="0" x2="100" y2="0" stroke="#95a5a6"
+                        <line x1="110" y1="0" x2="130" y2="0" stroke="#95a5a6"
                               stroke-width="1" stroke-dasharray="5,5" />
-                        <text x="105" y="4" font-size="12" fill="#2c3e50">7 Days Ago</text>
+                        <text x="135" y="4" font-size="11" fill="#2c3e50">Previous Period</text>
                     </g>
                 </svg>
             `;

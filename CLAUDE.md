@@ -27,6 +27,7 @@ The dashboard features WebSocket-based real-time updates. When new tracking even
 - Daily rollups of analytics data for efficient reporting.
 - Retention strategy to manage data size and relevance over time.
 - Real-time dashboard updates via WebSockets for instant analytics feedback.
+- GeoIP location tracking using MaxMind GeoLite2 databases for visitor geography insights.
 
 ## Why
 
@@ -53,6 +54,12 @@ npm run build
 
 # Initialize the database
 npm run db:init
+
+# Run database migration for geo columns (if upgrading)
+npm run db:migrate
+
+# Download/update MaxMind GeoIP databases
+npm run maxmind:download
 ```
 
 ### API Endpoints
@@ -79,3 +86,34 @@ The dashboard connects to the WebSocket server and subscribes to updates for a s
 6. Server responds: `{ "type": "pong" }`
 
 The dashboard automatically reconnects if the connection is lost and displays a live connection status indicator.
+
+## GeoIP Location Tracking
+
+The application uses MaxMind GeoLite2 databases to provide geographic information about visitors:
+
+### Setup
+1. Create a free MaxMind account at https://www.maxmind.com/en/geolite2/signup
+2. Add your credentials to `.env`:
+   ```
+   MAXMIND_ACCOUNT_ID=your_account_id
+   MAXMIND_LICENSE_KEY=your_license_key
+   ```
+3. Download databases: `npm run maxmind:download`
+
+### Features
+- **Location Data**: Tracks country, city, region, coordinates, timezone, and ASN for each visitor
+- **Dashboard Display**: Shows top countries with flag emojis and top cities
+- **Privacy-Friendly**: IP addresses are hashed, only location data is stored
+- **Database Storage**: Location data is stored in additional columns in the events table
+
+### Architecture
+- **GeoIP Service** (`api/services/geoip.js`): Handles database loading and IP lookups
+- **Download Script** (`scripts/download-maxmind.js`): Downloads and extracts MaxMind databases
+- **Database Migration** (`scripts/add-geo-columns.js`): Adds geo columns to existing database
+- **Integration**: The `/track` endpoint automatically performs GeoIP lookups for incoming events
+
+### Database Updates
+MaxMind updates their databases twice weekly (Tuesdays and Fridays). You can download updates up to 30 times per day. To keep data current:
+- Run `npm run maxmind:download` periodically (weekly recommended)
+- Consider setting up a cron job for automatic updates
+- Databases are stored in `data/maxmind/` (gitignored)
