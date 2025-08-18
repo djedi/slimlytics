@@ -54,8 +54,21 @@ function addSite() {
                 
                 const data = await response.json();
                 this.siteId = data.id;
+                
+                // Set the newly added site as the selected site
+                window.SiteManager.setSelectedSite({
+                    id: data.id,
+                    name: this.siteName.trim(),
+                    domain: data.domain
+                });
+                
                 this.generateTrackingCode(data.id);
                 this.siteAdded = true;
+                
+                // Redirect to dashboard after a short delay to show success message
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 2000);
                 
             } catch (err) {
                 this.error = err.message || 'Failed to add site. Please try again.';
