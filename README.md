@@ -82,11 +82,13 @@ bun run build
 ### Database Management
 
 Initialize database:
+
 ```bash
 bun run db:init
 ```
 
 Run geo columns migration (for existing databases):
+
 ```bash
 bun run db:migrate
 ```
@@ -94,11 +96,13 @@ bun run db:migrate
 ### Deployment & Production Commands
 
 Deploy to production server:
+
 ```bash
 bun run deploy    # Deploy application to configured server
 ```
 
 Debug production server:
+
 ```bash
 bun run logs      # Interactive server debugging and log viewer
 ```
@@ -106,6 +110,7 @@ bun run logs      # Interactive server debugging and log viewer
 ### GeoIP Database Management
 
 #### Manual Updates
+
 ```bash
 bun run maxmind:download   # Force download all databases
 bun run maxmind:update     # Smart update - only downloads if needed
@@ -115,11 +120,13 @@ bun run maxmind:update -- --force  # Force update even if current
 #### Automatic Updates (Recommended)
 
 Set up twice-weekly automatic updates:
+
 ```bash
 bun run maxmind:setup-auto-update
 ```
 
 This interactive script will:
+
 - Detect your operating system
 - Offer scheduling options (cron, systemd, or launchd)
 - Configure updates for Wednesdays and Saturdays at 3 AM
@@ -146,7 +153,8 @@ tail -20 data/maxmind/update.log
 ls -la data/maxmind/*.mmdb
 ```
 
-**Update Schedule**: 
+**Update Schedule**:
+
 - MaxMind releases new data on Tuesdays and Fridays
 - Auto-updates run on Wednesdays and Saturdays to catch these releases
 - You can download up to 30 times per day
@@ -276,13 +284,14 @@ Slimlytics includes a smart deployment system that handles Docker builds, server
    # Username: your-docker-username
    # Password: your-docker-password
    ```
-   
 2. **Update deploy.js with your Docker Hub username** (line 14):
+
    ```javascript
-   const DOCKER_REGISTRY = 'your-username';  // Default is 'xhenxhe'
+   const DOCKER_REGISTRY = "your-username"; // Default is 'xhenxhe'
    ```
 
 3. **Run the deployment**:
+
    ```bash
    ./deploy
    # or
@@ -292,6 +301,7 @@ Slimlytics includes a smart deployment system that handles Docker builds, server
    ```
 
    On first run, the script will:
+
    - Prompt for server IP/domain
    - Prompt for SSH username (default: root)
    - Prompt for application domain (for SSL)
@@ -303,11 +313,13 @@ Slimlytics includes a smart deployment system that handles Docker builds, server
 ### Updating an Existing Deployment
 
 Simply run the deploy script again:
+
 ```bash
 ./deploy
 ```
 
 The script will:
+
 - Backup your database to `prod_db_backups/`
 - Build and push new Docker image
 - Deploy with zero downtime
@@ -322,6 +334,7 @@ The script will:
 ### Configuration
 
 The deployment configuration is stored in `.deploy.json` (created on first run):
+
 ```json
 {
   "servers": {
@@ -338,17 +351,18 @@ The deployment configuration is stored in `.deploy.json` (created on first run):
 ### SSL/HTTPS
 
 SSL certificates are automatically provisioned and renewed by Caddy. Just ensure:
+
 - Your domain points to the server
 - Ports 80 and 443 are open
 - No other services are using these ports
 
 ### Database Management
 
-- **Location on server**: `/opt/slimlytics/data/slimlytics.db`
+- **Location on server**: `/opt/slimlytics/data/analytics.db`
 - **Automatic backups**: Created before each deployment in `prod_db_backups/`
-- **Manual backup**: 
+- **Manual backup**:
   ```bash
-  scp root@your-server:/opt/slimlytics/data/slimlytics.db ./backup.db
+  scp root@your-server:/opt/slimlytics/data/analytics.db ./backup.db
   ```
 
 ### Monitoring
@@ -356,6 +370,7 @@ SSL certificates are automatically provisioned and renewed by Caddy. Just ensure
 #### Quick Debugging with Server Logs Script
 
 Use the built-in server logs helper for comprehensive debugging:
+
 ```bash
 ./server-logs.js
 # or
@@ -365,6 +380,7 @@ bun run logs
 ```
 
 This interactive script will:
+
 - Show container status and health
 - Display recent application and web server logs
 - Run internal health checks
@@ -380,6 +396,7 @@ This interactive script will:
 #### Manual Monitoring
 
 Alternatively, check service status manually on the server:
+
 ```bash
 ssh root@your-server
 cd /opt/slimlytics
@@ -392,11 +409,13 @@ docker compose logs -f
 #### 502 Bad Gateway Errors
 
 If you encounter a 502 error after deployment, run the server logs script:
+
 ```bash
 ./server-logs.js
 ```
 
 Common causes and fixes:
+
 1. **Container not running**: Check container status, restart if needed
 2. **Application crash on startup**: Review Slimlytics logs for errors
 3. **Missing environment file**: Ensure `.env` exists on server
@@ -407,25 +426,30 @@ Common causes and fixes:
 #### Other Common Issues
 
 **Build fails:**
+
 - Ensure you're logged into Docker Hub: `docker login`
 - Check Docker Hub rate limits
 
 **Connection issues:**
+
 - Verify SSH key is set up: `ssh-copy-id root@your-server`
 - Check firewall allows SSH (port 22)
 
 **SSL not working:**
+
 - Verify domain DNS points to server
 - Check Caddy logs: `docker compose logs caddy`
 - Ensure ports 80/443 are accessible
 
 **Application errors:**
+
 - Use `./server-logs.js` for comprehensive debugging
 - Check logs: `docker compose logs slimlytics`
 - Verify `.env` file exists on server
 - Check database permissions
 
 **Quick recovery steps:**
+
 ```bash
 ssh root@your-server
 cd /opt/slimlytics
@@ -463,11 +487,13 @@ docker compose logs -f
 For production environments:
 
 1. Set up automatic GeoIP updates:
+
    ```bash
    sudo ./scripts/setup-auto-update.sh  # Choose systemd option
    ```
 
 2. Monitor update status:
+
    ```bash
    systemctl status slimlytics-maxmind-update.timer
    systemctl list-timers slimlytics-maxmind-update
@@ -482,18 +508,21 @@ For production environments:
 ### GeoIP Issues
 
 **Databases not downloading:**
+
 - Verify MaxMind credentials in `.env`
 - Check account status at https://www.maxmind.com
 - Ensure internet connectivity
 - Check logs: `tail data/maxmind/update.log`
 
 **Location data not showing:**
+
 - Ensure databases exist: `ls -la data/maxmind/*.mmdb`
 - Run migration if upgrading: `bun run db:migrate`
 - Restart API server to load databases
 - Check API logs for GeoIP initialization messages
 
 **Auto-updates not working:**
+
 - Verify scheduler is running:
   - Cron: `crontab -l`
   - Systemd: `systemctl status slimlytics-maxmind-update.timer`

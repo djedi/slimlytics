@@ -240,12 +240,12 @@ async function buildAndPushImage(tag = "latest") {
 		await exec(
 			`docker buildx build --platform linux/amd64,linux/arm64 --target api -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:api -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:api-${tag} --push .`,
 		);
-		
+
 		log.step("Building Web stage for linux/amd64 and linux/arm64...");
 		await exec(
 			`docker buildx build --platform linux/amd64,linux/arm64 --target web -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:web -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:web-${tag} --push .`,
 		);
-		
+
 		log.success("Multi-architecture images built and pushed to Docker Hub");
 	} catch (error) {
 		log.error("Failed to build or push Docker image");
@@ -265,7 +265,7 @@ async function backupDatabase(conn, server) {
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 	const backupFile = join(BACKUP_DIR, `backup-${timestamp}.db`);
-	const remotePath = `${server.path}/data/slimlytics.db`;
+	const remotePath = `${server.path}/data/analytics.db`;
 
 	log.step("Backing up database...");
 
@@ -335,13 +335,13 @@ async function deploy(conn, server, isFirstDeployment = false) {
 			"docker-compose.production.yml",
 			`${server.path}/docker-compose.yml`,
 		);
-		
+
 		// Update Caddyfile to ensure latest configuration
 		const caddyfile = generateCaddyfile(server.domain);
 		writeFileSync(".tmp.caddyfile", caddyfile);
 		await scpUpload(conn, ".tmp.caddyfile", `${server.path}/Caddyfile`);
 		require("node:fs").unlinkSync(".tmp.caddyfile");
-		
+
 		log.step("Stopping old services...");
 		// Stop all services (handles both old and new service names)
 		try {
@@ -349,21 +349,29 @@ async function deploy(conn, server, isFirstDeployment = false) {
 		} catch (e) {
 			log.warning("Could not stop services (they may not be running)");
 		}
-		
+
 		log.step("Starting updated services...");
 		// Pull latest images
 		await sshExec(conn, `cd ${server.path} && docker compose pull`);
-		
+
 		// Start services with forced recreation to ensure config changes take effect
-		await sshExec(conn, `cd ${server.path} && docker compose up -d --force-recreate`);
-		
+		await sshExec(
+			conn,
+			`cd ${server.path} && docker compose up -d --force-recreate`,
+		);
+
 		// Reload Caddy configuration to ensure it picks up the new Caddyfile
 		log.step("Reloading Caddy configuration...");
 		try {
-			await sshExec(conn, `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`);
+			await sshExec(
+				conn,
+				"docker exec caddy caddy reload --config /etc/caddy/Caddyfile",
+			);
 			log.success("Caddy configuration reloaded");
 		} catch (e) {
-			log.warning("Could not reload Caddy config (container may be restarting)");
+			log.warning(
+				"Could not reload Caddy config (container may be restarting)",
+			);
 		}
 	}
 

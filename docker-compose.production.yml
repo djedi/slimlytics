@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   slimlytics-api:
@@ -12,7 +12,7 @@ services:
       - .env
     volumes:
       # Persistent database - mounted as a file
-      - ./data/slimlytics.db:/app/data/slimlytics.db
+      - ./data/analytics.db:/app/data/analytics.db
       # MaxMind GeoIP databases
       - ./data/maxmind:/app/data/maxmind
     networks:
