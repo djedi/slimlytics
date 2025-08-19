@@ -150,7 +150,7 @@ title: Analytics Dashboard
         <ul class="data-list">
           <template x-for="search in searchQueries" :key="search.query">
             <li class="list-item">
-              <span x-text="`"${search.query}"`"></span>
+              <span x-text='`"${search.query}"`'></span>
               <span class="badge success" x-text="search.count"></span>
             </li>
           </template>

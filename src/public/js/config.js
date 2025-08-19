@@ -9,16 +9,23 @@
         
         // Helper method to build API endpoints
         apiEndpoint: function(path) {
+            console.log('[Config] Building API endpoint for path:', path);
+            console.log('[Config] Current API_URL:', this.API_URL);
             // Ensure path starts with /
             if (!path.startsWith('/')) {
                 path = '/' + path;
             }
-            return this.API_URL + path;
+            const fullUrl = this.API_URL + path;
+            console.log('[Config] Full API URL:', fullUrl);
+            return fullUrl;
         }
     };
 
-    // Log the configuration in development
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-        console.log('Slimlytics Config:', window.SLIMLYTICS_CONFIG);
-    }
+    // Always log the configuration for debugging
+    console.log('[Config] Slimlytics Config initialized:', {
+        API_URL: window.SLIMLYTICS_CONFIG.API_URL,
+        hostname: window.location.hostname,
+        origin: window.location.origin,
+        pathname: window.location.pathname
+    });
 })();

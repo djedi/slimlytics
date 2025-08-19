@@ -285,6 +285,83 @@ function generateCaddyfile(domain) {
 	return template.replace(/{DOMAIN}/g, domain);
 }
 
+// Run database migrations
+async function runDatabaseMigrations(conn, server) {
+	log.step("Checking database schema...");
+	
+	try {
+		// Check if geo columns exist by trying to query them
+		const checkGeoColumns = await sshExec(
+			conn,
+			`docker exec slimlytics-app sh -c "echo 'SELECT country FROM events LIMIT 1;' | sqlite3 /app/data/analytics.db 2>&1"`,
+		);
+		
+		// If the query succeeds, geo columns exist
+		if (!checkGeoColumns.includes("no such column")) {
+			log.info("Database schema is up to date");
+			return;
+		}
+	} catch (e) {
+		// Column doesn't exist, need to migrate
+	}
+	
+	log.step("Running database migration to add geo columns...");
+	
+	// Create backup before migration
+	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+	try {
+		await sshExec(
+			conn,
+			`docker exec slimlytics-app cp /app/data/analytics.db /app/data/analytics-backup-${timestamp}.db`,
+		);
+		log.success(`Database backup created: analytics-backup-${timestamp}.db`);
+	} catch (e) {
+		log.warning("Could not create backup (database may be new)");
+	}
+	
+	// Run the migration using the existing script in the container
+	try {
+		await sshExec(
+			conn,
+			`docker exec slimlytics-app bun run /app/scripts/add-geo-columns.js`,
+		);
+		log.success("Database migration completed successfully");
+	} catch (error) {
+		// If the script doesn't exist or fails, run the migration inline
+		log.step("Running inline migration...");
+		
+		const migrationCommands = `
+			ALTER TABLE events ADD COLUMN country TEXT;
+			ALTER TABLE events ADD COLUMN country_code TEXT;
+			ALTER TABLE events ADD COLUMN region TEXT;
+			ALTER TABLE events ADD COLUMN city TEXT;
+			ALTER TABLE events ADD COLUMN latitude REAL;
+			ALTER TABLE events ADD COLUMN longitude REAL;
+			ALTER TABLE events ADD COLUMN timezone TEXT;
+			ALTER TABLE events ADD COLUMN asn INTEGER;
+			ALTER TABLE events ADD COLUMN asn_org TEXT;
+			CREATE INDEX IF NOT EXISTS idx_events_country ON events(site_id, country_code);
+			CREATE INDEX IF NOT EXISTS idx_events_city ON events(site_id, city);
+			ALTER TABLE daily_stats ADD COLUMN top_countries TEXT;
+			ALTER TABLE daily_stats ADD COLUMN top_cities TEXT;
+		`;
+		
+		for (const cmd of migrationCommands.trim().split('\n').filter(line => line.trim())) {
+			try {
+				await sshExec(
+					conn,
+					`docker exec slimlytics-app sh -c "echo '${cmd.trim()}' | sqlite3 /app/data/analytics.db"`,
+				);
+			} catch (e) {
+				if (!e.message.includes("duplicate column")) {
+					log.warning(`Migration command failed: ${cmd.trim()}`);
+				}
+			}
+		}
+		log.success("Inline migration completed");
+	}
+}
+
 // Setup server for first deployment
 async function setupServer(conn, server) {
 	log.step("Setting up server for first deployment...");
@@ -384,6 +461,9 @@ async function deploy(conn, server, isFirstDeployment = false) {
 	// Check service status
 	const status = await sshExec(conn, `cd ${server.path} && docker compose ps`);
 	log.info(`Service status:\n${status}`);
+
+	// Run database migrations after services are up
+	await runDatabaseMigrations(conn, server);
 
 	log.success("Deployment complete!");
 	log.info(`Your application is running at https://${server.domain}`);

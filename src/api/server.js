@@ -229,40 +229,47 @@ Bun.serve({
 	},
 	websocket: {
 		open(ws) {
-			console.log("WebSocket client connected");
+			console.log("[WebSocket] Client connected from:", ws.remoteAddress);
 			ws.isAlive = true;
 		},
 
-		close(ws) {
-			console.log("WebSocket client disconnected");
+		close(ws, code, reason) {
+			console.log("[WebSocket] Client disconnected. Code:", code, "Reason:", reason);
 
 			// Remove from all subscriber lists
 			if (ws.siteId && wsClients.has(ws.siteId)) {
 				wsClients.get(ws.siteId).delete(ws);
+				console.log(`[WebSocket] Removed client from site ${ws.siteId} subscribers`);
 
 				// Clean up empty sets
 				if (wsClients.get(ws.siteId).size === 0) {
 					wsClients.delete(ws.siteId);
+					console.log(`[WebSocket] No more subscribers for site ${ws.siteId}, cleaned up`);
 				}
 			}
 		},
 
 		error(ws, error) {
-			console.error("WebSocket error:", error);
+			console.error("[WebSocket] Error:", error);
+			console.error("[WebSocket] Error details:", error.message, error.stack);
 		},
 
 		message(ws, message) {
 			// Handle messages
+			console.log("[WebSocket] Message received:", message);
 			try {
 				const data = JSON.parse(message);
+				console.log("[WebSocket] Parsed message type:", data.type);
 
 				if (data.type === "subscribe" && data.siteId) {
+					console.log(`[WebSocket] Subscribing client to site ${data.siteId}`);
 					// Add client to the site's subscriber list
 					if (!wsClients.has(data.siteId)) {
 						wsClients.set(data.siteId, new Set());
 					}
 					wsClients.get(data.siteId).add(ws);
 					ws.siteId = data.siteId;
+					console.log(`[WebSocket] Client subscribed. Total subscribers for ${data.siteId}: ${wsClients.get(data.siteId).size}`);
 
 					// Send initial stats
 					broadcastStatsUpdate(data.siteId);
@@ -278,10 +285,12 @@ Bun.serve({
 
 				// Handle ping/pong for connection health
 				if (data.type === "ping") {
+					console.log("[WebSocket] Ping received, sending pong");
 					ws.send(JSON.stringify({ type: "pong" }));
 				}
 			} catch (error) {
-				console.error("WebSocket message error:", error);
+				console.error("[WebSocket] Message error:", error);
+				console.error("[WebSocket] Raw message was:", message);
 			}
 		},
 	},

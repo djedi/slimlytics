@@ -25,11 +25,23 @@ db.exec(`
     screen_resolution TEXT,
     language TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    -- Geo location columns
+    country TEXT,
+    country_code TEXT,
+    region TEXT,
+    city TEXT,
+    latitude REAL,
+    longitude REAL,
+    timezone TEXT,
+    asn INTEGER,
+    asn_org TEXT,
     FOREIGN KEY (site_id) REFERENCES sites(id)
   );
 
   CREATE INDEX IF NOT EXISTS idx_events_site_timestamp ON events(site_id, timestamp);
   CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_events_country ON events(site_id, country_code);
+  CREATE INDEX IF NOT EXISTS idx_events_city ON events(site_id, city);
 
   CREATE TABLE IF NOT EXISTS daily_stats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +53,8 @@ db.exec(`
     bounce_rate REAL DEFAULT 0,
     top_pages TEXT,
     top_referrers TEXT,
+    top_countries TEXT,
+    top_cities TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (site_id) REFERENCES sites(id),
     UNIQUE(site_id, date)

@@ -49,12 +49,18 @@ function dashboard() {
 		wsHeartbeatInterval: null,
 
 		async init() {
+			console.log('[Dashboard] Starting initialization...');
+			console.log('[Dashboard] Config:', window.SLIMLYTICS_CONFIG);
+			console.log('[Dashboard] SiteManager available:', !!window.SiteManager);
+			
 			// Get current site from SiteManager
 			const currentSite = await window.SiteManager.getSelectedSite();
+			console.log('[Dashboard] Current site from SiteManager:', currentSite);
 
 			if (!currentSite) {
 				// No site selected, check if we need to redirect
 				const sites = await window.SiteManager.getAllSites();
+				console.log('[Dashboard] All sites from SiteManager:', sites);
 				
 				// Check if we got an empty array due to API error
 				// If so, don't redirect to avoid loops
@@ -69,14 +75,19 @@ function dashboard() {
 					// Only redirect if we're sure the API is working
 					// Try a simple health check first
 					try {
-						const healthCheck = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
+						const apiUrl = window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites');
+						console.log('[Dashboard] Health check URL:', apiUrl);
+						const healthCheck = await fetch(apiUrl);
+						console.log('[Dashboard] Health check response status:', healthCheck.status);
+						console.log('[Dashboard] Health check content-type:', healthCheck.headers.get('content-type'));
 						if (!healthCheck.ok || !healthCheck.headers.get('content-type')?.includes('application/json')) {
-							console.error('API appears to be down, not redirecting to avoid loops');
+							console.error('[Dashboard] API appears to be down, not redirecting to avoid loops');
 							this.stats = { error: 'Unable to connect to API. Please try again later.' };
 							return;
 						}
 					} catch (err) {
-						console.error('API connection failed:', err);
+						console.error('[Dashboard] API connection failed:', err);
+						console.error('[Dashboard] Error details:', err.message, err.stack);
 						this.stats = { error: 'Unable to connect to API. Please try again later.' };
 						return;
 					}
@@ -114,21 +125,28 @@ function dashboard() {
 		},
 
 		async loadStats() {
-			if (!this.selectedSiteId) return;
+			console.log('[Dashboard] Loading stats for site:', this.selectedSiteId);
+			if (!this.selectedSiteId) {
+				console.warn('[Dashboard] No site selected, cannot load stats');
+				return;
+			}
 
 			try {
 				// Calculate date range
 				const dateRange = this.getDateRange();
+				console.log('[Dashboard] Date range:', dateRange);
 
 				// Fetch dashboard stats
-				const statsResponse = await fetch(
-					window.SLIMLYTICS_CONFIG.apiEndpoint(
-						`/api/stats/${this.selectedSiteId}?start=${dateRange.start}&end=${dateRange.end}`,
-					),
+				const statsUrl = window.SLIMLYTICS_CONFIG.apiEndpoint(
+					`/api/stats/${this.selectedSiteId}?start=${dateRange.start}&end=${dateRange.end}`,
 				);
+				console.log('[Dashboard] Fetching stats from:', statsUrl);
+				const statsResponse = await fetch(statsUrl);
+				console.log('[Dashboard] Stats response status:', statsResponse.status);
 
 				if (statsResponse.ok) {
 					const data = await statsResponse.json();
+					console.log('[Dashboard] Stats data received:', data);
 
 					// Format stats for display
 					this.stats = {
@@ -148,6 +166,13 @@ function dashboard() {
 					this.recentVisitors = data.recentVisitors || [];
 					this.realtimeVisitors = data.realtimeVisitors || 0;
 				} else {
+					console.error('[Dashboard] Stats response not OK, using mock data. Status:', statsResponse.status);
+					try {
+						const errorText = await statsResponse.text();
+						console.error('[Dashboard] Error response body:', errorText);
+					} catch (e) {
+						console.error('[Dashboard] Could not read error response body');
+					}
 					// Use mock data as fallback
 					this.loadMockStats();
 				}
@@ -189,7 +214,8 @@ function dashboard() {
 					this.updateChart();
 				}
 			} catch (error) {
-				console.error("Error loading stats:", error);
+				console.error('[Dashboard] Error loading stats:', error);
+				console.error('[Dashboard] Error details:', error.message, error.stack);
 				this.loadMockStats();
 			}
 		},
@@ -356,17 +382,22 @@ function dashboard() {
 		},
 
 		connectWebSocket() {
-			if (!this.selectedSiteId) return;
+			console.log('[Dashboard] Connecting WebSocket for site:', this.selectedSiteId);
+			if (!this.selectedSiteId) {
+				console.warn('[Dashboard] No site selected, skipping WebSocket connection');
+				return;
+			}
 
 			// Get WebSocket URL from API endpoint
 			const apiUrl = window.SLIMLYTICS_CONFIG.apiEndpoint("");
 			const wsUrl = apiUrl.replace(/^http/, "ws").replace(/\/$/, "");
+			console.log('[Dashboard] WebSocket URL:', wsUrl);
 
 			try {
 				this.ws = new WebSocket(wsUrl);
 
 				this.ws.onopen = () => {
-					console.log("WebSocket connected");
+					console.log('[Dashboard] WebSocket connected successfully');
 					this.wsConnected = true;
 
 					// Ensure WebSocket is in OPEN state before sending
@@ -411,11 +442,12 @@ function dashboard() {
 				};
 
 				this.ws.onerror = (error) => {
-					console.error("WebSocket error:", error);
+					console.error('[Dashboard] WebSocket error:', error);
+					console.error('[Dashboard] WebSocket readyState:', this.ws.readyState);
 				};
 
-				this.ws.onclose = () => {
-					console.log("WebSocket disconnected");
+				this.ws.onclose = (event) => {
+					console.log('[Dashboard] WebSocket disconnected. Code:', event.code, 'Reason:', event.reason);
 					this.wsConnected = false;
 					this.stopHeartbeat();
 					// Attempt to reconnect after 5 seconds
@@ -424,7 +456,8 @@ function dashboard() {
 					}, 5000);
 				};
 			} catch (error) {
-				console.error("Failed to connect WebSocket:", error);
+				console.error('[Dashboard] Failed to connect WebSocket:', error);
+				console.error('[Dashboard] WebSocket error details:', error.message, error.stack);
 			}
 		},
 

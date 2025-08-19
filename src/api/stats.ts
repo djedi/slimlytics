@@ -1,6 +1,14 @@
 import { Database } from 'bun:sqlite';
+import { existsSync } from 'fs';
+import { resolve } from 'path';
 
-const db = new Database('data/analytics.db', { create: true });
+// Resolve database path relative to project root
+const dbPath = resolve(process.cwd(), 'data/analytics.db');
+console.log('[Stats API] Database path:', dbPath);
+console.log('[Stats API] Database exists:', existsSync(dbPath));
+
+const db = new Database(dbPath, { create: true });
+console.log('[Stats API] Database connected successfully');
 
 export interface RecentVisitor {
     ip_hash: string;
@@ -533,11 +541,14 @@ export const statsRoutes = {
     // GET /api/stats/:siteId
     async getStats(req: Request, siteId: string) {
         try {
+            console.log('[Stats API] Getting stats for site:', siteId);
             const url = new URL(req.url);
             const startDate = url.searchParams.get('start');
             const endDate = url.searchParams.get('end');
+            console.log('[Stats API] Date range:', { start: startDate, end: endDate });
             
             const stats = getDashboardStats(siteId, startDate || undefined, endDate || undefined);
+            console.log('[Stats API] Stats retrieved successfully');
             
             return new Response(JSON.stringify(stats), {
                 headers: { 
@@ -546,8 +557,22 @@ export const statsRoutes = {
                 }
             });
         } catch (error) {
-            console.error('Error fetching stats:', error);
-            return new Response(JSON.stringify({ error: 'Failed to fetch stats' }), {
+            console.error('[Stats API] Error fetching stats:', error);
+            console.error('[Stats API] Error stack:', error.stack);
+            console.error('[Stats API] Error details:', {
+                siteId,
+                url: req.url,
+                message: error.message
+            });
+            
+            // Return more detailed error in development
+            const errorResponse = {
+                error: 'Failed to fetch stats',
+                message: error.message,
+                siteId: siteId
+            };
+            
+            return new Response(JSON.stringify(errorResponse), {
                 status: 500,
                 headers: { 'Content-Type': 'application/json' }
             });
