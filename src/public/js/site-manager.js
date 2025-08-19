@@ -52,7 +52,10 @@ window.SiteManager = (() => {
 				: "/api/sites";
 			console.log('[SiteManager] API endpoint:', apiEndpoint);
 
-			const response = await fetch(apiEndpoint);
+			// Use cached fetch if available
+			const response = window.APICache 
+				? await window.APICache.fetch(apiEndpoint)
+				: await fetch(apiEndpoint);
 			console.log('[SiteManager] Response status:', response.status);
 
 			// Check if response is OK and is JSON

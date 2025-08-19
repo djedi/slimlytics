@@ -8,26 +8,37 @@
     <!-- Dashboard CSS -->
     <link rel="stylesheet" href="/css/dashboard.css">
     
-    <!-- Configuration (must be loaded before other scripts) -->
+    <!-- Critical: Configuration must be loaded first -->
     <script src="/js/config.js"></script>
+    
+    <!-- API Cache for preventing duplicate requests -->
+    <script src="/js/api-cache.js"></script>
     
     <!-- Site Manager for persistent site selection -->
     <script src="/js/site-manager.js"></script>
     
-    <!-- Alpine.js for interactivity -->
+    <!-- Alpine.js for interactivity (defer for non-blocking) -->
     <script defer src="/js/alpine.min.js"></script>
     
     <!-- Alpine initialization wrapper with error handling -->
-    <script src="/js/alpine-init.js"></script>
+    <script defer src="/js/alpine-init.js"></script>
     
-    <!-- Dashboard logic -->
-    <script src="/js/dashboard.js"></script>
+    <!-- Dashboard logic (defer for non-blocking) -->
+    <script defer src="/js/dashboard.js"></script>
     
-    <!-- API Diagnostic tool (helps debug connection issues) -->
-    <script src="/js/api-diagnostic.js"></script>
+    <!-- HTMX for server interactions (async for non-blocking) -->
+    <script async src="/js/htmx.min.js"></script>
     
-    <!-- HTMX for server interactions -->
-    <script src="/js/htmx.min.js"></script>
+    <!-- API Diagnostic tool (development only) -->
+    <script>
+        // Only load diagnostic tool in development
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            const script = document.createElement('script');
+            script.src = '/js/api-diagnostic.js';
+            script.defer = true;
+            document.head.appendChild(script);
+        }
+    </script>
 </head>
 <body>
     {{ content | safe }}

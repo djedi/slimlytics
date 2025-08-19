@@ -141,7 +141,10 @@ function dashboard() {
 					`/api/stats/${this.selectedSiteId}?start=${dateRange.start}&end=${dateRange.end}`,
 				);
 				console.log('[Dashboard] Fetching stats from:', statsUrl);
-				const statsResponse = await fetch(statsUrl);
+				// Use cached fetch if available
+				const statsResponse = window.APICache 
+					? await window.APICache.fetch(statsUrl)
+					: await fetch(statsUrl);
 				console.log('[Dashboard] Stats response status:', statsResponse.status);
 
 				if (statsResponse.ok) {
@@ -178,11 +181,13 @@ function dashboard() {
 				}
 
 				// Fetch time series data for chart
-				const timeseriesResponse = await fetch(
-					window.SLIMLYTICS_CONFIG.apiEndpoint(
-						`/api/stats/${this.selectedSiteId}/timeseries?start=${dateRange.start}&end=${dateRange.end}`,
-					),
+				const timeseriesUrl = window.SLIMLYTICS_CONFIG.apiEndpoint(
+					`/api/stats/${this.selectedSiteId}/timeseries?start=${dateRange.start}&end=${dateRange.end}`,
 				);
+				// Use cached fetch if available
+				const timeseriesResponse = window.APICache
+					? await window.APICache.fetch(timeseriesUrl)
+					: await fetch(timeseriesUrl);
 
 				if (timeseriesResponse.ok) {
 					const data = await timeseriesResponse.json();
@@ -199,11 +204,13 @@ function dashboard() {
 					const compareEnd = currentStart;
 
 					// Fetch comparison data (previous period)
-					const compareResponse = await fetch(
-						window.SLIMLYTICS_CONFIG.apiEndpoint(
-							`/api/stats/${this.selectedSiteId}/timeseries?start=${compareStart.toISOString()}&end=${compareEnd.toISOString()}`,
-						),
+					const compareUrl = window.SLIMLYTICS_CONFIG.apiEndpoint(
+						`/api/stats/${this.selectedSiteId}/timeseries?start=${compareStart.toISOString()}&end=${compareEnd.toISOString()}`,
 					);
+					// Use cached fetch if available
+					const compareResponse = window.APICache
+						? await window.APICache.fetch(compareUrl)
+						: await fetch(compareUrl);
 
 					if (compareResponse.ok) {
 						const compareData = await compareResponse.json();
