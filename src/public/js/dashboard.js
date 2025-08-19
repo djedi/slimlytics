@@ -55,7 +55,33 @@ function dashboard() {
 			if (!currentSite) {
 				// No site selected, check if we need to redirect
 				const sites = await window.SiteManager.getAllSites();
+				
+				// Check if we got an empty array due to API error
+				// If so, don't redirect to avoid loops
 				if (sites.length === 0) {
+					// Check if we're already on the add-site page
+					if (window.location.pathname === '/add-site' || window.location.pathname === '/add-site.html') {
+						// Already on add-site page, don't redirect
+						console.warn('No sites available and already on add-site page');
+						return;
+					}
+					
+					// Only redirect if we're sure the API is working
+					// Try a simple health check first
+					try {
+						const healthCheck = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
+						if (!healthCheck.ok || !healthCheck.headers.get('content-type')?.includes('application/json')) {
+							console.error('API appears to be down, not redirecting to avoid loops');
+							this.stats = { error: 'Unable to connect to API. Please try again later.' };
+							return;
+						}
+					} catch (err) {
+						console.error('API connection failed:', err);
+						this.stats = { error: 'Unable to connect to API. Please try again later.' };
+						return;
+					}
+					
+					// API is working but no sites exist, safe to redirect
 					window.location.href = "/add-site";
 					return;
 				}

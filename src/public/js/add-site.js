@@ -16,6 +16,22 @@ function addSite() {
             // Check if we have existing sites
             try {
                 const response = await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint('/api/sites'));
+                
+                // Check if response is OK and is JSON
+                if (!response.ok) {
+                    console.error('API request failed with status:', response.status);
+                    // Don't redirect if API is down to avoid loops
+                    this.error = 'Unable to connect to the API. Please check if the service is running.';
+                    return;
+                }
+                
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    console.error('API returned non-JSON response:', contentType);
+                    this.error = 'API returned an unexpected response. Please try again later.';
+                    return;
+                }
+                
                 const sites = await response.json();
                 if (sites && sites.length > 0) {
                     // Sites exist, but user wants to add another
@@ -23,6 +39,7 @@ function addSite() {
                 }
             } catch (err) {
                 console.error('Error checking sites:', err);
+                this.error = 'Unable to load sites. Please try again later.';
             }
         },
         

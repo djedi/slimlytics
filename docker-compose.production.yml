@@ -11,10 +11,8 @@ services:
     env_file:
       - .env
     volumes:
-      # Persistent database - mounted as a file
-      - ./data/analytics.db:/app/data/analytics.db
-      # MaxMind GeoIP databases
-      - ./data/maxmind:/app/data/maxmind
+      # Persistent database directory
+      - ./data:/app/data
     networks:
       - caddy_network
     healthcheck:

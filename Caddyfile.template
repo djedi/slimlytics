@@ -63,15 +63,26 @@
     }
     reverse_proxy @websockets slimlytics-api:3000
 
-    # Proxy API requests to the Bun API server
-    @api {
-        path /api/* /track
+    # Handle API requests separately to avoid HTML fallback
+    handle /api/* {
+        reverse_proxy slimlytics-api:3000 {
+            # Return proper error response if backend is down
+            lb_policy first
+            fail_duration 30s
+        }
     }
-    reverse_proxy @api slimlytics-api:3000
+    
+    # Handle tracking endpoint
+    handle /track {
+        reverse_proxy slimlytics-api:3000
+    }
 
-    # Serve static files for the dashboard
-    file_server
-
-    # SPA fallback for client-side routing (if needed)
-    try_files {path} /index.html
+    # Serve everything else as static files with SPA fallback
+    handle {
+        # Serve static files for the dashboard
+        file_server
+        
+        # SPA fallback for client-side routing
+        try_files {path} /index.html
+    }
 }
