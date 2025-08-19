@@ -1,20 +1,19 @@
-version: "3.8"
-
 services:
-  slimlytics-api:
-    image: xhenxhe/slimlytics:api
-    container_name: slimlytics-api
+  slimlytics:
+    image: xhenxhe/slimlytics:app
+    container_name: slimlytics-app
     restart: always
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - HOST=0.0.0.0
     env_file:
       - .env
     volumes:
       # Persistent database directory
       - ./data:/app/data
     networks:
-      - caddy_network
+      - slimlytics-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
@@ -23,23 +22,25 @@ services:
       start_period: 10s
 
   caddy:
-    image: xhenxhe/slimlytics:web
-    container_name: caddy
+    image: xhenxhe/slimlytics:caddy
+    container_name: slimlytics-caddy
     restart: always
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      # Caddy configuration (overrides the default)
+      # Production Caddyfile (generated from template with your domain)
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # SSL certificates persistence
+      # Persist SSL certificates
       - ./caddy_data:/data
       - ./caddy_config:/config
-    networks:
-      - caddy_network
+      # Logs
+      - ./logs:/data/logs
     depends_on:
-      - slimlytics-api
+      - slimlytics
+    networks:
+      - slimlytics-network
 
 networks:
-  caddy_network:
+  slimlytics-network:
     driver: bridge

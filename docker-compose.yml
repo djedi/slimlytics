@@ -1,28 +1,42 @@
-version: '3.8'
-
 services:
-  slimlytics-api:
+  slimlytics:
     build:
       context: .
-      target: api
-    ports:
-      - "3000:3000"
+      target: app
     volumes:
       - ./data:/app/data
     environment:
       - NODE_ENV=production
       - PORT=3000
+      - HOST=0.0.0.0
       - SALT=change-this-salt-value
+    networks:
+      - slimlytics-network
     restart: unless-stopped
 
   caddy:
     build:
       context: .
-      target: web
+      target: caddy
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
     volumes:
+      # Use dev Caddyfile for local development
       - ./Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      # Persist certificates (even for local dev)
+      - caddy_data:/data
+      - caddy_config:/config
     depends_on:
-      - slimlytics-api
+      - slimlytics
+    networks:
+      - slimlytics-network
     restart: unless-stopped
+
+networks:
+  slimlytics-network:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

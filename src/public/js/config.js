@@ -1,26 +1,11 @@
 // Slimlytics Configuration
-// This file provides dynamic configuration based on the environment
+// Simplified configuration - API and dashboard served from same origin
 
 (function() {
-    // Determine the API URL based on the current environment
-    function getApiUrl() {
-        const hostname = window.location.hostname;
-        const protocol = window.location.protocol;
-        
-        // Check if we're in development (localhost or local IP)
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.')) {
-            // Development environment - API runs on port 3000
-            return `${protocol}//${hostname}:3000`;
-        } else {
-            // Production environment - API runs on same domain/port as the frontend
-            // This assumes the API is served from the same domain (e.g., behind a reverse proxy)
-            return `${protocol}//${window.location.host}`;
-        }
-    }
-
     // Create global configuration object
     window.SLIMLYTICS_CONFIG = {
-        API_URL: getApiUrl(),
+        // API is always on the same origin as the dashboard
+        API_URL: window.location.origin,
         
         // Helper method to build API endpoints
         apiEndpoint: function(path) {

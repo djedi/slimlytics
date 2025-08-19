@@ -1,15 +1,16 @@
+# Default Caddyfile for Slimlytics
+# This proxies all requests to the Hono server which serves both API and dashboard
+
 :80 {
-    # Development Caddyfile - proxies everything to Hono server
-    
     # Enable compression
     encode gzip zstd
 
-    # Health check endpoint (handled by Caddy)
+    # Health check endpoint (handled by Caddy, not proxied)
     handle /caddy-health {
         respond "OK" 200
     }
 
-    # Proxy everything to the Hono server (both API and dashboard)
+    # Proxy everything to the Hono server
     reverse_proxy slimlytics:3000 {
         # WebSocket support is automatic in Caddy 2
         # Health check the backend

@@ -1,26 +1,31 @@
 # Multi-stage Dockerfile for Slimlytics
 
-# Stage 1: Build the dashboard
-FROM node:20-alpine AS dashboard-builder
+# Build stage
+FROM oven/bun:1-alpine AS builder
 
-WORKDIR /build
+WORKDIR /app
+
+# Install Node.js for 11ty build
+RUN apk add --no-cache nodejs npm
 
 # Copy package files
 COPY package*.json ./
+COPY bun.lockb* ./
 
-# Install dependencies
-RUN npm ci
+# Install all dependencies
+RUN bun install
 
-# Copy dashboard source files and public assets
-COPY src/dashboard/ ./src/dashboard/
-COPY src/public/ ./src/public/
+# Copy all source files
+COPY src/ ./src/
+COPY api/ ./api/
+COPY scripts/ ./scripts/
 COPY .eleventy.js* ./
 
 # Build the dashboard
 RUN npm run build
 
-# Stage 2: API Server
-FROM oven/bun:1-alpine AS api
+# Production stage - Slimlytics app
+FROM oven/bun:1-alpine AS app
 
 WORKDIR /app
 
@@ -36,7 +41,8 @@ COPY bun.lockb* ./
 # Install production dependencies only
 RUN bun install --production
 
-# Copy application code
+# Copy application code from builder
+COPY --from=builder /app/dist ./dist
 COPY src/api/ ./src/api/
 COPY src/db/ ./src/db/
 COPY src/utils/ ./src/utils/
@@ -49,6 +55,7 @@ RUN mkdir -p /app/data
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOST=0.0.0.0
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -60,13 +67,8 @@ EXPOSE 3000
 # Run the application
 CMD ["sh", "-c", "bun run db:init && bun src/api/server.js"]
 
-# Stage 3: Web Server with Static Files
-FROM caddy:2-alpine AS web
+# Caddy stage for SSL/reverse proxy
+FROM caddy:2-alpine AS caddy
 
-WORKDIR /srv
-
-# Copy built dashboard from dashboard-builder stage (includes all static files)
-COPY --from=dashboard-builder /build/dist ./
-
-# Default Caddyfile for serving static files (will be overridden in production)
-RUN echo ':80 { root * /srv; file_server; try_files {path} /index.html }' > /etc/caddy/Caddyfile
+# Copy default Caddyfile (will be overridden by volume mount in production)
+COPY Caddyfile /etc/caddy/Caddyfile

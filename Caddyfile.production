@@ -1,0 +1,63 @@
+# Production Caddyfile for Slimlytics with SSL
+# Replace {DOMAIN} with your actual domain name
+
+{DOMAIN} {
+    # Enable compression
+    encode gzip zstd
+
+    # Security headers
+    header {
+        # Enable HSTS
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+        # Prevent clickjacking
+        X-Frame-Options "SAMEORIGIN"
+
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+
+        # Referrer policy for noscript tracking
+        Referrer-Policy "no-referrer-when-downgrade"
+
+        # Remove server header
+        -Server
+
+        # CSP header - Alpine.js requires 'unsafe-eval'
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss://{DOMAIN}"
+    }
+
+    # Cache static assets
+    @static {
+        path *.css *.js *.jpg *.jpeg *.png *.gif *.svg *.woff *.woff2 *.ttf *.eot *.ico
+    }
+    header @static Cache-Control "public, max-age=31536000, immutable"
+
+    # Logging
+    log {
+        output file /data/access.log {
+            roll_size 100mb
+            roll_keep 5
+            roll_keep_for 720h
+        }
+    }
+
+    # Health check endpoint (handled by Caddy)
+    handle /caddy-health {
+        respond "OK" 200
+    }
+
+    # Proxy everything to the Hono server (both API and dashboard)
+    reverse_proxy slimlytics:3000 {
+        # WebSocket support is automatic in Caddy 2
+        # Health check the backend
+        health_uri /health
+        health_interval 30s
+        health_timeout 5s
+        
+        # Increase timeouts for long-running requests
+        transport http {
+            read_timeout 60s
+            write_timeout 60s
+        }
+    }
+}

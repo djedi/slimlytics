@@ -1,6 +1,6 @@
 export function setupSimplifiedTrackingRoutes(app) {
   // Simplified tracking script endpoint (like Clicky's /js)
-  app.get('/sa.js', (req, res) => {
+  app.get('/sa.js', (c) => {
     const script = `
 (function() {
   'use strict';
@@ -124,14 +124,15 @@ export function setupSimplifiedTrackingRoutes(app) {
 })();
 `;
 
-    // Set appropriate headers
-    res.setHeader('Content-Type', 'application/javascript');
-    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
-    res.send(script);
+    // Return JavaScript with appropriate headers
+    return c.text(script, 200, {
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'public, max-age=3600' // Cache for 1 hour
+    });
   });
   
-  // Noscript GIF beacon endpoint
-  app.get('/:siteId([a-zA-Z0-9-]+)ns.gif', async (c) => {
+  // Noscript GIF beacon endpoint - use specific path to avoid conflicts
+  app.get('/t/:siteId([a-zA-Z0-9-]+)ns.gif', async (c) => {
     const { siteId } = c.req.param();
     
     // Log the pageview (simplified version for noscript)

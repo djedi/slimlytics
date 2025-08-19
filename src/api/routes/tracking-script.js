@@ -1,11 +1,11 @@
 export function setupTrackingScriptRoute(app) {
-  // Serve dynamic tracking script
-  app.get('/js/:filename', (req, res) => {
-    const { siteId } = req.query;
-    const beaconPath = req.headers['x-beacon-path'] || '/track';
+  // Serve dynamic tracking script - use specific path to avoid conflicts
+  app.get('/track.js', (c) => {
+    const siteId = c.req.query('siteId');
+    const beaconPath = c.req.header('x-beacon-path') || '/track';
     
     if (!siteId) {
-      return res.status(400).send('Missing siteId parameter');
+      return c.text('Missing siteId parameter', 400);
     }
 
     // Generate the tracking script dynamically
@@ -125,9 +125,10 @@ export function setupTrackingScriptRoute(app) {
 })();
 `;
 
-    // Set appropriate headers
-    res.setHeader('Content-Type', 'application/javascript');
-    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
-    res.send(script);
+    // Return JavaScript with appropriate headers
+    return c.text(script, 200, {
+      'Content-Type': 'application/javascript',
+      'Cache-Control': 'public, max-age=3600' // Cache for 1 hour
+    });
   });
 }

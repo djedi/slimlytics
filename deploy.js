@@ -236,14 +236,14 @@ async function buildAndPushImage(tag = "latest") {
 		}
 
 		// Build and push multi-architecture images for each stage
-		log.step("Building API stage for linux/amd64 and linux/arm64...");
+		log.step("Building App stage for linux/amd64 and linux/arm64...");
 		await exec(
-			`docker buildx build --platform linux/amd64,linux/arm64 --target api -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:api -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:api-${tag} --push .`,
+			`docker buildx build --platform linux/amd64,linux/arm64 --target app -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:app -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:app-${tag} --push .`,
 		);
 
-		log.step("Building Web stage for linux/amd64 and linux/arm64...");
+		log.step("Building Caddy stage for linux/amd64 and linux/arm64...");
 		await exec(
-			`docker buildx build --platform linux/amd64,linux/arm64 --target web -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:web -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:web-${tag} --push .`,
+			`docker buildx build --platform linux/amd64,linux/arm64 --target caddy -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:caddy -t ${DOCKER_REGISTRY}/${IMAGE_NAME}:caddy-${tag} --push .`,
 		);
 
 		log.success("Multi-architecture images built and pushed to Docker Hub");
@@ -279,9 +279,9 @@ async function backupDatabase(conn, server) {
 	}
 }
 
-// Generate Caddyfile from template
+// Generate Caddyfile from production template
 function generateCaddyfile(domain) {
-	const template = readFileSync("Caddyfile.template", "utf-8");
+	const template = readFileSync("Caddyfile.production", "utf-8");
 	return template.replace(/{DOMAIN}/g, domain);
 }
 
@@ -365,7 +365,7 @@ async function deploy(conn, server, isFirstDeployment = false) {
 		try {
 			await sshExec(
 				conn,
-				"docker exec caddy caddy reload --config /etc/caddy/Caddyfile",
+				"docker exec slimlytics-caddy caddy reload --config /etc/caddy/Caddyfile",
 			);
 			log.success("Caddy configuration reloaded");
 		} catch (e) {
