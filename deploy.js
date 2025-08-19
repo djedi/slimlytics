@@ -350,9 +350,11 @@ async function deploy(conn, server, isFirstDeployment = false) {
 			log.warning("Could not stop services (they may not be running)");
 		}
 
-		log.step("Starting updated services...");
+		log.step("Pulling latest Docker images...");
 		// Pull latest images
 		await sshExec(conn, `cd ${server.path} && docker compose pull`);
+
+		log.step("Starting updated services...");
 
 		// Start services with forced recreation to ensure config changes take effect
 		await sshExec(
@@ -387,11 +389,66 @@ async function deploy(conn, server, isFirstDeployment = false) {
 	log.info(`Your application is running at https://${server.domain}`);
 }
 
+// Parse command-line arguments
+function parseArgs() {
+	const args = process.argv.slice(2);
+	const options = {
+		skipBuild: false,
+		help: false,
+	};
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--skip-build" || arg === "-s") {
+			options.skipBuild = true;
+		} else if (arg === "--help" || arg === "-h") {
+			options.help = true;
+		}
+	}
+
+	return options;
+}
+
+// Show help message
+function showHelp() {
+	console.log(`
+${colors.bright}${colors.cyan}Slimlytics Deploy Script${colors.reset}
+
+${colors.bright}Usage:${colors.reset}
+  ./deploy.js [options]
+
+${colors.bright}Options:${colors.reset}
+  -s, --skip-build    Skip Docker image build and push (useful for config-only changes)
+  -h, --help          Show this help message
+
+${colors.bright}Examples:${colors.reset}
+  ./deploy.js                 # Full deployment with Docker build
+  ./deploy.js --skip-build    # Deploy without rebuilding Docker images
+  ./deploy.js -s              # Same as --skip-build
+
+${colors.bright}Note:${colors.reset}
+  Use --skip-build when you've only changed configuration files (like Caddyfile)
+  and don't need to rebuild the Docker images.
+`);
+}
+
 // Main deployment flow
 async function main() {
+	// Parse command-line arguments
+	const options = parseArgs();
+
+	if (options.help) {
+		showHelp();
+		process.exit(0);
+	}
+
 	console.log(
 		`${colors.bright}${colors.cyan}Slimlytics Deploy Script${colors.reset}\n`,
 	);
+
+	if (options.skipBuild) {
+		log.info("Skipping Docker build (--skip-build flag detected)");
+	}
 
 	try {
 		// Load configuration
@@ -428,8 +485,12 @@ async function main() {
 			await backupDatabase(conn, server);
 		}
 
-		// Build and push Docker image
-		await buildAndPushImage();
+		// Build and push Docker image (unless skipped)
+		if (!options.skipBuild) {
+			await buildAndPushImage();
+		} else {
+			log.step("Skipping Docker build and push (using existing images)");
+		}
 
 		// Setup server if first deployment
 		if (isFirstDeployment) {
