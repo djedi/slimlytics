@@ -12,6 +12,7 @@
     "start": "npm run build && npm run server",
     "db:init": "bun src/db/init.js",
     "db:migrate": "bun scripts/add-geo-columns.js",
+    "db:migrate:sessions": "bun scripts/add-sessions-table.js",
     "maxmind:download": "bun scripts/download-maxmind.js",
     "maxmind:update": "bun scripts/update-maxmind.js",
     "maxmind:setup-auto-update": "./scripts/setup-auto-update.sh",

@@ -4,9 +4,10 @@ export function trackEvent(db, eventData) {
       site_id, page_url, referrer, user_agent, ip_hash, 
       screen_resolution, language, timestamp,
       country, country_code, region, city, 
-      latitude, longitude, timezone, asn, asn_org
+      latitude, longitude, timezone, asn, asn_org,
+      visitor_id, session_id
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   stmt.run(
@@ -26,7 +27,9 @@ export function trackEvent(db, eventData) {
     eventData.longitude || null,
     eventData.timezone || null,
     eventData.asn || null,
-    eventData.asn_org || null
+    eventData.asn_org || null,
+    eventData.visitor_id || null,
+    eventData.session_id || null
   );
 }
 
@@ -39,10 +42,17 @@ export function getStats(db, siteId, startDate, endDate) {
   `).get(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
 
   const uniqueVisitors = db.prepare(`
-    SELECT COUNT(DISTINCT ip_hash) as count 
-    FROM events 
+    SELECT COUNT(DISTINCT visitor_id) as count 
+    FROM sessions 
     WHERE site_id = ? 
-    AND timestamp BETWEEN ? AND ?
+    AND started_at BETWEEN ? AND ?
+  `).get(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
+
+  const totalSessions = db.prepare(`
+    SELECT COUNT(*) as count 
+    FROM sessions 
+    WHERE site_id = ? 
+    AND started_at BETWEEN ? AND ?
   `).get(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
 
   const topPages = db.prepare(`
@@ -56,13 +66,13 @@ export function getStats(db, siteId, startDate, endDate) {
   `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
 
   const topReferrers = db.prepare(`
-    SELECT referrer, COUNT(*) as count 
-    FROM events 
-    WHERE site_id = ? 
-    AND referrer IS NOT NULL 
-    AND referrer != ''
-    AND timestamp BETWEEN ? AND ?
-    GROUP BY referrer 
+    SELECT s.referrer, COUNT(DISTINCT s.session_id) as count 
+    FROM sessions s
+    WHERE s.site_id = ? 
+    AND s.referrer IS NOT NULL 
+    AND s.referrer != ''
+    AND s.started_at BETWEEN ? AND ?
+    GROUP BY s.referrer 
     ORDER BY count DESC 
     LIMIT 10
   `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
@@ -85,23 +95,43 @@ export function getStats(db, siteId, startDate, endDate) {
   `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
 
   const topCountries = db.prepare(`
-    SELECT country, country_code, COUNT(*) as count
-    FROM events
-    WHERE site_id = ?
-    AND country IS NOT NULL
-    AND timestamp BETWEEN ? AND ?
-    GROUP BY country, country_code
+    SELECT s.country, s.country_code, COUNT(DISTINCT s.session_id) as count
+    FROM sessions s
+    WHERE s.site_id = ?
+    AND s.country IS NOT NULL
+    AND s.started_at BETWEEN ? AND ?
+    GROUP BY s.country, s.country_code
     ORDER BY count DESC
     LIMIT 10
   `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
 
   const topCities = db.prepare(`
-    SELECT city, country, COUNT(*) as count
-    FROM events
+    SELECT s.city, s.country, COUNT(DISTINCT s.session_id) as count
+    FROM sessions s
+    WHERE s.site_id = ?
+    AND s.city IS NOT NULL
+    AND s.started_at BETWEEN ? AND ?
+    GROUP BY s.city, s.country
+    ORDER BY count DESC
+    LIMIT 10
+  `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
+
+  const trafficSources = db.prepare(`
+    SELECT traffic_source, COUNT(DISTINCT session_id) as count
+    FROM sessions
     WHERE site_id = ?
-    AND city IS NOT NULL
-    AND timestamp BETWEEN ? AND ?
-    GROUP BY city, country
+    AND started_at BETWEEN ? AND ?
+    GROUP BY traffic_source
+    ORDER BY count DESC
+  `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
+
+  const topLanguages = db.prepare(`
+    SELECT language, COUNT(DISTINCT session_id) as count
+    FROM sessions
+    WHERE site_id = ?
+    AND language IS NOT NULL
+    AND started_at BETWEEN ? AND ?
+    GROUP BY language
     ORDER BY count DESC
     LIMIT 10
   `).all(siteId, startDate || '1970-01-01', endDate || '2100-01-01');
@@ -109,10 +139,13 @@ export function getStats(db, siteId, startDate, endDate) {
   return {
     pageViews: pageViews.count,
     uniqueVisitors: uniqueVisitors.count,
+    totalSessions: totalSessions.count,
     topPages,
     topReferrers,
     browserStats,
     topCountries,
-    topCities
+    topCities,
+    trafficSources,
+    topLanguages
   };
 }

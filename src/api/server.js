@@ -109,6 +109,91 @@ app.post("/track", async (c) => {
 	// Perform GeoIP lookup
 	const geoData = await geoip.lookup(ip);
 
+	// Check if this is a new session
+	if (sessionId && visitorId) {
+		const checkSession = db.prepare(`
+			SELECT id FROM sessions 
+			WHERE site_id = ? AND session_id = ?
+		`);
+		const existingSession = checkSession.get(finalSiteId, sessionId);
+		
+		if (!existingSession) {
+			// New session - record traffic source and locale info
+			const sessionInsert = db.prepare(`
+				INSERT INTO sessions (
+					id, site_id, visitor_id, session_id, started_at, last_activity,
+					referrer, traffic_source,
+					language, country, country_code, region, city, 
+					latitude, longitude, timezone,
+					user_agent, screen_resolution,
+					page_views
+				) VALUES (
+					?, ?, ?, ?, ?, ?,
+					?, ?,
+					?, ?, ?, ?, ?,
+					?, ?, ?,
+					?, ?,
+					1
+				)
+			`);
+			
+			// Determine traffic source
+			let trafficSource = 'direct';
+			if (referrer) {
+				try {
+					const refUrl = new URL(referrer);
+					const pageUrl = new URL(finalUrl);
+					if (refUrl.hostname !== pageUrl.hostname) {
+						// External referrer
+						if (refUrl.hostname.includes('google') || refUrl.hostname.includes('bing') || 
+						    refUrl.hostname.includes('yahoo') || refUrl.hostname.includes('duckduckgo')) {
+							trafficSource = 'organic';
+						} else if (refUrl.hostname.includes('facebook') || refUrl.hostname.includes('twitter') || 
+						           refUrl.hostname.includes('linkedin') || refUrl.hostname.includes('instagram')) {
+							trafficSource = 'social';
+						} else {
+							trafficSource = 'referral';
+						}
+					}
+				} catch (e) {
+					// Invalid URL, keep as direct
+				}
+			}
+			
+			const sessionIdFull = `${finalSiteId}-${sessionId}`;
+			const now = new Date().toISOString();
+			
+			sessionInsert.run(
+				sessionIdFull,
+				finalSiteId,
+				visitorId,
+				sessionId,
+				now,
+				now,
+				referrer || null,
+				trafficSource,
+				language,
+				geoData.country,
+				geoData.countryCode,
+				geoData.region,
+				geoData.city,
+				geoData.latitude,
+				geoData.longitude,
+				geoData.timezone,
+				finalUserAgent,
+				finalScreenResolution
+			);
+		} else {
+			// Existing session - update last activity and increment page views
+			const sessionUpdate = db.prepare(`
+				UPDATE sessions 
+				SET last_activity = ?, page_views = page_views + 1
+				WHERE site_id = ? AND session_id = ?
+			`);
+			sessionUpdate.run(new Date().toISOString(), finalSiteId, sessionId);
+		}
+	}
+
 	trackEvent(db, {
 		site_id: finalSiteId,
 		page_url: finalUrl,
