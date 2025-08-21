@@ -23,16 +23,15 @@ title: Anti-Adblock Setup
       </select>
     </div>
 
-    <div class="form-group">
-      <label for="js-path">Javascript Path:</label>
-      <input type="text" id="js-path" name="jsPath" value="/analytics.js" required>
-      <small>The path on your domain where the tracking script will be served</small>
-    </div>
-
-    <div class="form-group">
-      <label for="beacon-path">Beacon Path:</label>
-      <input type="text" id="beacon-path" name="beaconPath" value="/beacon" required>
-      <small>The path on your domain where tracking events will be sent</small>
+    <div class="info-box">
+      <p><strong>How it works:</strong></p>
+      <p>This will generate a configuration that uses your site's unique ID as the tracking paths. For example, if your site ID is "abc123", your tracking will use:</p>
+      <ul>
+        <li>Script: <code>/abc123.js</code></li>
+        <li>Beacon: <code>/abc123</code></li>
+        <li>NoScript: <code>/abc123ns.gif</code></li>
+      </ul>
+      <p>These random-looking paths are virtually impossible for ad blockers to detect!</p>
     </div>
 
     <button type="submit" class="btn btn-primary">Generate Configuration</button>

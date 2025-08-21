@@ -15,14 +15,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const formData = new FormData(form);
 		const siteId = currentSite.id;
 		const siteDomain = currentSite.domain;
-		const jsPath = formData.get("jsPath");
-		const beaconPath = formData.get("beaconPath");
-
-		// Generate random-looking paths if user wants to obfuscate
-		const jsPathClean = jsPath.startsWith("/") ? jsPath.substring(1) : jsPath;
-		const beaconPathClean = beaconPath.startsWith("/")
-			? beaconPath.substring(1)
-			: beaconPath;
+		
+		// Use site ID as the base for paths - much harder to detect/block
+		const jsPathClean = `${siteId}.js`;
+		const beaconPathClean = siteId;
 
 		// Get the API base URL (assuming it's the same server in production)
 		const apiBase =
@@ -31,40 +27,36 @@ document.addEventListener("DOMContentLoaded", async () => {
 				: window.location.origin;
 
 		// Generate Caddy configuration
-		const caddyConfig = `### SLIM ANALYTICS ANTI-ADBLOCK PROXY - ${apiBase}
+		const caddyConfig = `### SLIM ANALYTICS ANTI-ADBLOCK PROXY - ${siteDomain}
 ### COPY INTO YOUR WEBSITE'S CADDYFILE
 
-# Note: Caddy overrides X-Forwarded-For headers by default, unless "trusted_proxies" is configured.
-# Please see the following links for more information:
-# https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#defaults
-# https://caddyserver.com/docs/caddyfile/options#trusted-proxies
+# Anti-adblock tracking using site ID: ${siteId}
+# This configuration makes tracking undetectable by using your site ID as the path
 
 # TRACKING SCRIPT
 handle /${jsPathClean} {
-    rewrite /${jsPathClean} /sa.js
-    reverse_proxy ${apiBase} {
+    reverse_proxy ${apiBase}/sa.js {
         header_up Host {upstream_hostport}
     }
 }
 
-# BEACON ENDPOINT
+# BEACON ENDPOINT  
 handle /${beaconPathClean} {
-    rewrite /${beaconPathClean} /track
-    reverse_proxy ${apiBase} {
+    reverse_proxy ${apiBase}/track {
         header_up Host {upstream_hostport}
     }
 }
 
 # NOSCRIPT GIF BEACON
-handle /${beaconPathClean}/*.gif {
-    reverse_proxy ${apiBase} {
+handle /${siteId}ns.gif {
+    reverse_proxy ${apiBase}/t/${siteId}ns.gif {
         header_up Host {upstream_hostport}
     }
 }`;
 
 		// Generate tracking code (simplified like Clicky)
 		const trackingCode = `<script async data-id="${siteId}" src="/${jsPathClean}"></script>
-<noscript><p><img alt="Slimlytics" width="1" height="1" src="/${beaconPathClean}/${siteId}ns.gif" /></p></noscript>`;
+<noscript><p><img alt="Slimlytics" width="1" height="1" src="/${siteId}ns.gif" /></p></noscript>`;
 
 		// Generate test URLs
 		const testUrls = `

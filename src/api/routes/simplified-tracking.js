@@ -72,7 +72,9 @@ export function setupSimplifiedTrackingRoutes(app) {
     
     // Use sendBeacon if available, fallback to fetch
     var payload = JSON.stringify(data);
-    var trackUrl = currentScript.src.replace('/sa.js', '/track');
+    // Extract base URL and replace the script path with /track
+    var scriptUrl = new URL(currentScript.src);
+    var trackUrl = scriptUrl.origin + '/track';
     
     if (navigator.sendBeacon) {
       navigator.sendBeacon(trackUrl, payload);
