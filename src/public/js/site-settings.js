@@ -194,9 +194,33 @@ ${noscriptOpen}<p><img alt="Slimlytics" width="1" height="1" src="${apiBase}/${t
 		},
 
 		async clearData() {
-			// In production, this would call an API to clear data
-			alert(`Clearing ${this.clearDataRange} data for ${this.site.name}`);
-			this.showClearDataModal = false;
+			try {
+				const response = await fetch(
+					window.SLIMLYTICS_CONFIG.apiEndpoint(`/api/stats/${this.site.id}/data`),
+					{
+						method: "DELETE",
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({ range: this.clearDataRange }),
+					},
+				);
+
+				if (response.ok) {
+					const result = await response.json();
+					alert(`Successfully cleared ${result.deleted} events from ${this.clearDataRange === 'all' ? 'all time' : this.clearDataRange}`);
+					// Reload stats to reflect the change
+					await this.loadStats(this.site.id);
+				} else {
+					const error = await response.json();
+					alert(`Failed to clear data: ${error.error || "Unknown error"}`);
+				}
+			} catch (err) {
+				alert(`Failed to clear data: ${err.message}`);
+			} finally {
+				this.showClearDataModal = false;
+				this.clearDataRange = "all"; // Reset to default
+			}
 		},
 
 		async exportData(format) {

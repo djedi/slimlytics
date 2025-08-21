@@ -162,6 +162,53 @@ app.get("/api/stats/:siteId/recent-visitors", async (c) => {
 	return statsRoutes.getRecentVisitorsEndpoint(c.req.raw, siteId);
 });
 
+// Clear analytics data for a site
+app.delete("/api/stats/:siteId/data", async (c) => {
+	const { siteId } = c.req.param();
+	const { range } = await c.req.json().catch(() => ({ range: 'all' }));
+	
+	try {
+		let deleteQuery;
+		const params = [siteId];
+		
+		switch (range) {
+			case '7days':
+				deleteQuery = `DELETE FROM events WHERE site_id = ? AND timestamp > datetime('now', '-7 days')`;
+				break;
+			case '30days':
+				deleteQuery = `DELETE FROM events WHERE site_id = ? AND timestamp > datetime('now', '-30 days')`;
+				break;
+			case 'today':
+				deleteQuery = `DELETE FROM events WHERE site_id = ? AND date(timestamp) = date('now')`;
+				break;
+			case 'all':
+			default:
+				deleteQuery = `DELETE FROM events WHERE site_id = ?`;
+				break;
+		}
+		
+		const stmt = db.prepare(deleteQuery);
+		const result = stmt.run(...params);
+		
+		console.log(`[API] Cleared ${result.changes} events for site ${siteId} (range: ${range})`);
+		
+		// Broadcast update to WebSocket clients
+		broadcastStatsUpdate(siteId);
+		
+		return c.json({ 
+			success: true, 
+			deleted: result.changes,
+			message: `Successfully cleared ${result.changes} events` 
+		});
+	} catch (error) {
+		console.error('[API] Error clearing data:', error);
+		return c.json({ 
+			success: false, 
+			error: 'Failed to clear analytics data' 
+		}, 500);
+	}
+});
+
 // Serve static files from dist directory - MUST be after API routes
 app.use("/*", serveStatic({ root: "./dist" }));
 
