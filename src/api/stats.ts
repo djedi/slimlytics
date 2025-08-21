@@ -168,41 +168,44 @@ function categorizeTrafficSource(referrer: string | null): { category: string; i
     return { category: 'Referral Sites', icon: '🌐' };
 }
 
-// Get traffic sources for a site
+// Get traffic sources for a site - count sessions not events
 export function getTrafficSources(siteId: string, startDate: string, endDate: string): TrafficSource[] {
-    // Get all referrers with counts
+    // Get traffic sources directly from sessions table
     const stmt = db.prepare(`
         SELECT 
-            COALESCE(referrer, 'direct') as referrer,
-            COUNT(*) as count
-        FROM events
+            traffic_source as referrer,
+            COUNT(DISTINCT session_id) as count
+        FROM sessions
         WHERE site_id = ?
-        AND timestamp BETWEEN ? AND ?
-        GROUP BY referrer
+        AND started_at BETWEEN ? AND ?
+        GROUP BY traffic_source
     `);
     
-    const referrers = stmt.all(siteId, startDate, endDate) as Array<{ referrer: string; count: number }>;
+    const trafficData = stmt.all(siteId, startDate, endDate) as Array<{ referrer: string; count: number }>;
     
-    // Categorize and aggregate
-    const sourceMap = new Map<string, { icon: string; count: number }>();
+    // Map traffic source types to display names and icons
+    const sourceIcons: { [key: string]: { display: string; icon: string } } = {
+        'direct': { display: 'Direct', icon: '🔗' },
+        'organic': { display: 'Search Engines', icon: '🔍' },
+        'social': { display: 'Social Media', icon: '📱' },
+        'referral': { display: 'Referral Sites', icon: '🌐' }
+    };
+    
+    // Calculate total and format results
     let totalCount = 0;
+    const sources: TrafficSource[] = [];
     
-    for (const ref of referrers) {
-        const { category, icon } = categorizeTrafficSource(ref.referrer);
-        const existing = sourceMap.get(category) || { icon, count: 0 };
-        existing.count += ref.count;
-        sourceMap.set(category, existing);
-        totalCount += ref.count;
+    for (const item of trafficData) {
+        totalCount += item.count;
     }
     
-    // Convert to array and calculate percentages
-    const sources: TrafficSource[] = [];
-    for (const [source, data] of sourceMap.entries()) {
+    for (const item of trafficData) {
+        const sourceInfo = sourceIcons[item.referrer] || { display: item.referrer, icon: '❓' };
         sources.push({
-            source,
-            icon: data.icon,
-            count: data.count,
-            percentage: totalCount > 0 ? Math.round((data.count / totalCount) * 100) : 0
+            source: sourceInfo.display,
+            icon: sourceInfo.icon,
+            count: item.count,
+            percentage: totalCount > 0 ? Math.round((item.count / totalCount) * 100) : 0
         });
     }
     
@@ -212,29 +215,30 @@ export function getTrafficSources(siteId: string, startDate: string, endDate: st
     return sources;
 }
 
-// Get recent visitors for a site
+// Get recent visitors for a site - show unique sessions not all events
 export function getRecentVisitors(siteId: string, limit: number = 20, startDate?: string, endDate?: string): RecentVisitor[] {
     let query = `
-        SELECT 
-            ip_hash,
-            page_url,
-            timestamp,
-            country,
-            country_code,
-            city,
-            region
-        FROM events
-        WHERE site_id = ?
+        SELECT DISTINCT
+            s.visitor_id as ip_hash,
+            e.page_url,
+            s.started_at as timestamp,
+            s.country,
+            s.country_code,
+            s.city,
+            s.region
+        FROM sessions s
+        LEFT JOIN events e ON s.session_id = e.session_id AND s.site_id = e.site_id
+        WHERE s.site_id = ?
     `;
     
     const params: any[] = [siteId];
     
     if (startDate && endDate) {
-        query += ` AND timestamp BETWEEN ? AND ?`;
+        query += ` AND s.started_at BETWEEN ? AND ?`;
         params.push(startDate, endDate);
     }
     
-    query += ` ORDER BY timestamp DESC LIMIT ?`;
+    query += ` GROUP BY s.session_id ORDER BY s.started_at DESC LIMIT ?`;
     params.push(limit);
     
     const stmt = db.prepare(query);
@@ -264,12 +268,12 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
         ? ((currentStats.pageViews - prevStats.pageViews) / prevStats.pageViews) * 100 
         : 0;
     
-    // Get realtime visitors (last 5 minutes)
+    // Get realtime visitors (last 5 minutes) - count active sessions
     const realtimeStmt = db.prepare(`
-        SELECT COUNT(DISTINCT ip_hash) as count 
-        FROM events 
+        SELECT COUNT(DISTINCT visitor_id) as count 
+        FROM sessions 
         WHERE site_id = ? 
-        AND timestamp > datetime('now', '-5 minutes')
+        AND last_activity > datetime('now', '-5 minutes')
     `);
     const realtime = realtimeStmt.get(siteId) as { count: number };
     
@@ -285,12 +289,12 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     `);
     const topPages = topPagesStmt.all(siteId, start, end) as Array<{ url: string; views: number }>;
     
-    // Get top referrers
+    // Get top referrers - count sessions not events
     const topReferrersStmt = db.prepare(`
-        SELECT referrer, COUNT(*) as count
-        FROM events
+        SELECT referrer, COUNT(DISTINCT session_id) as count
+        FROM sessions
         WHERE site_id = ?
-        AND timestamp BETWEEN ? AND ?
+        AND started_at BETWEEN ? AND ?
         AND referrer IS NOT NULL
         AND referrer != ''
         GROUP BY referrer
@@ -299,12 +303,12 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     `);
     const topReferrers = topReferrersStmt.all(siteId, start, end) as Array<{ referrer: string; count: number }>;
     
-    // Get top countries
+    // Get top countries - count sessions not events
     const topCountriesStmt = db.prepare(`
-        SELECT country, country_code as countryCode, COUNT(*) as count
-        FROM events
+        SELECT country, country_code as countryCode, COUNT(DISTINCT session_id) as count
+        FROM sessions
         WHERE site_id = ?
-        AND timestamp BETWEEN ? AND ?
+        AND started_at BETWEEN ? AND ?
         AND country IS NOT NULL
         GROUP BY country, country_code
         ORDER BY count DESC
@@ -312,12 +316,12 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     `);
     const topCountries = topCountriesStmt.all(siteId, start, end) as Array<{ country: string; countryCode: string; count: number }>;
     
-    // Get top cities
+    // Get top cities - count sessions not events
     const topCitiesStmt = db.prepare(`
-        SELECT city, country, COUNT(*) as count
-        FROM events
+        SELECT city, country, COUNT(DISTINCT session_id) as count
+        FROM sessions
         WHERE site_id = ?
-        AND timestamp BETWEEN ? AND ?
+        AND started_at BETWEEN ? AND ?
         AND city IS NOT NULL
         GROUP BY city, country
         ORDER BY count DESC
@@ -325,14 +329,14 @@ export function getDashboardStats(siteId: string, startDate?: string, endDate?: 
     `);
     const topCities = topCitiesStmt.all(siteId, start, end) as Array<{ city: string; country: string; count: number }>;
     
-    // Get top locales (languages)
+    // Get top locales (languages) - count sessions not events
     const topLocalesStmt = db.prepare(`
         SELECT 
             language as locale,
-            COUNT(*) as count
-        FROM events
+            COUNT(DISTINCT session_id) as count
+        FROM sessions
         WHERE site_id = ?
-        AND timestamp BETWEEN ? AND ?
+        AND started_at BETWEEN ? AND ?
         AND language IS NOT NULL
         GROUP BY language
         ORDER BY count DESC
@@ -446,13 +450,14 @@ export function getTimeSeriesData(siteId: string, startDate?: string, endDate?: 
     
     const stmt = db.prepare(`
         SELECT 
-            DATE(timestamp) as date,
-            COUNT(DISTINCT ip_hash) as visitors,
-            COUNT(*) as pageViews
-        FROM events
-        WHERE site_id = ?
-        AND timestamp BETWEEN ? AND ?
-        GROUP BY DATE(timestamp)
+            DATE(e.timestamp) as date,
+            COUNT(DISTINCT s.visitor_id) as visitors,
+            COUNT(e.id) as pageViews
+        FROM events e
+        LEFT JOIN sessions s ON e.session_id = s.session_id AND e.site_id = s.site_id
+        WHERE e.site_id = ?
+        AND e.timestamp BETWEEN ? AND ?
+        GROUP BY DATE(e.timestamp)
         ORDER BY date ASC
     `);
     
@@ -493,41 +498,39 @@ export function getTimeSeriesData(siteId: string, startDate?: string, endDate?: 
 
 // Helper function to get stats for a period
 function getPeriodStats(siteId: string, start: string, end: string) {
-    const stmt = db.prepare(`
-        SELECT 
-            COUNT(DISTINCT ip_hash) as visitors,
-            COUNT(*) as pageViews,
-            0 as avgSessionDuration,
-            COALESCE(
-                (
-                    SELECT COUNT(*) * 100.0 / NULLIF(COUNT(DISTINCT ip_hash), 0)
-                    FROM (
-                        SELECT ip_hash
-                        FROM events
-                        WHERE site_id = ?
-                        AND timestamp BETWEEN ? AND ?
-                        GROUP BY ip_hash
-                        HAVING COUNT(*) = 1
-                    )
-                ), 0
-            ) as bounceRate
-        FROM events e1
+    // Get visitor count from sessions
+    const visitorsStmt = db.prepare(`
+        SELECT COUNT(DISTINCT visitor_id) as visitors
+        FROM sessions
+        WHERE site_id = ?
+        AND started_at BETWEEN ? AND ?
+    `);
+    const visitorsResult = visitorsStmt.get(siteId, start, end) as { visitors: number };
+    
+    // Get page views from events
+    const pageViewsStmt = db.prepare(`
+        SELECT COUNT(*) as pageViews
+        FROM events
         WHERE site_id = ?
         AND timestamp BETWEEN ? AND ?
     `);
+    const pageViewsResult = pageViewsStmt.get(siteId, start, end) as { pageViews: number };
     
-    const result = stmt.get(siteId, start, end, siteId, start, end) as {
-        visitors: number;
-        pageViews: number;
-        avgSessionDuration: number | null;
-        bounceRate: number | null;
-    };
+    // Calculate bounce rate from sessions
+    const bounceStmt = db.prepare(`
+        SELECT 
+            COUNT(CASE WHEN page_views = 1 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0) as bounceRate
+        FROM sessions
+        WHERE site_id = ?
+        AND started_at BETWEEN ? AND ?
+    `);
+    const bounceResult = bounceStmt.get(siteId, start, end) as { bounceRate: number | null };
     
     return {
-        visitors: result?.visitors || 0,
-        pageViews: result?.pageViews || 0,
-        avgSessionDuration: result?.avgSessionDuration || 0,
-        bounceRate: result?.bounceRate || 0
+        visitors: visitorsResult?.visitors || 0,
+        pageViews: pageViewsResult?.pageViews || 0,
+        avgSessionDuration: 0, // TODO: Calculate from sessions duration field
+        bounceRate: bounceResult?.bounceRate || 0
     };
 }
 
