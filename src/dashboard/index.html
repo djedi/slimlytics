@@ -94,32 +94,19 @@ title: Analytics Dashboard
           <span class="emoji-icon">🕐</span>
           Recent Visitors
         </div>
-        <table class="data-table" x-show="recentVisitors.length > 0">
-          <thead>
-            <tr>
-              <th>Location</th>
-              <th>IP Address</th>
-              <th>Page</th>
-              <th>Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            <template x-for="visitor in recentVisitors.slice(0, 10)" :key="visitor.ip_hash + visitor.timestamp">
-              <tr>
-                <td>
-                  <span class="country-flag" x-text="getFlagEmoji(visitor.country_code)"></span>
-                  <span x-text="formatLocation(visitor)"></span>
-                </td>
-                <td x-text="maskIpAddress(visitor.ip_hash)"></td>
-                <td><a href="#" class="link" x-text="visitor.page_url"></a></td>
-                <td class="time-ago" x-text="formatTimeAgo(visitor.timestamp)"></td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-        <div x-show="recentVisitors.length === 0" style="padding: 20px; text-align: center; color: #999;">
-          No recent visitors yet
-        </div>
+        <ul class="data-list" style="font-family: monospace; font-size: 13px;">
+          <template x-for="visitor in recentVisitors.slice(0, 10)" :key="visitor.visitor_id + visitor.timestamp">
+            <li class="list-item" style="padding: 8px 15px; display: flex; align-items: center; gap: 8px;">
+              <span style="color: #7f8c8d; min-width: 45px;" x-text="formatTimeShort(visitor.timestamp)"></span>
+              <span class="country-flag" x-text="getFlagEmoji(visitor.country_code)"></span>
+              <span style="min-width: 140px;" x-text="visitor.ip_address || visitor.ip_hash"></span>
+              <a :href="visitor.page_url" target="_blank" class="content-link" x-text="getPathFromUrl(visitor.page_url)"></a>
+            </li>
+          </template>
+          <li class="list-item" x-show="recentVisitors.length === 0" style="text-align: center; font-family: inherit;">
+            <span style="color: #999;">No recent visitors yet</span>
+          </li>
+        </ul>
       </div>
 
       <!-- Links (Referrers) -->

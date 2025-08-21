@@ -126,14 +126,14 @@ app.post("/track", async (c) => {
 					language, country, country_code, region, city, 
 					latitude, longitude, timezone,
 					user_agent, screen_resolution,
-					page_views
+					ip_address, page_views
 				) VALUES (
 					?, ?, ?, ?, ?, ?,
 					?, ?,
 					?, ?, ?, ?, ?,
 					?, ?, ?,
 					?, ?,
-					1
+					?, 1
 				)
 			`);
 			
@@ -181,7 +181,8 @@ app.post("/track", async (c) => {
 				geoData.longitude,
 				geoData.timezone,
 				finalUserAgent,
-				finalScreenResolution
+				finalScreenResolution,
+				ip  // Add the actual IP address
 			);
 		} else {
 			// Existing session - update last activity and increment page views
@@ -267,37 +268,48 @@ app.delete("/api/stats/:siteId/data", authMiddleware, async (c) => {
 	const { range } = await c.req.json().catch(() => ({ range: 'all' }));
 	
 	try {
-		let deleteQuery;
+		let deleteEventsQuery;
+		let deleteSessionsQuery;
 		const params = [siteId];
 		
 		switch (range) {
 			case '7days':
-				deleteQuery = `DELETE FROM events WHERE site_id = ? AND timestamp > datetime('now', '-7 days')`;
+				deleteEventsQuery = `DELETE FROM events WHERE site_id = ? AND timestamp > datetime('now', '-7 days')`;
+				deleteSessionsQuery = `DELETE FROM sessions WHERE site_id = ? AND started_at > datetime('now', '-7 days')`;
 				break;
 			case '30days':
-				deleteQuery = `DELETE FROM events WHERE site_id = ? AND timestamp > datetime('now', '-30 days')`;
+				deleteEventsQuery = `DELETE FROM events WHERE site_id = ? AND timestamp > datetime('now', '-30 days')`;
+				deleteSessionsQuery = `DELETE FROM sessions WHERE site_id = ? AND started_at > datetime('now', '-30 days')`;
 				break;
 			case 'today':
-				deleteQuery = `DELETE FROM events WHERE site_id = ? AND date(timestamp) = date('now')`;
+				deleteEventsQuery = `DELETE FROM events WHERE site_id = ? AND date(timestamp) = date('now')`;
+				deleteSessionsQuery = `DELETE FROM sessions WHERE site_id = ? AND date(started_at) = date('now')`;
 				break;
 			case 'all':
 			default:
-				deleteQuery = `DELETE FROM events WHERE site_id = ?`;
+				deleteEventsQuery = `DELETE FROM events WHERE site_id = ?`;
+				deleteSessionsQuery = `DELETE FROM sessions WHERE site_id = ?`;
 				break;
 		}
 		
-		const stmt = db.prepare(deleteQuery);
-		const result = stmt.run(...params);
+		// Delete events
+		const eventsStmt = db.prepare(deleteEventsQuery);
+		const eventsResult = eventsStmt.run(...params);
 		
-		console.log(`[API] Cleared ${result.changes} events for site ${siteId} (range: ${range})`);
+		// Delete sessions
+		const sessionsStmt = db.prepare(deleteSessionsQuery);
+		const sessionsResult = sessionsStmt.run(...params);
+		
+		console.log(`[API] Cleared ${eventsResult.changes} events and ${sessionsResult.changes} sessions for site ${siteId} (range: ${range})`);
 		
 		// Broadcast update to WebSocket clients
 		broadcastStatsUpdate(siteId);
 		
 		return c.json({ 
 			success: true, 
-			deleted: result.changes,
-			message: `Successfully cleared ${result.changes} events` 
+			deletedEvents: eventsResult.changes,
+			deletedSessions: sessionsResult.changes,
+			message: `Successfully cleared ${eventsResult.changes} events and ${sessionsResult.changes} sessions` 
 		});
 	} catch (error) {
 		console.error('[API] Error clearing data:', error);

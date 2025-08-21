@@ -617,6 +617,16 @@ function dashboard() {
 			}
 		},
 
+		formatTimeShort(timestamp) {
+			// Format timestamp as short time like "7:26a" or "1:20p"
+			const date = new Date(timestamp);
+			let hours = date.getHours();
+			const minutes = date.getMinutes();
+			const ampm = hours >= 12 ? 'p' : 'a';
+			hours = hours % 12 || 12;
+			return `${hours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+		},
+
 		getLocaleFlagEmoji(locale) {
 			// Extract country code from locale (e.g., "en-US" -> "US")
 			const parts = locale.split("-");

@@ -11,6 +11,8 @@ const db = new Database(dbPath, { create: true });
 console.log('[Stats API] Database connected successfully');
 
 export interface RecentVisitor {
+    visitor_id: string;
+    ip_address?: string;
     ip_hash: string;
     page_url: string;
     timestamp: string;
@@ -219,6 +221,8 @@ export function getTrafficSources(siteId: string, startDate: string, endDate: st
 export function getRecentVisitors(siteId: string, limit: number = 20, startDate?: string, endDate?: string): RecentVisitor[] {
     let query = `
         SELECT DISTINCT
+            s.visitor_id,
+            s.ip_address,
             s.visitor_id as ip_hash,
             e.page_url,
             s.started_at as timestamp,

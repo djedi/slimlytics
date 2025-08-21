@@ -444,6 +444,7 @@ async function runDatabaseMigrations(conn, server) {
 				ALTER TABLE events ADD COLUMN session_id TEXT;
 				CREATE INDEX IF NOT EXISTS idx_events_visitor_id ON events(site_id, visitor_id);
 				CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(site_id, session_id);
+				ALTER TABLE sessions ADD COLUMN ip_address TEXT;
 			`;
 
 			for (const cmd of sessionsMigration
