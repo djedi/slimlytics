@@ -26,6 +26,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 				? "http://localhost:3000"
 				: window.location.origin;
 
+		// Extract hostname from apiBase for the Host header
+		const apiHost = new URL(apiBase).hostname;
+		
 		// Generate Caddy configuration
 		const caddyConfig = `### SLIM ANALYTICS ANTI-ADBLOCK PROXY - ${siteDomain}
 ### COPY INTO YOUR WEBSITE'S CADDYFILE
@@ -35,22 +38,25 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 # TRACKING SCRIPT
 handle /${jsPathClean} {
-    reverse_proxy ${apiBase}/sa.js {
-        header_up Host {upstream_hostport}
+    rewrite * /sa.js
+    reverse_proxy ${apiBase} {
+        header_up Host ${apiHost}
     }
 }
 
 # BEACON ENDPOINT  
 handle /${beaconPathClean} {
-    reverse_proxy ${apiBase}/track {
-        header_up Host {upstream_hostport}
+    rewrite * /track
+    reverse_proxy ${apiBase} {
+        header_up Host ${apiHost}
     }
 }
 
 # NOSCRIPT GIF BEACON
 handle /${siteId}ns.gif {
-    reverse_proxy ${apiBase}/t/${siteId}ns.gif {
-        header_up Host {upstream_hostport}
+    rewrite * /t/${siteId}ns.gif
+    reverse_proxy ${apiBase} {
+        header_up Host ${apiHost}
     }
 }`;
 
