@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { basicAuth } from "hono/basic-auth";
 import { serveStatic } from "hono/bun";
 import { Database } from "bun:sqlite";
 import { trackEvent, getStats } from "../db/queries.js";
@@ -18,6 +19,19 @@ await geoip.initialize();
 // WebSocket clients tracked by site ID
 const wsClients = new Map();
 
+// Check if auth is configured
+const AUTH_USERNAME = process.env.AUTH_USERNAME;
+const AUTH_PASSWORD = process.env.AUTH_PASSWORD;
+const isAuthEnabled = AUTH_USERNAME && AUTH_PASSWORD;
+
+// Middleware for protected routes
+const authMiddleware = isAuthEnabled
+	? basicAuth({
+			username: AUTH_USERNAME,
+			password: AUTH_PASSWORD,
+	  })
+	: async (c, next) => await next(); // No-op middleware if auth not configured
+
 app.use("*", cors());
 
 // Health check endpoint
@@ -32,21 +46,21 @@ app.get("/health", (c) => {
 setupTrackingScriptRoute(app);
 setupSimplifiedTrackingRoutes(app);
 
-// Sites API routes
-app.get("/api/sites", async (c) => {
+// Sites API routes (protected)
+app.get("/api/sites", authMiddleware, async (c) => {
 	return sitesRoutes.getAllSites(c.req.raw);
 });
 
-app.post("/api/sites", async (c) => {
+app.post("/api/sites", authMiddleware, async (c) => {
 	return sitesRoutes.createSite(c.req.raw);
 });
 
-app.put("/api/sites/:id", async (c) => {
+app.put("/api/sites/:id", authMiddleware, async (c) => {
 	const { id } = c.req.param();
 	return sitesRoutes.updateSite(c.req.raw, id);
 });
 
-app.delete("/api/sites/:id", async (c) => {
+app.delete("/api/sites/:id", authMiddleware, async (c) => {
 	const { id } = c.req.param();
 	return sitesRoutes.deleteSite(c.req.raw, id);
 });
@@ -141,29 +155,29 @@ app.post("/track", async (c) => {
 	return c.json({ success: true });
 });
 
-// Stats API routes
-app.get("/api/stats/:siteId", async (c) => {
+// Stats API routes (protected)
+app.get("/api/stats/:siteId", authMiddleware, async (c) => {
 	const { siteId } = c.req.param();
 	return statsRoutes.getStats(c.req.raw, siteId);
 });
 
-app.get("/api/stats/:siteId/timeseries", async (c) => {
+app.get("/api/stats/:siteId/timeseries", authMiddleware, async (c) => {
 	const { siteId } = c.req.param();
 	return statsRoutes.getTimeSeries(c.req.raw, siteId);
 });
 
-app.get("/api/stats/:siteId/realtime", async (c) => {
+app.get("/api/stats/:siteId/realtime", authMiddleware, async (c) => {
 	const { siteId } = c.req.param();
 	return statsRoutes.getRealtime(c.req.raw, siteId);
 });
 
-app.get("/api/stats/:siteId/recent-visitors", async (c) => {
+app.get("/api/stats/:siteId/recent-visitors", authMiddleware, async (c) => {
 	const { siteId } = c.req.param();
 	return statsRoutes.getRecentVisitorsEndpoint(c.req.raw, siteId);
 });
 
-// Clear analytics data for a site
-app.delete("/api/stats/:siteId/data", async (c) => {
+// Clear analytics data for a site (protected)
+app.delete("/api/stats/:siteId/data", authMiddleware, async (c) => {
 	const { siteId } = c.req.param();
 	const { range } = await c.req.json().catch(() => ({ range: 'all' }));
 	
@@ -209,8 +223,8 @@ app.delete("/api/stats/:siteId/data", async (c) => {
 	}
 });
 
-// Serve static files from dist directory - MUST be after API routes
-app.use("/*", serveStatic({ root: "./dist" }));
+// Serve static files from dist directory (protected) - MUST be after API routes
+app.use("/*", authMiddleware, serveStatic({ root: "./dist" }));
 
 function hashIP(ip) {
 	const crypto = require("node:crypto");
@@ -262,14 +276,23 @@ async function broadcastStatsUpdate(siteId) {
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || "0.0.0.0";
 console.log(`Analytics API running on ${host}:${port} with WebSocket support`);
+if (isAuthEnabled) {
+	console.log(`Basic authentication is ENABLED (username: ${AUTH_USERNAME})`);
+} else {
+	console.log(`Basic authentication is DISABLED`);
+}
 
 Bun.serve({
 	port,
 	hostname: host,
 	fetch(req, server) {
 		// Try to upgrade to WebSocket
-		if (server.upgrade(req)) {
-			return; // WebSocket upgrade successful
+		if (req.headers.get("upgrade") === "websocket") {
+			// For WebSockets, we'll check auth in the first message instead
+			// since browsers can't send custom headers with WebSocket connections
+			if (server.upgrade(req)) {
+				return; // WebSocket upgrade successful
+			}
 		}
 		// Otherwise handle as normal HTTP request
 		return app.fetch(req, server);
@@ -309,6 +332,19 @@ Bun.serve({
 				console.log("[WebSocket] Parsed message type:", data.type);
 
 				if (data.type === "subscribe" && data.siteId) {
+					// Check auth if enabled and not already authenticated
+					if (isAuthEnabled && !ws.authenticated) {
+						if (!data.auth || data.auth.username !== AUTH_USERNAME || data.auth.password !== AUTH_PASSWORD) {
+							ws.send(JSON.stringify({ 
+								type: "error", 
+								message: "Authentication required" 
+							}));
+							ws.close(1008, "Authentication required");
+							return;
+						}
+						ws.authenticated = true;
+					}
+					
 					console.log(`[WebSocket] Subscribing client to site ${data.siteId}`);
 					// Add client to the site's subscriber list
 					if (!wsClients.has(data.siteId)) {

@@ -23,7 +23,18 @@ bun run db:init
 
 This creates the SQLite database at `./data/analytics.db` with the required schema and a demo site.
 
-### 3. Set up GeoIP Location Tracking (Optional but Recommended)
+### 3. Configure Authentication (Optional)
+
+To protect your dashboard with basic authentication, add these to your `.env` file:
+
+```bash
+AUTH_USERNAME=your_username
+AUTH_PASSWORD=your_password
+```
+
+When both are set, the dashboard and API endpoints will require authentication. The tracking endpoints (`/track`, `/sa.js`, etc.) remain public.
+
+### 4. Set up GeoIP Location Tracking (Optional but Recommended)
 
 To enable geographic location tracking for your visitors:
 
