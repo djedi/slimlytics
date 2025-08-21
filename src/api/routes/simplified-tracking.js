@@ -5,6 +5,12 @@ export function setupSimplifiedTrackingRoutes(app) {
 (function() {
   'use strict';
   
+  // Prevent double execution
+  if (window._slimAnalyticsLoaded) {
+    return;
+  }
+  window._slimAnalyticsLoaded = true;
+  
   // Get site ID from script tag - use document.currentScript or find by data-id
   var currentScript = document.currentScript;
   if (!currentScript) {
