@@ -81,9 +81,9 @@ export function setupSimplifiedTrackingRoutes(app) {
     
     // Use sendBeacon if available, fallback to fetch
     var payload = JSON.stringify(data);
-    // Extract base URL and replace the script path with /track
-    var scriptUrl = new URL(currentScript.src);
-    var trackUrl = scriptUrl.origin + '/track';
+    // For anti-adblock, send to the site ID path (e.g., /3PXT05lP0j)
+    // which the proxy will rewrite to /track
+    var trackUrl = currentScript.src.replace('.js', '');
     
     if (navigator.sendBeacon) {
       navigator.sendBeacon(trackUrl, payload);
