@@ -19,8 +19,6 @@ function siteSettings() {
 		showClearDataModal: false,
 		deleteConfirmation: "",
 		clearDataRange: "all",
-		trackingCode: "",
-		copyButtonText: "📋 Copy",
 
 		async init() {
 			// Get current site from SiteManager
@@ -42,7 +40,6 @@ function siteSettings() {
 			}
 
 			await this.loadStats(this.site.id);
-			this.generateTrackingCode();
 		},
 
 		async loadSite(siteId) {
@@ -90,33 +87,56 @@ function siteSettings() {
 
 		async loadStats(siteId) {
 			// Load basic statistics for the site
-			// In production, this would fetch from the API
-			this.stats = {
-				totalPageViews: "12,345",
-				uniqueVisitors: "3,456",
-				avgTimeOnSite: "2m 34s",
-				bounceRate: "32%",
-			};
+			try {
+				// Calculate date range for all-time stats
+				const now = new Date();
+				const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+				
+				const response = await fetch(
+					window.SLIMLYTICS_CONFIG.apiEndpoint(
+						`/api/stats/${siteId}?start=${thirtyDaysAgo.toISOString()}&end=${now.toISOString()}`
+					)
+				);
+				
+				if (response.ok) {
+					const data = await response.json();
+					
+					// Format the stats for display
+					this.stats = {
+						totalPageViews: data.pageViews?.toLocaleString() || "0",
+						uniqueVisitors: data.visitors?.toLocaleString() || "0",
+						avgTimeOnSite: this.formatDuration(data.avgSessionDuration || 0),
+						bounceRate: `${Math.round(data.bounceRate || 0)}%`,
+					};
+				} else {
+					// Fallback to mock data if API fails
+					this.stats = {
+						totalPageViews: "0",
+						uniqueVisitors: "0",
+						avgTimeOnSite: "0s",
+						bounceRate: "0%",
+					};
+				}
+			} catch (err) {
+				console.error("Failed to load stats:", err);
+				// Fallback to empty stats on error
+				this.stats = {
+					totalPageViews: "0",
+					uniqueVisitors: "0",
+					avgTimeOnSite: "0s",
+					bounceRate: "0%",
+				};
+			}
 		},
-
-		generateTrackingCode() {
-			if (!this.site) return;
-
-			const apiBase =
-				window.location.hostname === "localhost"
-					? "http://localhost:3000"
-					: window.location.origin;
-
-			// Split the script tags to avoid parsing issues
-			const scriptOpen = "<scr" + "ipt>";
-			const scriptClose = "</scr" + "ipt>";
-			const noscriptOpen = "<noscr" + "ipt>";
-			const noscriptClose = "</noscr" + "ipt>";
-
-			this.trackingCode = `<!-- Slimlytics Tracking Code -->
-${scriptOpen} async data-id="${this.site.id}" src="${apiBase}/sa.js"${scriptClose}
-${noscriptOpen}<p><img alt="Slimlytics" width="1" height="1" src="${apiBase}/${this.site.id}ns.gif" /></p>${noscriptClose}
-<!-- End Slimlytics Tracking Code -->`;
+		
+		formatDuration(seconds) {
+			if (!seconds || seconds === 0) return "0s";
+			const minutes = Math.floor(seconds / 60);
+			const secs = Math.round(seconds % 60);
+			if (minutes > 0) {
+				return `${minutes}m ${secs}s`;
+			}
+			return `${secs}s`;
 		},
 
 		async updateSite() {
@@ -226,21 +246,6 @@ ${noscriptOpen}<p><img alt="Slimlytics" width="1" height="1" src="${apiBase}/${t
 		async exportData(format) {
 			// In production, this would trigger a download
 			alert(`Exporting data as ${format.toUpperCase()}`);
-		},
-
-		async copyTrackingCode() {
-			try {
-				await navigator.clipboard.writeText(this.trackingCode);
-				this.copyButtonText = "✅ Copied!";
-				setTimeout(() => {
-					this.copyButtonText = "📋 Copy";
-				}, 2000);
-			} catch (err) {
-				this.copyButtonText = "❌ Failed";
-				setTimeout(() => {
-					this.copyButtonText = "📋 Copy";
-				}, 2000);
-			}
 		},
 
 		formatDate(dateString) {

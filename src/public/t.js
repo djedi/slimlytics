@@ -78,12 +78,26 @@
 
 	// Track single page application navigation
 	let lastPath = window.location.pathname;
+	let lastTrackTime = Date.now();
+	const TRACK_DEBOUNCE_MS = 500; // Prevent duplicate tracking within 500ms
 
-	// Check for route changes periodically (for SPAs)
+	// Debounced track function to prevent duplicates
+	function trackDebounced() {
+		const now = Date.now();
+		const currentPath = window.location.pathname;
+		
+		// Only track if enough time has passed AND the path is different
+		if (now - lastTrackTime > TRACK_DEBOUNCE_MS && currentPath !== lastPath) {
+			lastPath = currentPath;
+			lastTrackTime = now;
+			track();
+		}
+	}
+
+	// Check for route changes periodically (for SPAs that don't use History API)
 	setInterval(function () {
 		if (window.location.pathname !== lastPath) {
-			lastPath = window.location.pathname;
-			track();
+			trackDebounced();
 		}
 	}, 1000);
 
@@ -93,15 +107,15 @@
 
 	history.pushState = function () {
 		originalPushState.apply(history, arguments);
-		setTimeout(track, 10);
+		setTimeout(trackDebounced, 10);
 	};
 
 	history.replaceState = function () {
 		originalReplaceState.apply(history, arguments);
-		setTimeout(track, 10);
+		setTimeout(trackDebounced, 10);
 	};
 
-	window.addEventListener("popstate", track);
+	window.addEventListener("popstate", trackDebounced);
 
 	// Expose tracking function globally for manual tracking
 	window.slimlytics = {

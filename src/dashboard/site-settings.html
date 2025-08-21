@@ -86,36 +86,6 @@ title: Site Settings
                     <span class="emoji-icon">⚠️</span> <span x-text="updateError"></span>
                 </div>
             </div>
-
-            <!-- Tracking Code -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="emoji-icon">📊</span>
-                    Tracking Code
-                </div>
-
-                <p style="margin-bottom: 15px; color: #7f8c8d; font-size: 14px;">
-                    Add this code to your website, just before the closing &lt;/body&gt; tag:
-                </p>
-
-                <div style="position: relative;">
-                    <pre style="background: #f8f9fa; padding: 15px; border-radius: 5px; overflow-x: auto; border: 1px solid #dee2e6; font-size: 12px;"><code x-text="trackingCode"></code></pre>
-                    <button @click="copyTrackingCode()"
-                            style="position: absolute; top: 10px; right: 10px; background: #6c757d; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">
-                        <span x-text="copyButtonText"></span>
-                    </button>
-                </div>
-
-                <div style="margin-top: 15px; padding: 15px; background: #e7f3ff; border-radius: 5px; border-left: 4px solid #3498db;">
-                    <div style="font-weight: 600; margin-bottom: 5px; color: #2c3e50;">
-                        💡 Pro Tip
-                    </div>
-                    <div style="font-size: 13px; color: #495057;">
-                        For single-page applications, our tracking script automatically detects route changes.
-                        You can also manually track events using <code style="background: #fff; padding: 2px 4px; border-radius: 3px;">window.slimlytics.trackEvent('event_name', data)</code>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Right Column -->

@@ -4,6 +4,7 @@ function dashboard() {
 	return {
 		// Site management
 		selectedSiteId: null,
+		showDataError: false,
 
 		// Date range management
 		selectedDateRange: "today",
@@ -130,6 +131,9 @@ function dashboard() {
 				console.warn('[Dashboard] No site selected, cannot load stats');
 				return;
 			}
+			
+			// Reset error state
+			this.showDataError = false;
 
 			try {
 				// Calculate date range
@@ -169,15 +173,15 @@ function dashboard() {
 					this.recentVisitors = data.recentVisitors || [];
 					this.realtimeVisitors = data.realtimeVisitors || 0;
 				} else {
-					console.error('[Dashboard] Stats response not OK, using mock data. Status:', statsResponse.status);
+					console.error('[Dashboard] Stats response not OK. Status:', statsResponse.status);
 					try {
 						const errorText = await statsResponse.text();
 						console.error('[Dashboard] Error response body:', errorText);
 					} catch (e) {
 						console.error('[Dashboard] Could not read error response body');
 					}
-					// Use mock data as fallback
-					this.loadMockStats();
+					// Don't load mock data - show empty/error state instead
+					this.showDataError = true;
 				}
 
 				// Fetch time series data for chart
@@ -218,12 +222,16 @@ function dashboard() {
 						this.comparePageViews = compareData.pageViews;
 					}
 
-					this.updateChart();
+					// Ensure chart update happens after Alpine has processed the data
+					this.$nextTick(() => {
+						this.updateChart();
+					});
 				}
 			} catch (error) {
 				console.error('[Dashboard] Error loading stats:', error);
 				console.error('[Dashboard] Error details:', error.message, error.stack);
-				this.loadMockStats();
+				// Don't load mock data - show error state instead
+				this.showDataError = true;
 			}
 		},
 
@@ -691,7 +699,10 @@ function dashboard() {
 
 		initChart() {
 			// Initialize with empty data or mock data
-			this.updateChart();
+			// Delay chart initialization to ensure Alpine is ready
+			this.$nextTick(() => {
+				this.updateChart();
+			});
 		},
 
 		updateChart() {

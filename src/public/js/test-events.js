@@ -72,20 +72,50 @@ async function initTestEvents() {
 	updateStats();
 }
 
-// Generate random event data
-async function generateRandomEvent(siteId) {
+// Track simulated sessions - each "visitor" gets a consistent user agent and screen for their session
+const simulatedSessions = new Map();
+
+// Generate random event data with session tracking
+async function generateRandomEvent(siteId, options = {}) {
 	const currentSite = await window.SiteManager.getSelectedSite();
 	const domain = currentSite ? currentSite.domain : "example.com";
+	
+	// For session simulation, use consistent user agent and screen per "visitor"
+	let sessionId = options.sessionId || `visitor_${Math.floor(Math.random() * 1000)}`;
+	
+	if (!simulatedSessions.has(sessionId)) {
+		simulatedSessions.set(sessionId, {
+			user_agent: userAgents[Math.floor(Math.random() * userAgents.length)],
+			screen_resolution: screenResolutions[Math.floor(Math.random() * screenResolutions.length)],
+			language: languages[Math.floor(Math.random() * languages.length)],
+			page_count: 0,
+			first_page: null
+		});
+	}
+	
+	const session = simulatedSessions.get(sessionId);
+	session.page_count++;
+	
+	const page = pages[Math.floor(Math.random() * pages.length)];
+	if (!session.first_page) {
+		session.first_page = page;
+	}
 
 	return {
 		site_id: siteId,
-		page_url: `https://${domain}${pages[Math.floor(Math.random() * pages.length)]}`,
-		referrer: referrers[Math.floor(Math.random() * referrers.length)],
-		user_agent: userAgents[Math.floor(Math.random() * userAgents.length)],
-		screen_resolution:
-			screenResolutions[Math.floor(Math.random() * screenResolutions.length)],
-		language: languages[Math.floor(Math.random() * languages.length)],
+		page_url: `https://${domain}${page}`,
+		referrer: session.page_count === 1 
+			? referrers[Math.floor(Math.random() * referrers.length)]
+			: `https://${domain}${session.first_page}`, // Internal referrer for subsequent pages
+		user_agent: session.user_agent,
+		screen_resolution: session.screen_resolution,
+		language: session.language,
 		timestamp: new Date().toISOString(),
+		// Include session info in event data for debugging
+		_session_debug: {
+			session_id: sessionId,
+			page_count: session.page_count
+		}
 	};
 }
 
@@ -147,6 +177,38 @@ async function sendRandomPageViews() {
 	showStatus(
 		`Sent ${successCount} of ${count} events successfully`,
 		successCount === count ? "success" : "error",
+	);
+}
+
+// Send realistic session (multiple pages from same visitor)
+async function sendRealisticSession() {
+	const currentSite = await window.SiteManager.getSelectedSite();
+	if (!currentSite) {
+		showStatus("Please select a site first", "error");
+		return;
+	}
+	const siteId = currentSite.id;
+	
+	const sessionId = `session_${Date.now()}`;
+	const pageCount = Math.floor(Math.random() * 5) + 2; // 2-6 pages per session
+	
+	showStatus(`Sending session with ${pageCount} page views...`, "success");
+	
+	let successCount = 0;
+	for (let i = 0; i < pageCount; i++) {
+		const eventData = await generateRandomEvent(siteId, { sessionId });
+		const success = await sendEvent(eventData);
+		if (success) successCount++;
+		
+		// Short delay between pages in a session
+		if (i < pageCount - 1) {
+			await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 2000));
+		}
+	}
+	
+	showStatus(
+		`Session complete: ${successCount} of ${pageCount} pages tracked`,
+		successCount === pageCount ? "success" : "error"
 	);
 }
 
