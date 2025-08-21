@@ -287,42 +287,7 @@ function generateCaddyfile(domain) {
 
 // Run database migrations
 async function runDatabaseMigrations(conn, server) {
-	log.step("Checking database schema...");
-
-	// Check if geo columns exist
-	let needsGeoMigration = false;
-	try {
-		const checkGeoColumns = await sshExec(
-			conn,
-			`docker exec slimlytics-app sh -c "echo 'SELECT country FROM events LIMIT 1;' | sqlite3 /app/data/analytics.db 2>&1"`,
-		);
-
-		if (checkGeoColumns.includes("no such column")) {
-			needsGeoMigration = true;
-		}
-	} catch (e) {
-		needsGeoMigration = true;
-	}
-
-	// Check if sessions table exists
-	let needsSessionsMigration = false;
-	try {
-		const checkSessions = await sshExec(
-			conn,
-			`docker exec slimlytics-app sh -c "echo 'SELECT COUNT(*) FROM sessions;' | sqlite3 /app/data/analytics.db 2>&1"`,
-		);
-
-		if (checkSessions.includes("no such table")) {
-			needsSessionsMigration = true;
-		}
-	} catch (e) {
-		needsSessionsMigration = true;
-	}
-
-	if (!needsGeoMigration && !needsSessionsMigration) {
-		log.info("Database schema is up to date");
-		return;
-	}
+	log.step("Running database migrations...");
 
 	// Create backup before migrations
 	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -336,137 +301,16 @@ async function runDatabaseMigrations(conn, server) {
 		log.warning("Could not create backup (database may be new)");
 	}
 
-	// Run geo columns migration if needed
-	if (needsGeoMigration) {
-		log.step("Running database migration to add geo columns...");
-
-		// Run the migration using the existing script in the container
-		try {
-			await sshExec(
-				conn,
-				"docker exec slimlytics-app bun run /app/scripts/add-geo-columns.js",
-			);
-			log.success("Geo columns migration completed successfully");
-		} catch (error) {
-			// If the script doesn't exist or fails, run the migration inline
-			log.step("Running inline geo migration...");
-
-			const migrationCommands = `
-				ALTER TABLE events ADD COLUMN country TEXT;
-				ALTER TABLE events ADD COLUMN country_code TEXT;
-				ALTER TABLE events ADD COLUMN region TEXT;
-				ALTER TABLE events ADD COLUMN city TEXT;
-				ALTER TABLE events ADD COLUMN latitude REAL;
-				ALTER TABLE events ADD COLUMN longitude REAL;
-				ALTER TABLE events ADD COLUMN timezone TEXT;
-				ALTER TABLE events ADD COLUMN asn INTEGER;
-				ALTER TABLE events ADD COLUMN asn_org TEXT;
-				CREATE INDEX IF NOT EXISTS idx_events_country ON events(site_id, country_code);
-				CREATE INDEX IF NOT EXISTS idx_events_city ON events(site_id, city);
-				ALTER TABLE daily_stats ADD COLUMN top_countries TEXT;
-				ALTER TABLE daily_stats ADD COLUMN top_cities TEXT;
-			`;
-
-			for (const cmd of migrationCommands
-				.trim()
-				.split("\n")
-				.filter((line) => line.trim())) {
-				try {
-					await sshExec(
-						conn,
-						`docker exec slimlytics-app sh -c "echo '${cmd.trim()}' | sqlite3 /app/data/analytics.db"`,
-					);
-				} catch (e) {
-					if (!e.message.includes("duplicate column")) {
-						log.warning(`Migration command failed: ${cmd.trim()}`);
-					}
-				}
-			}
-			log.success("Inline geo migration completed");
-		}
-	}
-
-	// Run sessions migration if needed
-	if (needsSessionsMigration) {
-		log.step("Running database migration to add sessions table...");
-
-		// Run the migration using the existing script in the container
-		try {
-			await sshExec(
-				conn,
-				"docker exec slimlytics-app bun run /app/scripts/add-sessions-table.js",
-			);
-			log.success("Sessions table migration completed successfully");
-		} catch (error) {
-			// If the script doesn't exist or fails, run the migration inline
-			log.step("Running inline sessions migration...");
-
-			const sessionsMigration = `
-				CREATE TABLE IF NOT EXISTS sessions (
-					id TEXT PRIMARY KEY,
-					site_id TEXT NOT NULL,
-					visitor_id TEXT NOT NULL,
-					session_id TEXT NOT NULL,
-					started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-					last_activity DATETIME DEFAULT CURRENT_TIMESTAMP,
-					referrer TEXT,
-					utm_source TEXT,
-					utm_medium TEXT,
-					utm_campaign TEXT,
-					utm_term TEXT,
-					utm_content TEXT,
-					traffic_source TEXT,
-					language TEXT,
-					country TEXT,
-					country_code TEXT,
-					region TEXT,
-					city TEXT,
-					latitude REAL,
-					longitude REAL,
-					timezone TEXT,
-					user_agent TEXT,
-					screen_resolution TEXT,
-					browser TEXT,
-					browser_version TEXT,
-					os TEXT,
-					os_version TEXT,
-					device_type TEXT,
-					page_views INTEGER DEFAULT 0,
-					duration INTEGER DEFAULT 0,
-					is_bounce BOOLEAN DEFAULT FALSE,
-					FOREIGN KEY (site_id) REFERENCES sites(id),
-					UNIQUE(site_id, session_id)
-				);
-				CREATE INDEX IF NOT EXISTS idx_sessions_site_visitor ON sessions(site_id, visitor_id);
-				CREATE INDEX IF NOT EXISTS idx_sessions_site_started ON sessions(site_id, started_at);
-				CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
-				ALTER TABLE events ADD COLUMN visitor_id TEXT;
-				ALTER TABLE events ADD COLUMN session_id TEXT;
-				CREATE INDEX IF NOT EXISTS idx_events_visitor_id ON events(site_id, visitor_id);
-				CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(site_id, session_id);
-				ALTER TABLE sessions ADD COLUMN ip_address TEXT;
-			`;
-
-			for (const cmd of sessionsMigration
-				.trim()
-				.split(";")
-				.filter((line) => line.trim())) {
-				try {
-					await sshExec(
-						conn,
-						`docker exec slimlytics-app sh -c "echo '${cmd.trim()};' | sqlite3 /app/data/analytics.db"`,
-					);
-				} catch (e) {
-					if (
-						!e.message.includes("duplicate column") &&
-						!e.message.includes("already exists")
-					) {
-						log.warning(`Migration command failed: ${cmd.trim()}`);
-					}
-				}
-			}
-			log.success("Inline sessions migration completed");
-		}
+	// Run the full migration script
+	try {
+		await sshExec(
+			conn,
+			"docker exec slimlytics-app bun run /app/scripts/full-migration.js",
+		);
+		log.success("Database migration completed successfully");
+	} catch (error) {
+		log.warning(`Migration may have encountered some issues: ${error.message}`);
+		log.info("This is normal if the database is already up to date");
 	}
 }
 

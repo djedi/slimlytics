@@ -127,3 +127,5 @@ MaxMind updates their databases twice weekly (Tuesdays and Fridays). You can dow
 ## Notes
 
 - Don't do this `await fetch('/api/sites')`; Instead, do this: `await fetch(window.SLIMLYTICS_CONFIG.apiEndpoint("/api/sites"));`
+- The site is in active development. It is ok to delete data. Database changes should include a migration script and migrations should be run in deploy.js
+- I'm hosting my first version of this app on https://slimlytics.redseam.com. You can use playwright mcp to test here. Username is `dustin`. Password is `slim777!`

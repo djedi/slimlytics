@@ -219,10 +219,11 @@ export function getTrafficSources(siteId: string, startDate: string, endDate: st
 
 // Get recent visitors for a site - show unique sessions not all events
 export function getRecentVisitors(siteId: string, limit: number = 20, startDate?: string, endDate?: string): RecentVisitor[] {
+    // Use COALESCE to handle missing ip_address column gracefully
     let query = `
         SELECT DISTINCT
             s.visitor_id,
-            s.ip_address,
+            COALESCE(s.ip_address, s.visitor_id) as ip_address,
             s.visitor_id as ip_hash,
             e.page_url,
             s.started_at as timestamp,

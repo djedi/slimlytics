@@ -297,3 +297,37 @@ title: Analytics Dashboard
 </div>
 
 <script src="/js/dashboard.js"></script>
+<script>
+// Fallback functions if not defined in dashboard.js
+document.addEventListener('alpine:init', () => {
+  Alpine.data('dashboard', function() {
+    const originalData = dashboard ? dashboard.call(this) : {};
+    
+    // Add missing functions if they don't exist
+    if (!originalData.getPathFromUrl) {
+      originalData.getPathFromUrl = function(url) {
+        if (!url) return '/';
+        try {
+          const urlObj = new URL(url);
+          return urlObj.pathname || '/';
+        } catch (e) {
+          return url;
+        }
+      };
+    }
+    
+    if (!originalData.formatTimeShort) {
+      originalData.formatTimeShort = function(timestamp) {
+        const date = new Date(timestamp);
+        let hours = date.getHours();
+        const minutes = date.getMinutes();
+        const ampm = hours >= 12 ? 'p' : 'a';
+        hours = hours % 12 || 12;
+        return `${hours}:${minutes.toString().padStart(2, '0')}${ampm}`;
+      };
+    }
+    
+    return originalData;
+  });
+});
+</script>
