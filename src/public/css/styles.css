@@ -107,6 +107,17 @@ h1 {
   color: #3498db;
 }
 
+.content-link {
+  color: inherit;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.content-link:hover {
+  color: #3498db;
+  text-decoration: underline;
+}
+
 @media (max-width: 768px) {
   .header {
     flex-direction: column;

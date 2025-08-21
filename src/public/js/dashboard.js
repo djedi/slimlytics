@@ -605,6 +605,18 @@ function dashboard() {
 			return String.fromCodePoint(...codePoints);
 		},
 
+		getPathFromUrl(url) {
+			// Extract path from full URL
+			if (!url) return '/';
+			try {
+				const urlObj = new URL(url);
+				return urlObj.pathname || '/';
+			} catch (e) {
+				// If URL parsing fails, assume it's already a path
+				return url;
+			}
+		},
+
 		getLocaleFlagEmoji(locale) {
 			// Extract country code from locale (e.g., "en-US" -> "US")
 			const parts = locale.split("-");

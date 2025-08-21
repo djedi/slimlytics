@@ -237,7 +237,7 @@ title: Analytics Dashboard
         <ul class="data-list">
           <template x-for="(page, index) in topPages.slice(0, 10)" :key="page.url">
             <li class="list-item">
-              <span x-text="page.url"></span>
+              <a :href="page.url" target="_blank" class="content-link" x-text="getPathFromUrl(page.url)"></a>
               <div style="display: flex; align-items: center; gap: 10px">
                 <span class="badge" x-text="`${page.views} views`"></span>
                 <div class="progress-bar" style="width: 100px">
