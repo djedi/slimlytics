@@ -5,10 +5,19 @@ export function setupSimplifiedTrackingRoutes(app) {
 (function() {
   'use strict';
   
-  // Get site ID from script tag
-  var scripts = document.getElementsByTagName('script');
-  var currentScript = scripts[scripts.length - 1];
-  var SITE_ID = currentScript.getAttribute('data-id');
+  // Get site ID from script tag - use document.currentScript or find by data-id
+  var currentScript = document.currentScript;
+  if (!currentScript) {
+    // Fallback: find any script with data-id attribute
+    var scripts = document.getElementsByTagName('script');
+    for (var i = 0; i < scripts.length; i++) {
+      if (scripts[i].getAttribute('data-id')) {
+        currentScript = scripts[i];
+        break;
+      }
+    }
+  }
+  var SITE_ID = currentScript ? currentScript.getAttribute('data-id') : null;
   
   if (!SITE_ID) {
     console.error('Slimlytics: No data-id attribute found on script tag');
