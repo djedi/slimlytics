@@ -219,20 +219,19 @@ export function getTrafficSources(siteId: string, startDate: string, endDate: st
 
 // Get recent visitors for a site - show unique sessions not all events
 export function getRecentVisitors(siteId: string, limit: number = 20, startDate?: string, endDate?: string): RecentVisitor[] {
-    // Use COALESCE to handle missing ip_address column gracefully
+    // Get recent sessions with their landing page
     let query = `
         SELECT DISTINCT
             s.visitor_id,
             COALESCE(s.ip_address, s.visitor_id) as ip_address,
             s.visitor_id as ip_hash,
-            e.page_url,
+            s.landing_page as page_url,
             s.started_at as timestamp,
             s.country,
             s.country_code,
             s.city,
             s.region
         FROM sessions s
-        LEFT JOIN events e ON s.session_id = e.session_id AND s.site_id = e.site_id
         WHERE s.site_id = ?
     `;
     
@@ -243,7 +242,7 @@ export function getRecentVisitors(siteId: string, limit: number = 20, startDate?
         params.push(startDate, endDate);
     }
     
-    query += ` GROUP BY s.session_id ORDER BY s.started_at DESC LIMIT ?`;
+    query += ` ORDER BY s.started_at DESC LIMIT ?`;
     params.push(limit);
     
     const stmt = db.prepare(query);

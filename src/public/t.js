@@ -77,48 +77,49 @@
 	}
 
 	// Track single page application navigation
-	let lastPath = window.location.pathname;
-	let lastFullUrl = window.location.href;
-	let lastTrackTime = Date.now();
-	const TRACK_DEBOUNCE_MS = 500; // Prevent duplicate tracking within 500ms
+	let lastTrackedUrl = window.location.href;
+	let pendingTrack = null;
 
-	// Debounced track function to prevent duplicates
-	function trackDebounced() {
-		const now = Date.now();
-		const currentPath = window.location.pathname;
+	// Function to track if URL has changed
+	function trackIfChanged() {
 		const currentUrl = window.location.href;
 		
-		// Only track if enough time has passed AND the URL is actually different
-		if (now - lastTrackTime > TRACK_DEBOUNCE_MS && currentUrl !== lastFullUrl) {
-			lastPath = currentPath;
-			lastFullUrl = currentUrl;
-			lastTrackTime = now;
-			track();
+		// Clear any pending track
+		if (pendingTrack) {
+			clearTimeout(pendingTrack);
+			pendingTrack = null;
+		}
+		
+		// Only track if URL actually changed
+		if (currentUrl !== lastTrackedUrl) {
+			// Debounce to prevent multiple events
+			pendingTrack = setTimeout(function() {
+				lastTrackedUrl = currentUrl;
+				track();
+				pendingTrack = null;
+			}, 100);
 		}
 	}
 
-	// Check for route changes periodically (for SPAs that don't use History API)
-	setInterval(function () {
-		if (window.location.pathname !== lastPath) {
-			trackDebounced();
-		}
-	}, 1000);
-
-	// Also listen for history changes
+	// Listen for history changes (covers pushState, replaceState, and back/forward)
 	const originalPushState = history.pushState;
 	const originalReplaceState = history.replaceState;
 
 	history.pushState = function () {
 		originalPushState.apply(history, arguments);
-		setTimeout(trackDebounced, 10);
+		trackIfChanged();
 	};
 
 	history.replaceState = function () {
 		originalReplaceState.apply(history, arguments);
-		setTimeout(trackDebounced, 10);
+		trackIfChanged();
 	};
 
-	window.addEventListener("popstate", trackDebounced);
+	window.addEventListener("popstate", trackIfChanged);
+	
+	// Fallback for SPAs that might not use History API
+	// Check less frequently to avoid conflicts
+	setInterval(trackIfChanged, 2000);
 
 	// Expose tracking function globally for manual tracking
 	window.slimlytics = {
