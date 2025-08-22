@@ -730,8 +730,8 @@ function dashboard() {
 			const chartWidth = width - padding.left - padding.right;
 			const chartHeight = height - padding.top - padding.bottom;
 
-			// Ensure we have at least 2 data points to draw a line
-			if (chartData.length < 2) {
+			// Handle single data point or no data
+			if (chartData.length === 0) {
 				this.chartSvg = `
 					<svg width="100%" height="300" viewBox="0 0 600 300">
 						<text x="300" y="150" text-anchor="middle" font-size="14" fill="#7f8c8d">
@@ -740,6 +740,17 @@ function dashboard() {
 					</svg>
 				`;
 				return;
+			}
+			
+			// For single data point, duplicate it to allow rendering
+			if (chartData.length === 1) {
+				chartData.push(chartData[0]);
+				if (compareData.length === 1) {
+					compareData.push(compareData[0]);
+				}
+				if (labels.length === 1) {
+					labels.push(labels[0]);
+				}
 			}
 
 			// Find max value for scaling (ensure min value of 1 to prevent division by 0)

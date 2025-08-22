@@ -78,6 +78,7 @@
 
 	// Track single page application navigation
 	let lastPath = window.location.pathname;
+	let lastFullUrl = window.location.href;
 	let lastTrackTime = Date.now();
 	const TRACK_DEBOUNCE_MS = 500; // Prevent duplicate tracking within 500ms
 
@@ -85,10 +86,12 @@
 	function trackDebounced() {
 		const now = Date.now();
 		const currentPath = window.location.pathname;
+		const currentUrl = window.location.href;
 		
-		// Only track if enough time has passed AND the path is different
-		if (now - lastTrackTime > TRACK_DEBOUNCE_MS && currentPath !== lastPath) {
+		// Only track if enough time has passed AND the URL is actually different
+		if (now - lastTrackTime > TRACK_DEBOUNCE_MS && currentUrl !== lastFullUrl) {
 			lastPath = currentPath;
+			lastFullUrl = currentUrl;
 			lastTrackTime = now;
 			track();
 		}

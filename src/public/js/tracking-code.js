@@ -4,7 +4,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const tagManagerCheckbox = document.getElementById("tag-manager");
 
 	// Get the selected site using SiteManager
-	const siteData = await window.SiteManager.getCurrentSiteData();
+	let siteData = await window.SiteManager.getCurrentSiteData();
 	
 	if (!siteData.site) {
 		// No site selected, try to initialize
@@ -13,12 +13,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 			codeElement.textContent = '// Please select a site first';
 			return;
 		}
-		siteData.siteId = site.id;
+		// Update siteData with the initialized site
+		siteData = {
+			site: site,
+			siteId: site.id,
+			siteName: site.name,
+			siteDomain: site.domain
+		};
 	}
 	
 	const siteId = siteData.siteId;
 	window.currentSiteId = siteId; // Store for verify function
-	window.currentSiteDomain = siteData.site?.domain;
+	window.currentSiteDomain = siteData.siteDomain || siteData.site?.domain;
 
 	function updateTrackingCode() {
 		const includeNoscript = noscriptCheckbox.checked;
@@ -37,13 +43,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 (function() {
   var script = document.createElement('script');
   script.async = true;
-  script.setAttribute('data-id', '${siteId}');
-  script.src = '${apiBase}/sa.js';
+  script.setAttribute('data-site', '${siteId}');
+  script.src = '${apiBase}/t.js';
   document.head.appendChild(script);
 })();`;
 		} else {
 			// Standard HTML format (simplified like Clicky)
-			code = `<script async data-id="${siteId}" src="${apiBase}/sa.js"></script>`;
+			code = `<script async data-site="${siteId}" src="${apiBase}/t.js"></script>`;
 
 			if (includeNoscript) {
 				code += `\n<noscript><p><img alt="Slimlytics" width="1" height="1" src="${apiBase}/${siteId}ns.gif" /></p></noscript>`;
