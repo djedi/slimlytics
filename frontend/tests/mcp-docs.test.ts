@@ -37,4 +37,15 @@ describe('public MCP documentation', () => {
     expect(screen.getByRole('heading', { name: 'Prompt library' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copy .mcp.json' })).toBeInTheDocument();
   });
+
+  it('limits the headless Claude Code example to read-only reporting tools', () => {
+    render(McpDocs);
+    const headless = [...document.querySelectorAll('pre code')]
+      .map((node) => node.textContent ?? '')
+      .find((code) => code.includes('claude -p'));
+    expect(headless).toBeDefined();
+    expect(headless).not.toMatch(/--allowedTools "mcp__slimlytics"/);
+    expect(headless).toContain('mcp__slimlytics__analytics_summary');
+    expect(headless).not.toContain('setup_site');
+  });
 });

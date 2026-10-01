@@ -59,11 +59,11 @@ Pre-approve read-only tools in `.claude/settings.json` and leave `setup_site` on
 }
 ```
 
-Headless reports (authenticate interactively once first):
+Headless reports (authenticate interactively once first). Allow only the read-only tools so an unattended run cannot call `setup_site`:
 
 ```sh
 claude -p "Summarize last week's traffic for shop.example.com with the Slimlytics MCP server." \
-  --allowedTools "mcp__slimlytics"
+  --allowedTools "mcp__slimlytics__list_sites,mcp__slimlytics__analytics_summary,mcp__slimlytics__dimension_report,mcp__slimlytics__marketing_brief"
 ```
 
 Static bearer token fallback: `claude mcp add --transport http slimlytics https://analytics.example.com/api/mcp --header "Authorization: Bearer $SLIMLYTICS_TOKEN"`.

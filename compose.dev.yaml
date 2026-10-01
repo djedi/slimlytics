@@ -2,7 +2,8 @@
 # `docker compose -f compose.yaml -f compose.dev.yaml up --build`).
 #
 # - frontend: Vite dev server with HMR, proxied by Caddy on the usual :8080.
-# - backend: cargo-watch rebuilds and restarts on Rust, migration, or OpenAPI changes.
+# - backend: cargo-watch rebuilds and restarts on Rust, manifest, build script, migration, or
+#   OpenAPI changes.
 # - db and caddy are unchanged from compose.yaml.
 services:
   frontend:
@@ -33,7 +34,7 @@ services:
   backend:
     build:
       target: dev
-    command: ["cargo", "watch", "--why", "-w", "src", "-w", "../migrations", "-w", "../docs/openapi.json", "-x", "run"]
+    command: ["cargo", "watch", "--why", "-w", "src", "-w", "Cargo.toml", "-w", "Cargo.lock", "-w", "build.rs", "-w", "../migrations", "-w", "../docs/openapi.json", "-x", "run"]
     environment:
       CARGO_TARGET_DIR: /cargo-target
       RUST_LOG: ${RUST_LOG:-slimlytics=debug,tower_http=info}

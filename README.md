@@ -92,7 +92,7 @@ make dev-logs   # follow frontend and backend output
 make down
 ```
 
-`make dev` layers `compose.dev.yaml` over the normal stack. Svelte changes hot-reload in the browser through Caddy. Changes to backend sources, migrations, or `docs/openapi.json` rebuild and restart the API automatically. The first backend build compiles every dependency and takes a few minutes; later rebuilds are incremental. If edits are not detected (some network or VM file systems), set `VITE_WATCH_POLLING=true` in `.env`. Run `make up` to return to the production-like images.
+`make dev` layers `compose.dev.yaml` over the normal stack. Svelte changes hot-reload in the browser through Caddy. Changes to backend sources, `Cargo.toml`/`Cargo.lock`, `build.rs`, migrations, or `docs/openapi.json` rebuild and restart the API automatically. The first backend build compiles every dependency and takes a few minutes; later rebuilds are incremental. If edits are not detected (some network or VM file systems), set `VITE_WATCH_POLLING=true` in `.env`. Run `make up` to return to the production-like images.
 
 ### Without Docker
 

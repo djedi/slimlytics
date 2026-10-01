@@ -27,7 +27,7 @@
 }`;
   const claudeHeadless = `claude -p "Summarize last week's traffic for shop.example.com \\
   with the Slimlytics MCP server. Compare it with the week before." \\
-  --allowedTools "mcp__slimlytics"`;
+  --allowedTools "mcp__slimlytics__list_sites,mcp__slimlytics__analytics_summary,mcp__slimlytics__dimension_report,mcp__slimlytics__marketing_brief"`;
   const claudeToken = `claude mcp add --transport http slimlytics ${mcpUrl} \\
   --header "Authorization: Bearer $SLIMLYTICS_TOKEN"`;
 
@@ -146,7 +146,8 @@ hermes mcp test slimlytics`;
           <CodeBlock code={claudeSettings} label="Claude Code permissions" lang="json" />
           <p>
             Run reports non-interactively in scripts or CI-style jobs with print mode. Authenticate
-            interactively once first; the stored OAuth token is reused.
+            interactively once first; the stored OAuth token is reused. List only the read-only tools
+            so an unattended run cannot call <code>setup_site</code>.
           </p>
           <CodeBlock code={claudeHeadless} label="Claude Code headless report" />
         </article>
