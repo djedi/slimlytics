@@ -181,7 +181,7 @@ command -v docker >/dev/null
 mkdir "$rollback"
 rsync -a --delete \
   --exclude .env --exclude backups --exclude .git --exclude '.deploy-lock*' \
-  --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist \
+  --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist --exclude /data/geoip \
   "$app/" "$rollback/"
 cd "$app"
 ./scripts/backup.sh
@@ -218,7 +218,7 @@ lock_token=$8
 [[ -f "$rollback/$sentinel" ]] && [[ "$(<"$rollback/$sentinel")" == "$sentinel_value" ]] || { echo 'Rollback snapshot sentinel is invalid.' >&2; exit 1; }
 rsync -a --delete \
   --exclude .env --exclude backups --exclude .git --exclude '.deploy-lock*' \
-  --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist \
+  --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist --exclude /data/geoip \
   "$rollback/" "$app/"
 cd "$app"
 compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
@@ -238,7 +238,7 @@ trap 'rollback 143' TERM
 printf 'Synchronizing release %s to production...\n' "$short_revision"
 rsync -az --delete-delay \
   --exclude .git --exclude .env --exclude backups --exclude '.deploy-lock*' \
-  --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist \
+  --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist --exclude /data/geoip \
   --exclude .DS_Store \
   ./ "$remote_host:$remote_app/"
 
@@ -258,6 +258,8 @@ lock_token=$7
 [[ -L "$app/$lock_name" && "$(readlink -- "$app/$lock_name")" == "$lock_token" ]] || { echo 'Deployment lock was lost or replaced before Compose application.' >&2; exit 1; }
 cd "$app"
 printf '%s\n' "$revision" > .deploy-revision
+# Refresh the monthly GeoIP database; a download failure must not block the release.
+./scripts/update-geoip.sh || echo 'Warning: GeoIP update failed; continuing with the existing database.' >&2
 compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
 "${compose[@]}" config -q
 "${compose[@]}" up -d --build --remove-orphans --wait --wait-timeout 240

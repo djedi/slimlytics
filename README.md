@@ -94,6 +94,14 @@ make down
 
 `make dev` layers `compose.dev.yaml` over the normal stack. Svelte changes hot-reload in the browser through Caddy. Changes to backend sources, `Cargo.toml`/`Cargo.lock`, `build.rs`, migrations, or `docs/openapi.json` rebuild and restart the API automatically. The first backend build compiles every dependency and takes a few minutes; later rebuilds are incremental. If edits are not detected (some network or VM file systems), set `VITE_WATCH_POLLING=true` in `.env`. Run `make up` to return to the production-like images.
 
+### Visitor locations
+
+`make geoip` downloads the free [DB-IP City Lite](https://db-ip.com/db/download/ip-to-city-lite) database (CC BY 4.0, no account) to `data/geoip/`, and Compose mounts it into the backend. Lookups happen locally, so visitor IPs are never sent to a third party. Production deploys refresh it monthly. Without the file, locations are simply disabled. Local requests arrive from private Docker addresses, which have no location; test against a deployment or with `cargo test --test enrichment -- --ignored` (set `GEOIP_TEST_DATABASE`). Trusted Cloudflare location headers take precedence when `TRUST_PROXY=true`.
+
+### Test locally with a real account
+
+`make sync-account` copies one account from a remote deployment into the local Docker database, so you can sign in locally with the same email and password and see the same sites and analytics. Configure `SYNC_SOURCE_SSH`, `SYNC_SOURCE_PATH`, `SYNC_SOURCE_COMPOSE_FILES`, `SYNC_EMAIL`, and optionally `SYNC_EVENT_DAYS` in `.env` (see `.env.example`). The remote is only read; locally, that account and its sites are replaced, including any local site with the same domain. Other users, API tokens, OAuth state, and Search Console connections are never copied, and report subscriptions arrive disabled. Both databases must be on the same migration.
+
 ### Without Docker
 
 Start PostgreSQL with Docker if desired, then run the API and Svelte dev server separately:

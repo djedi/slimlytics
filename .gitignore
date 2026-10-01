@@ -30,4 +30,6 @@ test-results/
 
 # Local data and backups
 postgres-data/
+/data/geoip/*
+!/data/geoip/.gitkeep
 backups/*.sql*

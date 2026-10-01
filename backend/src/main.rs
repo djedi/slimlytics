@@ -104,10 +104,17 @@ async fn main() -> Result<()> {
         .ok()
         .filter(|value| !value.trim().is_empty())
     {
-        state = state.with_geoip(
-            GeoIp::open(&path).with_context(|| format!("failed to open GeoIP database {path}"))?,
-        );
-        tracing::info!(%path, "GeoIP enrichment enabled");
+        // Compose points at the default download location; a fresh checkout has no file yet,
+        // so a missing file only disables enrichment. A present but unreadable file is fatal.
+        if std::path::Path::new(&path).exists() {
+            state = state.with_geoip(
+                GeoIp::open(&path)
+                    .with_context(|| format!("failed to open GeoIP database {path}"))?,
+            );
+            tracing::info!(%path, "GeoIP enrichment enabled");
+        } else {
+            tracing::warn!(%path, "GeoIP database not found; run `make geoip` to enable locations");
+        }
     }
     let optional_env = |name| env::var(name).ok().filter(|value| !value.trim().is_empty());
     let google_client_id = optional_env("GOOGLE_CLIENT_ID");
