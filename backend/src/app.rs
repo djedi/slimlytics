@@ -1,3 +1,7 @@
+#[path = "mcp_oauth.rs"]
+mod mcp_oauth;
+#[path = "tracking_setup.rs"]
+mod tracking_setup;
 use crate::{
     agent::{
         required_scope, validate_idempotency_key, validate_scopes, ANALYTICS_READ, SITES_READ,
@@ -70,6 +74,7 @@ pub struct StreamMessage {
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
+    public_url: Arc<String>,
     jwt_secret: Arc<String>,
     identity_secret: Arc<Vec<u8>>,
     limiter: RateLimiter,
@@ -87,6 +92,7 @@ impl AppState {
         let (stream_tx, _) = broadcast::channel(1024);
         Self {
             pool,
+            public_url: Arc::new("http://localhost:8080".into()),
             jwt_secret: Arc::new(jwt_secret),
             identity_secret: Arc::new(identity_secret),
             limiter: RateLimiter::new(120, Duration::from_secs(60)),
@@ -99,6 +105,25 @@ impl AppState {
             search_console: None,
             http: reqwest::Client::new(),
         }
+    }
+    pub fn with_public_url(mut self, value: &str) -> Result<Self, ApiError> {
+        let url =
+            Url::parse(value).map_err(|_| ApiError::BadRequest("invalid public URL".into()))?;
+        if url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || !(url.scheme() == "https"
+                || (url.scheme() == "http"
+                    && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"))))
+        {
+            return Err(ApiError::BadRequest(
+                "public URL must be an HTTPS origin (HTTP loopback allowed)".into(),
+            ));
+        }
+        self.public_url = Arc::new(url.as_str().trim_end_matches('/').into());
+        Ok(self)
     }
     pub fn with_internal_ips(mut self, ips: Vec<IpAddr>) -> Self {
         self.internal_ips = Arc::new(ips);
@@ -139,7 +164,7 @@ impl FromRequestParts<AppState> for CurrentUser {
         if value.starts_with("slyt_") {
             let token: Option<(Uuid, Vec<String>)> = sqlx::query_as(
                 "UPDATE api_tokens SET last_used_at=now()
-                 WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now()
+                 WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() AND oauth_resource IS NULL
                  RETURNING user_id,scopes",
             )
             .bind(hash_api_token(value))
@@ -211,10 +236,11 @@ impl FromRequestParts<AppState> for AgentUser {
         if value.starts_with("slyt_") {
             let row: Option<(Uuid, Uuid, Vec<String>)> = sqlx::query_as(
                 "UPDATE api_tokens SET last_used_at=now()
-                 WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now()
+                 WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() AND (oauth_resource IS NULL OR oauth_resource=$2)
                  RETURNING user_id,id,scopes",
             )
             .bind(hash_api_token(value))
+            .bind(format!("{}/api/mcp",state.public_url))
             .fetch_optional(&state.pool)
             .await?;
             let (user_id, api_token_id, scopes) = row.ok_or(ApiError::Unauthorized)?;
@@ -244,6 +270,7 @@ impl FromRequestParts<AppState> for AgentUser {
 
 pub fn app(state: AppState) -> Router {
     Router::new()
+        .merge(mcp_oauth::routes())
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api/openapi.json", get(openapi_document))
@@ -346,7 +373,15 @@ pub fn app(state: AppState) -> Router {
             "/api/integrations/search-console/callback",
             get(search_console_callback),
         )
-        .route("/api/mcp", post(mcp))
+        .route(
+            "/api/mcp",
+            post(mcp)
+                .get(|| async { StatusCode::METHOD_NOT_ALLOWED })
+                .layer(axum::middleware::map_response_with_state(
+                    state.clone(),
+                    mcp_challenge,
+                )),
+        )
         .route("/api/sites/{site_id}/visitors", get(list_visitors))
         .route(
             "/api/sites/{site_id}/visitors/{visitor_id}",
@@ -630,7 +665,7 @@ async fn ensure_site(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Json(mut input): Json<SiteInput>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<(StatusCode, Json<EnsureSiteResponse>), ApiError> {
     validate_site(&input)?;
     input.domain = canonical_domain(&input.domain)?;
     let mut tx = state.pool.begin().await?;
@@ -2566,6 +2601,8 @@ fn mcp_tool_result(data: Value, is_error: bool) -> Value {
 
 fn mcp_tools() -> Value {
     json!([
+      {"name":"setup_site","description":"Create or reuse a site by domain and return first-party tracker installation configuration. Install the returned proxy routes and script in the website, preserving consent and DNT.","inputSchema":{"type":"object","required":["name","domain"],"additionalProperties":false,"properties":{"name":{"type":"string"},"domain":{"type":"string"},"timezone":{"type":"string","default":"UTC"},"allowedOrigins":{"type":"array","items":{"type":"string"}},"retentionDays":{"type":"integer","default":365},"serverType":{"type":"string","enum":["caddy","nginx","apache"]}}},"annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true}},
+      {"name":"tracking_setup","description":"Get first-party script, reverse proxy configuration and verification URLs for an existing site.","inputSchema":{"type":"object","required":["siteId"],"additionalProperties":false,"properties":{"siteId":{"type":"string","format":"uuid"}}},"annotations":{"readOnlyHint":true}},
       {
         "name":"list_sites",
         "description":"List analytics sites available to this account. Does not expose collection write keys.",
@@ -2865,51 +2902,79 @@ async fn record_agent_audit(
     }
 }
 
+async fn mcp_challenge(State(state): State<AppState>, mut response: Response) -> Response {
+    if response.status() == StatusCode::UNAUTHORIZED {
+        if let Ok(value) = format!(
+            "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource/api/mcp\"",
+            state.public_url
+        )
+        .parse()
+        {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, value);
+        }
+    }
+    response
+}
 async fn mcp(
     State(state): State<AppState>,
     principal: AgentUser,
     headers: HeaderMap,
     Json(request): Json<McpRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
+    if headers.get(header::ORIGIN).is_some_and(|origin| {
+        origin
+            .to_str()
+            .map_or(true, |value| value != state.public_url.as_str())
+    }) {
+        return Err(ApiError::Forbidden);
+    }
     if request.jsonrpc != "2.0" {
         return Ok(Json(mcp_protocol_error(
             request.id,
             -32600,
             "Invalid JSON-RPC request",
-        )));
+        ))
+        .into_response());
     }
     if request.method == "initialize" {
+        let protocol = match request
+            .params
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+        {
+            Some("2025-03-26") => "2025-03-26",
+            Some("2025-06-18") => "2025-06-18",
+            _ => "2025-11-25",
+        };
         return Ok(Json(mcp_response(
             request.id,
             json!({
-              "protocolVersion":"2025-11-25",
+              "protocolVersion":protocol,
               "capabilities":{"tools":{"listChanged":false}},
               "serverInfo":{
                 "name":"slimlytics","title":"Slimlytics Analytics","version":"1.0.0",
                 "description":"Deterministic privacy-minded web and marketing analytics."
               },
-              "instructions":"Use explicit site IDs and inclusive date ranges. Report dataThrough and evidence with conclusions."
+              "instructions":"For website installation call setup_site with name, domain and optional serverType (caddy, nginx, apache). Install returned first-party proxy routes and snippet in the website, then verify both URLs and a page view. Preserve consent, DNT and GPC. Repeated setup reuses the domain. Use explicit site IDs and inclusive date ranges for analytics; report dataThrough and evidence."
             }),
-        )));
+        )).into_response());
     }
     if request.method == "notifications/initialized" {
-        return Ok(Json(Value::Null));
+        return Ok(StatusCode::ACCEPTED.into_response());
     }
     if request.method == "ping" {
-        return Ok(Json(mcp_response(request.id, json!({}))));
+        return Ok(Json(mcp_response(request.id, json!({}))).into_response());
     }
     if request.method == "tools/list" {
-        principal.require(ANALYTICS_READ)?;
-        return Ok(Json(mcp_response(request.id, json!({"tools":mcp_tools()}))));
+        return Ok(Json(mcp_response(request.id, json!({"tools":mcp_tools()}))).into_response());
     }
     if request.method != "tools/call" {
-        return Ok(Json(mcp_protocol_error(
-            request.id,
-            -32601,
-            "Method not found",
-        )));
+        return Ok(
+            Json(mcp_protocol_error(request.id, -32601, "Method not found")).into_response(),
+        );
     }
-    principal.require(ANALYTICS_READ)?;
     let name = request
         .params
         .get("name")
@@ -2923,52 +2988,112 @@ async fn mcp(
     let request_id = headers
         .get("x-request-id")
         .and_then(|value| value.to_str().ok());
-    let result: Result<(Option<Uuid>, Value), ApiError> = match name {
-        "list_sites" => {
-            principal.require(SITES_READ)?;
-            let sites: Vec<(Uuid, String, String, String)> = sqlx::query_as(
-                "SELECT s.id,s.name,s.domain,s.timezone FROM sites s
+    let scope = match name {
+        "setup_site" => "sites:write",
+        "tracking_setup" | "list_sites" => SITES_READ,
+        _ => ANALYTICS_READ,
+    };
+    principal.require(scope)?;
+    let result: Result<(Option<Uuid>, Value), ApiError> = async {
+        match name {
+            "setup_site" => {
+                if arguments.get("serverType").is_some_and(|value| {
+                    !matches!(value.as_str(), Some("caddy" | "nginx" | "apache"))
+                }) {
+                    return Err(ApiError::BadRequest("invalid serverType".into()));
+                }
+                let input: SiteInput = serde_json::from_value(arguments.clone())
+                    .map_err(|_| ApiError::BadRequest("invalid site input".into()))?;
+                let (_, Json(ensured)) = ensure_site(
+                    State(state.clone()),
+                    CurrentUser(principal.user_id),
+                    Json(input),
+                )
+                .await?;
+                let mut site = ensured.site;
+                require_site(&state.pool, principal.user_id, site.id, true).await?;
+                if let Some(server) = arguments.get("serverType").and_then(Value::as_str) {
+                    let Json(updated) = update_anti_adblock(
+                        State(state.clone()),
+                        CurrentUser(principal.user_id),
+                        Path(site.id),
+                        Json(AntiAdblockInput {
+                            server_type: server.into(),
+                            js_path: site.anti_adblock_js_path.clone(),
+                            beacon_path: site.anti_adblock_beacon_path.clone(),
+                        }),
+                    )
+                    .await?;
+                    site = updated;
+                }
+                let setup = tracking_setup::tracking_setup(&site, &state.public_url)
+                    .map_err(|_| ApiError::Internal)?;
+                Ok((
+                    Some(site.id),
+                    json!({"created":ensured.created,"setup":setup}),
+                ))
+            }
+            "tracking_setup" => {
+                let id = Uuid::parse_str(mcp_argument(&arguments, "siteId")?)
+                    .map_err(|_| ApiError::BadRequest("invalid siteId".into()))?;
+                require_site(&state.pool, principal.user_id, id, false).await?;
+                let site = fetch_site(&state.pool, id).await?;
+                Ok((
+                    Some(id),
+                    serde_json::to_value(
+                        tracking_setup::tracking_setup(&site, &state.public_url)
+                            .map_err(|_| ApiError::Internal)?,
+                    )
+                    .map_err(|_| ApiError::Internal)?,
+                ))
+            }
+            "list_sites" => {
+                principal.require(SITES_READ)?;
+                let sites: Vec<(Uuid, String, String, String)> = sqlx::query_as(
+                    "SELECT s.id,s.name,s.domain,s.timezone FROM sites s
                  JOIN site_memberships m ON m.site_id=s.id
                  WHERE m.user_id=$1 ORDER BY s.created_at",
-            )
-            .bind(principal.user_id)
-            .fetch_all(&state.pool)
-            .await?;
-            Ok((
-                None,
-                json!({"sites":sites.into_iter().map(|row|json!({
+                )
+                .bind(principal.user_id)
+                .fetch_all(&state.pool)
+                .await?;
+                Ok((
+                    None,
+                    json!({"sites":sites.into_iter().map(|row|json!({
                   "id":row.0,"name":row.1,"domain":row.2,"timezone":row.3
                 })).collect::<Vec<_>>(),"generatedAt":Utc::now()}),
-            ))
-        }
-        "analytics_summary" => mcp_analytics_summary(&state, principal.user_id, &arguments)
-            .await
-            .map(|(site, value)| (Some(site), value)),
-        "dimension_report" => mcp_dimension_report(&state, principal.user_id, &arguments)
-            .await
-            .map(|(site, value)| (Some(site), value)),
-        "search_console_report" => {
-            principal.require("integrations:read")?;
-            mcp_search_console_report(&state, principal.user_id, &arguments)
+                ))
+            }
+            "analytics_summary" => mcp_analytics_summary(&state, principal.user_id, &arguments)
                 .await
-                .map(|(site, value)| (Some(site), value))
-        }
-        "marketing_brief" => {
-            let site = Uuid::parse_str(mcp_argument(&arguments, "siteId")?)
-                .map_err(|_| ApiError::BadRequest("invalid siteId".into()))?;
-            require_site(&state.pool, principal.user_id, site, false).await?;
-            let days = arguments
-                .get("days")
-                .and_then(Value::as_i64)
-                .unwrap_or(7)
-                .clamp(1, 90);
-            build_marketing_brief(&state.pool, site, days)
+                .map(|(site, value)| (Some(site), value)),
+            "dimension_report" => mcp_dimension_report(&state, principal.user_id, &arguments)
                 .await
-                .map(|value| (Some(site), value))
-                .map_err(ApiError::Database)
+                .map(|(site, value)| (Some(site), value)),
+            "search_console_report" => {
+                principal.require("integrations:read")?;
+                mcp_search_console_report(&state, principal.user_id, &arguments)
+                    .await
+                    .map(|(site, value)| (Some(site), value))
+            }
+            "marketing_brief" => {
+                let site = Uuid::parse_str(mcp_argument(&arguments, "siteId")?)
+                    .map_err(|_| ApiError::BadRequest("invalid siteId".into()))?;
+                require_site(&state.pool, principal.user_id, site, false).await?;
+                let days = arguments
+                    .get("days")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(7)
+                    .clamp(1, 90);
+                build_marketing_brief(&state.pool, site, days)
+                    .await
+                    .map(|value| (Some(site), value))
+                    .map_err(ApiError::Database)
+            }
+            _ => Err(ApiError::BadRequest("unknown tool".into())),
         }
-        _ => Err(ApiError::BadRequest("unknown tool".into())),
-    };
+    }
+    .await;
     let response = match result {
         Ok((site, data)) => {
             record_agent_audit(
@@ -2985,7 +3110,7 @@ async fn mcp(
             mcp_tool_result(json!({"error":error.to_string()}), true)
         }
     };
-    Ok(Json(mcp_response(request.id, response)))
+    Ok(Json(mcp_response(request.id, response)).into_response())
 }
 async fn visitor_timeline(
     State(s): State<AppState>,
@@ -3186,7 +3311,7 @@ async fn stream(
     // EventSource cannot set Authorization; accept session JWTs or personal API tokens.
     let u = if token.starts_with("slyt_") {
         sqlx::query_scalar(
-            "UPDATE api_tokens SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() RETURNING user_id",
+            "UPDATE api_tokens SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() AND oauth_resource IS NULL RETURNING user_id",
         )
         .bind(hash_api_token(token))
         .fetch_optional(&s.pool)

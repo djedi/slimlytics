@@ -96,7 +96,10 @@ async fn main() -> Result<()> {
     let report_identity_secret = identity_secret.as_bytes().to_vec();
     let mut state = AppState::new(pool.clone(), jwt_secret, identity_secret.into_bytes())
         .with_access_token_ttl(access_token_ttl_seconds)
-        .with_trust_proxy(trust_proxy);
+        .with_trust_proxy(trust_proxy)
+        .with_public_url(
+            &env::var("SLIMLYTICS_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into()),
+        )?;
     if let Some(path) = env::var("GEOIP_DATABASE_PATH")
         .ok()
         .filter(|value| !value.trim().is_empty())

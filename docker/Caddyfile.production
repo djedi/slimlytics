@@ -22,7 +22,7 @@
 		reverse_proxy backend:8080
 	}
 
-	@backend path /api/* /health /ready
+	@backend path /api/* /.well-known/oauth-protected-resource* /.well-known/oauth-authorization-server /health /ready
 	handle @backend {
 		reverse_proxy backend:8080 {
 			flush_interval -1

@@ -1,6 +1,6 @@
 # Agent integration
 
-Slimlytics exposes the same deterministic analytics semantics through REST and MCP. Agents should use personal API tokens rather than session JWTs.
+Slimlytics exposes the same deterministic analytics semantics through REST and MCP. For browser OAuth login and automatic website installation, start with [MCP.md](MCP.md). Agents can also use scoped personal API tokens.
 
 ## Token scopes
 
@@ -25,8 +25,10 @@ Authorization: Bearer slyt_...
 Content-Type: application/json
 ```
 
-Slimlytics implements JSON-RPC 2.0 lifecycle and tools for the stable MCP `2025-11-25` revision. It is stateless and does not open a server-to-client SSE stream. The available tools are:
+Slimlytics implements JSON-RPC 2.0 lifecycle and tools for the MCP `2025-03-26`, `2025-06-18`, and `2025-11-25` revisions. It is stateless and does not open a server-to-client SSE stream. The available tools are:
 
+- `setup_site` — create or reuse a site and return first-party installation artifacts
+- `tracking_setup` — retrieve an existing site installation
 - `list_sites`
 - `analytics_summary`
 - `dimension_report`

@@ -278,3 +278,62 @@ async fn scalar_ui_redirects_to_the_locally_bundled_reference() {
     let html = String::from_utf8(body.to_vec()).unwrap();
     assert!(!html.contains("cdn.jsdelivr.net"));
 }
+
+#[tokio::test]
+async fn mcp_discovers_oauth_without_database() {
+    let response = app(state())
+        .oneshot(
+            Request::get("/.well-known/oauth-protected-resource/api/mcp")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
+    assert!(body["resource"].as_str().unwrap().ends_with("/api/mcp"));
+    let response = app(state())
+        .oneshot(
+            Request::post("/api/mcp")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    assert!(response.headers()["www-authenticate"]
+        .to_str()
+        .unwrap()
+        .contains("resource_metadata"));
+}
+
+#[tokio::test]
+async fn mcp_negotiates_client_revision_and_accepts_notifications() {
+    let token = slimlytics_backend::auth::issue_token(
+        uuid::Uuid::new_v4(),
+        "test-secret-at-least-32-characters",
+        3600,
+    )
+    .unwrap();
+    let response = app(state()).oneshot(Request::post("/api/mcp").header("authorization",format!("Bearer {token}")).header("content-type","application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)).unwrap()).await.unwrap();
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
+    assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
+    let response = app(state())
+        .oneshot(
+            Request::post("/api/mcp")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 202);
+}

@@ -2,7 +2,7 @@
 
 Slimlytics is a lightweight, privacy-minded, self-hostable web analytics platform with real-time traffic visibility. It combines a Rust/Axum ingestion and reporting API, PostgreSQL, a Svelte dashboard, and a small first-party browser tracker.
 
-Marketing workflows include journeys, sequential funnels, attribution and revenue, content reporting, anomalies, AI referrals/crawlers, and an optional Google Search Console sync. Agents can use scoped personal tokens through the OpenAPI REST contract or the MCP endpoint described in [docs/AGENT_INTEGRATION.md](docs/AGENT_INTEGRATION.md).
+Marketing workflows include journeys, sequential funnels, attribution and revenue, content reporting, anomalies, AI referrals/crawlers, and an optional Google Search Console sync. Agents can connect through browser OAuth, create sites, and install first-party tracking with the MCP server. See [the agent setup guide](docs/MCP.md); scoped personal tokens and REST are also supported.
 
 This repository is a ground-up rewrite. It does not replace or rewrite the history of the older `djedi/slimlytics` or `djedi/go_slimlytics` repositories.
 
