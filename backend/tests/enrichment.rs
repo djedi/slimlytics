@@ -36,3 +36,21 @@ fn drops_invalid_edge_location_values() {
 
     assert_eq!(location_from_headers(&headers, true), None);
 }
+
+/// Verifies a real downloaded database (`make geoip`) resolves public addresses. DB-IP's
+/// schema matches GeoIP2 City, which is what the reader decodes.
+#[test]
+#[ignore = "requires GEOIP_TEST_DATABASE pointing to a DB-IP or MaxMind City .mmdb file"]
+fn resolves_public_addresses_from_a_downloaded_city_database() {
+    let path = std::env::var("GEOIP_TEST_DATABASE").expect("GEOIP_TEST_DATABASE required");
+    let geoip = slimlytics_backend::enrichment::GeoIp::open(path).unwrap();
+    let google = geoip.lookup("8.8.8.8".parse().unwrap()).unwrap();
+    assert_eq!(google.country_code.as_deref(), Some("US"));
+    assert_eq!(google.continent.as_deref(), Some("NA"));
+    let cloudflare = geoip.lookup("1.1.1.1".parse().unwrap());
+    assert!(cloudflare.is_some());
+    assert!(
+        geoip.lookup("10.0.0.1".parse().unwrap()).is_none(),
+        "private ranges have no location"
+    );
+}

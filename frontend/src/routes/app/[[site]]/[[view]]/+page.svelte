@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { env } from '$env/dynamic/public';
   import {
     Activity,
+    ArrowRight,
     BarChart3,
     Bell,
     CalendarDays,
@@ -23,10 +25,13 @@
     Moon,
     Pause,
     Play,
+    Layers,
     Plus,
+    Radio,
     Search,
     Send,
     Settings,
+    Timer,
     Smartphone,
     MapPin,
     Sun,
@@ -54,28 +59,18 @@
     type Site,
     type Visitor
   } from '$lib/api';
-  import { applyTheme, duration, sparklinePoints, type Theme } from '$lib/ui';
+  import { applyTheme, compactNumber, duration, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
+  import { appHref, parseDays, parseView, type SiteView } from '$lib/app-routes';
+  import ChangeBadge from '$lib/components/rollup/ChangeBadge.svelte';
+  import SiteCard from '$lib/components/rollup/SiteCard.svelte';
   import AntiAdblockSettingsPanel from '$lib/components/AntiAdblockSettings.svelte';
   import ReportTable from '$lib/components/ReportTable.svelte';
-  import WorldMap from '$lib/components/WorldMap.svelte';
+  import TrafficChart from '$lib/components/TrafficChart.svelte';
+  import InsightsView from '$lib/components/insights/InsightsView.svelte';
+  import SpyView, { type StreamState } from '$lib/components/spy/SpyView.svelte';
+  import VisitorDrawer from '$lib/components/spy/VisitorDrawer.svelte';
 
-  type View =
-    | 'rollup'
-    | 'overview'
-    | 'insights'
-    | 'spy'
-    | 'pages'
-    | 'referrers'
-    | 'countries'
-    | 'regions'
-    | 'cities'
-    | 'devices'
-    | 'browsers'
-    | 'operating-systems'
-    | 'campaigns'
-    | 'visitors'
-    | 'goals'
-    | 'settings';
+  type View = 'rollup' | SiteView;
   const demo = env.PUBLIC_DEMO_MODE === 'true';
   const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, demo);
   // An expired or revoked session must clear the stored token, or /login would bounce straight back here.
@@ -84,7 +79,7 @@
     source?.close();
     void goto('/login');
   };
-  const nav: Array<{ id: View; label: string; icon: typeof Activity }> = [
+  const nav: Array<{ id: SiteView; label: string; icon: typeof Activity }> = [
     { id: 'overview', label: 'Overview', icon: Gauge },
     { id: 'insights', label: 'Insights', icon: BarChart3 },
     { id: 'spy', label: 'Spy', icon: Eye },
@@ -102,6 +97,8 @@
     { id: 'settings', label: 'Settings', icon: Settings }
   ];
   let ready = $state(false);
+  // Routing waits for the first site list so /app/{siteId} can resolve to a loaded site.
+  let sitesLoaded = $state(false);
   let sites = $state<Site[]>([]);
   let site = $state<Site | null>(null);
   let view = $state<View>('rollup');
@@ -121,6 +118,8 @@
   let anomalies = $state<Anomaly[]>([]);
   let funnels = $state<Funnel[]>([]);
   let funnelReports = $state<FunnelReport[]>([]);
+  type InsightSection = 'attribution' | 'journeys' | 'anomalies' | 'funnels' | 'reports';
+  let insightFailures = $state(new Set<InsightSection>());
   let landingPages = $state<ReportRow[]>([]);
   let exitPages = $state<ReportRow[]>([]);
   let sources = $state<ReportRow[]>([]);
@@ -136,6 +135,7 @@
   let briefAnomaliesOnly = $state(false);
   let newSigningSecret = $state('');
   let paused = $state(false);
+  let streamState = $state<StreamState>('connecting');
   let spyFilter = $state('');
   let selectedVisitor = $state<Visitor | null>(null);
   let source: EventSource | null = null;
@@ -177,6 +177,57 @@
     };
   });
 
+  // The URL is the source of truth for the site, panel, and date range.
+  // A message that must survive the redirect it triggers (e.g. an unknown site ID).
+  let routeNotice = '';
+  const siteParam = $derived(page.params.site);
+  const viewParam = $derived(page.params.view);
+  const daysParam = $derived(parseDays(page.url.searchParams.get('days')));
+  $effect(() => {
+    const route = { siteId: siteParam, segment: viewParam, nextDays: daysParam };
+    if (!sitesLoaded) return;
+    untrack(() => void applyRoute(route));
+  });
+
+  async function applyRoute({
+    siteId,
+    segment,
+    nextDays
+  }: {
+    siteId: string | undefined;
+    segment: string | undefined;
+    nextDays: number;
+  }) {
+    const daysChanged = nextDays !== days;
+    days = nextDays;
+    menuOpen = false;
+    error = routeNotice;
+    routeNotice = '';
+    if (!siteId) {
+      // Search Console's OAuth callback returns to /app?site={id}; send it to that site's settings.
+      const returning = page.url.searchParams.get('site');
+      if (returning) return void goto(appHref(returning, 'settings', days), { replaceState: true });
+      source?.close();
+      site = null;
+      view = 'rollup';
+      if (daysChanged) await loadSites();
+      return;
+    }
+    const next = sites.find((item) => item.id === siteId);
+    const nextView = parseView(segment);
+    if (!next) {
+      routeNotice = 'That site was not found in your workspace.';
+      return void goto(appHref(null, null, days), { replaceState: true });
+    }
+    if (!nextView) return void goto(appHref(siteId, 'overview', days), { replaceState: true });
+    site = next;
+    view = nextView;
+    await loadView();
+  }
+  function changeDays(next: number) {
+    void goto(appHref(site?.id, site ? (view as SiteView) : null, next), { keepFocus: true });
+  }
+
   function logout() {
     localStorage.removeItem('slimlytics_token');
     source?.close();
@@ -191,6 +242,7 @@
       error = reason instanceof Error ? reason.message : 'Could not load sites.';
     } finally {
       loading = false;
+      sitesLoaded = true;
     }
   }
   async function refreshSitesQuietly() {
@@ -204,17 +256,6 @@
         }
       })
     );
-  }
-  async function selectSite(next: Site) {
-    site = next;
-    view = 'overview';
-    menuOpen = false;
-    await loadView();
-  }
-  async function setView(next: View) {
-    view = next;
-    menuOpen = false;
-    await loadView();
   }
   async function loadView() {
     if (!site) return;
@@ -245,42 +286,38 @@
         item.id === site?.id ? { ...item, overview: nextOverview } : item
       );
     } else if (view === 'insights') {
-      const [
-        nextJourneys,
-        nextAttribution,
-        nextAnomalies,
-        nextFunnels,
-        landing,
-        exits,
-        sourceRows,
-        contentRows,
-        referrals,
-        crawlers
-      ] = await Promise.all([
-        api.journeys(site.id, days),
-        api.attribution(site.id, days),
-        api.anomalies(site.id, days),
-        api.funnels(site.id),
-        api.report(site.id, 'landing-pages', days),
-        api.report(site.id, 'exit-pages', days),
-        api.report(site.id, 'sources', days),
-        api.report(site.id, 'content', days),
-        api.report(site.id, 'ai-referrers', days),
-        api.report(site.id, 'ai-crawlers', days)
-      ]);
-      journeys = nextJourneys;
-      attribution = nextAttribution;
-      anomalies = nextAnomalies;
-      funnels = nextFunnels;
-      landingPages = landing;
-      exitPages = exits;
-      sources = sourceRows;
-      content = contentRows;
-      aiReferrers = referrals;
-      aiCrawlers = crawlers;
-      funnelReports = await Promise.all(
-        nextFunnels.map((funnel) => api.funnelReport(site!.id, funnel.id, days))
-      );
+      // Load sections independently so one failing query cannot blank the whole page.
+      const id = site.id;
+      const [journeysResult, attributionResult, anomaliesResult, funnelsResult, reportsResult] =
+        await Promise.allSettled([
+          api.journeys(id, days),
+          api.attribution(id, days),
+          api.anomalies(id, days),
+          api.funnels(id).then(async (list) => ({
+            list,
+            reports: await Promise.all(list.map((funnel) => api.funnelReport(id, funnel.id, days)))
+          })),
+          Promise.all(
+            ['landing-pages', 'exit-pages', 'sources', 'content', 'ai-referrers', 'ai-crawlers'].map(
+              (type) => api.report(id, type, days)
+            )
+          )
+        ]);
+      const failed = new Set<InsightSection>();
+      if (journeysResult.status === 'fulfilled') journeys = journeysResult.value;
+      else failed.add('journeys');
+      if (attributionResult.status === 'fulfilled') attribution = attributionResult.value;
+      else failed.add('attribution');
+      if (anomaliesResult.status === 'fulfilled') anomalies = anomaliesResult.value;
+      else failed.add('anomalies');
+      if (funnelsResult.status === 'fulfilled') {
+        funnels = funnelsResult.value.list;
+        funnelReports = funnelsResult.value.reports;
+      } else failed.add('funnels');
+      if (reportsResult.status === 'fulfilled')
+        [landingPages, exitPages, sources, content, aiReferrers, aiCrawlers] = reportsResult.value;
+      else failed.add('reports');
+      insightFailures = failed;
     } else if (
       [
         'pages',
@@ -309,28 +346,49 @@
       ]);
   }
   function connectSpy() {
-    if (!site || paused || typeof EventSource === 'undefined' || demo) return;
+    if (!site || paused || demo || typeof EventSource === 'undefined') {
+      streamState = paused ? 'paused' : 'offline';
+      return;
+    }
     source?.close();
+    streamState = 'connecting';
     source = new EventSource(api.streamUrl(site.id, token));
     const receive = ({ data }: MessageEvent<string>) => {
       try {
         const item = JSON.parse(data) as LiveEvent;
+        // The stream replays recent events on connect; skip ones already loaded.
+        if (events.some((existing) => existing.id === item.id)) return;
         events = [item, ...events].slice(0, 100);
       } catch {
         /* malformed event */
       }
     };
+    source.onopen = () => (streamState = 'live');
     source.onmessage = receive;
     source.addEventListener('event', receive as EventListener);
     // Browsers reconnect EventSource automatically; only tear down when we mean to.
     source.onerror = () => {
       if (paused || view !== 'spy') source?.close();
+      else streamState = 'reconnecting';
     };
+  }
+  // Visitors who arrived after the page loaded aren't in `visitors` yet; describe them
+  // from their latest streamed event instead.
+  function selectStreamVisitor(id: string) {
+    const known = visitors.find((visitor) => visitor.id === id);
+    const latest = events.find((item) => item.visitorId === id);
+    selectedVisitor =
+      known ??
+      (latest
+        ? { id, country: latest.country ?? '', city: latest.city, page: latest.page, lastSeen: latest.timestamp }
+        : null);
   }
   function toggleSpy() {
     paused = !paused;
-    if (paused) source?.close();
-    else connectSpy();
+    if (paused) {
+      source?.close();
+      streamState = 'paused';
+    } else connectSpy();
   }
   function updateTheme(next: Theme) {
     theme = next;
@@ -422,7 +480,7 @@
       newSite = false;
       siteName = '';
       siteDomain = '';
-      await selectSite(created);
+      await goto(appHref(created.id, 'overview', days));
     } catch (reason) {
       siteError = reason instanceof Error ? reason.message : 'Could not create site.';
     }
@@ -441,76 +499,65 @@
       error = reason instanceof Error ? reason.message : 'Could not export events.';
     }
   }
-  const filteredEvents = $derived(
-    events.filter((item) =>
-      `${item.page} ${item.country} ${item.city} ${item.type}`
-        .toLowerCase()
-        .includes(spyFilter.toLowerCase())
-    )
-  );
-  const mapVisitors = $derived(
-    (visitors.length
-      ? visitors
-      : [{ country: 'United States' }, { country: 'Germany' }, { country: 'Japan' }]
-    )
-      .slice(0, 6)
-      .map((item, index) => ({
-        country: item.country,
-        code: item.country.slice(0, 2).toUpperCase(),
-        x: [25, 52, 83, 47, 69, 32][index],
-        y: [37, 31, 42, 60, 65, 73][index],
-        count: [12, 7, 5, 4, 3, 2][index]
-      }))
+  let siteSort = $state<'visitors' | 'change' | 'name'>('visitors');
+  const totals = $derived(portfolioTotals(sites.map((item) => item.overview)));
+  const activeSites = $derived(sites.filter((item) => (item.overview?.visitors ?? 0) > 0).length);
+  const sortedSites = $derived(
+    [...sites].sort((a, b) => {
+      if (siteSort === 'name') return a.name.localeCompare(b.name);
+      if (siteSort === 'change')
+        return Math.abs(b.overview?.change ?? 0) - Math.abs(a.overview?.change ?? 0);
+      return (b.overview?.visitors ?? 0) - (a.overview?.visitors ?? 0) || a.name.localeCompare(b.name);
+    })
   );
 </script>
 
 <svelte:head>
-  <title>Dashboard · Slimlytics</title>
+  <title
+    >{site
+      ? `${nav.find((item) => item.id === view)?.label ?? 'Overview'} · ${site.domain}`
+      : 'All sites'} · Slimlytics</title
+  >
 </svelte:head>
 
 {#if ready}
   <div class="app-shell">
     <aside class:open={menuOpen} aria-label="Primary navigation">
       <div class="sidebar-brand">
-        <button
-          class="brand"
-          onclick={() => {
-            site = null;
-            view = 'rollup';
-          }}
-        >
-          <span class="brand-mark"><BarChart3 size={20} /></span><strong>Slimlytics</strong>
-        </button>
+        <a class="brand" href={appHref(null, null, days)}>
+          <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span><strong>Slimlytics</strong>
+        </a>
         <button class="icon-button close-menu" aria-label="Close menu" onclick={() => (menuOpen = false)}
           ><X /></button
         >
       </div>
-      <button
-        class="site-picker"
-        onclick={() => {
-          site = null;
-          view = 'rollup';
-        }}
-      >
+      <a class="site-picker" href={appHref(null, null, days)} aria-label="All sites">
         <span class="site-avatar">{site ? site.name.slice(0, 2).toUpperCase() : 'ALL'}</span>
         <span
           ><small>{site ? 'Current site' : 'Workspace'}</small><strong
             >{site?.name ?? 'All sites'}</strong
           ></span
-        ><ChevronDown size={15} />
-      </button>
+        ><ChevronDown size={15} aria-hidden="true" />
+      </a>
       {#if site}
         <nav>
           {#each nav as item}
-            <button class:active={view === item.id} onclick={() => void setView(item.id)}
-              ><item.icon size={17} /><span>{item.label}</span>{#if item.id === 'spy'}<i
+            <a
+              class:active={view === item.id}
+              href={appHref(site.id, item.id, days)}
+              aria-current={view === item.id ? 'page' : undefined}
+              ><item.icon size={17} aria-hidden="true" /><span>{item.label}</span>{#if item.id === 'spy'}<i
                 ></i
-              >{/if}</button
+              >{/if}</a
             >
           {/each}
         </nav>
       {:else}
-        <nav><button class="active"><LayoutDashboard size={17} />All sites</button></nav>
+        <nav>
+          <a class="active" href={appHref(null, null, days)} aria-current="page"
+            ><LayoutDashboard size={17} aria-hidden="true" />All sites</a
+          >
+        </nav>
       {/if}
       <div class="sidebar-foot">
         <div class="online">
@@ -519,6 +566,9 @@
           now
         </div>
         <button onclick={logout}><LogOut size={16} />Sign out</button>
+        <a class="geo-credit" href="https://db-ip.com" target="_blank" rel="noopener noreferrer"
+          >IP geolocation by DB-IP</a
+        >
       </div>
     </aside>
     {#if menuOpen}
@@ -536,7 +586,7 @@
         <div class="top-actions">
           <label class="date-picker"
             ><CalendarDays size={16} /><span class="sr-only">Date range</span
-            ><select bind:value={days} onchange={() => void loadView()}
+            ><select value={days} onchange={(event) => changeDays(Number(event.currentTarget.value))}
               ><option value={7}>Last 7 days</option><option value={28}>Last 28 days</option
               ><option value={90}>Last 90 days</option></select
             ></label
@@ -546,7 +596,7 @@
       </header>
       {#if error}
         <div class="alert page-alert" role="alert">
-          <span>{error}</span><button onclick={() => void loadView()}>Retry</button>
+          <span>{error}</span><button onclick={() => void (site ? loadView() : loadSites())}>Retry</button>
         </div>
       {/if}
       {#if loading}
@@ -561,59 +611,47 @@
           <button class="primary" onclick={() => (newSite = true)}><Plus size={16} /> Add site</button>
         </section>
         {#if sites.length}
-          <div class="site-grid">
-            {#each sites as item}
-              <button class="site-card" onclick={() => void selectSite(item)}
-                ><div class="card-head">
-                  <div>
-                    <span class="site-avatar">{item.name.slice(0, 2).toUpperCase()}</span><span
-                      ><strong>{item.name}</strong><small>{item.domain}</small></span
-                    >
-                  </div>
-                  <div class="live"><i></i>{item.overview?.currentOnline ?? 0} live</div>
-                </div>
-                <svg
-                  class="sparkline"
-                  viewBox="0 0 300 70"
-                  aria-label={`${item.name} 28-day traffic trend`}
-                  role="img"
-                  ><defs
-                    ><linearGradient id={`fade-${item.id}`} x1="0" y1="0" x2="0" y2="1"
-                      ><stop offset="0" stop-color="var(--accent)" stop-opacity=".28" /><stop
-                        offset="1"
-                        stop-color="var(--accent)"
-                        stop-opacity="0"
-                      /></linearGradient
-                    ></defs
-                  ><polygon
-                    points={`0,70 ${sparklinePoints(item.overview?.trend.map((p) => p.visitors) ?? [], 300, 58)} 300,70`}
-                    fill={`url(#fade-${item.id})`}
-                  /><polyline
-                    points={sparklinePoints(
-                      item.overview?.trend.map((p) => p.visitors) ?? [],
-                      300,
-                      58
-                    )}
-                  /></svg
-                ><div class="metrics compact">
-                  <div>
-                    <small>Visitors</small><strong>{item.overview?.visitors.toLocaleString()}</strong>
-                  </div>
-                  <div>
-                    <small>Page views</small><strong
-                      >{item.overview?.pageViews.toLocaleString()}</strong
-                    >
-                  </div>
-                  <div>
-                    <small>Change</small><strong
-                      class:negative={(item.overview?.change ?? 0) < 0}
-                      class="positive"
-                      >{(item.overview?.change ?? 0) > 0 ? '+' : ''}{item.overview?.change}%</strong
-                    >
-                  </div>
-                </div></button
-              >
+          <section class="portfolio-summary" aria-label="Workspace totals">
+            <div>
+              <span class="label"><Users size={15} aria-hidden="true" /> Visitors</span>
+              <strong>{compactNumber(totals.visitors)}</strong>
+              <ChangeBadge change={totals.change} />
+            </div>
+            <div>
+              <span class="label"><FileText size={15} aria-hidden="true" /> Page views</span>
+              <strong>{compactNumber(totals.pageViews)}</strong>
+              <small>{totals.visitors ? (totals.pageViews / totals.visitors).toFixed(1) : '0'} per visitor</small>
+            </div>
+            <div>
+              <span class="label"><Radio size={15} aria-hidden="true" /> Online now</span>
+              <strong>{totals.online}</strong>
+              <small>across {sites.length} {sites.length === 1 ? 'site' : 'sites'}</small>
+            </div>
+            <div>
+              <span class="label"><Layers size={15} aria-hidden="true" /> Active sites</span>
+              <strong>{activeSites}<span class="of">/{sites.length}</span></strong>
+              <small>with visits in {days} days</small>
+            </div>
+          </section>
+          <div class="rollup-toolbar">
+            <h3>Sites</h3>
+            <label class="sort-picker"
+              ><span>Sort by</span><select bind:value={siteSort}
+                ><option value="visitors">Most visitors</option><option value="change"
+                  >Biggest change</option
+                ><option value="name">Name</option></select
+              ></label
+            >
+          </div>
+          <div class="site-grid rollup-grid">
+            {#each sortedSites as item (item.id)}
+              <SiteCard site={item} {days} />
             {/each}
+            <button class="add-site-card" onclick={() => (newSite = true)}>
+              <span><Plus size={20} aria-hidden="true" /></span>
+              <strong>Add a site</strong>
+              <small>Start measuring another property</small>
+            </button>
           </div>
         {:else}
           <div class="empty large">
@@ -655,17 +693,44 @@
           >
         {/if}
       {:else if view === 'overview' && overview}
-        <section class="metric-grid">
-          {#each [{ l: 'Visitors', v: overview.visitors.toLocaleString(), i: Users }, { l: 'Sessions', v: overview.sessions.toLocaleString(), i: Activity }, { l: 'Page views', v: overview.pageViews.toLocaleString(), i: FileText }, { l: 'Bounce rate', v: `${overview.bounceRate}%`, i: Gauge }, { l: 'Avg. duration', v: duration(overview.avgDuration), i: Activity }, { l: 'Online now', v: overview.currentOnline, i: CircleDot }] as metric}
-            <article class="metric-card">
-              <div>
-                <small>{metric.l}</small><metric.i size={17} />
-              </div>
-              <strong>{metric.v}</strong><span class:negative={overview.change < 0}
-                >{overview.change > 0 ? '+' : ''}{overview.change}% <small>vs previous</small></span
-              >
-            </article>
-          {/each}
+        <section class="metric-grid overview-metrics" aria-label="Key metrics">
+          <article class="metric-card featured">
+            <div><small>Visitors</small><Users size={17} aria-hidden="true" /></div>
+            <strong>{overview.visitors.toLocaleString()}</strong>
+            <ChangeBadge change={overview.change} />
+          </article>
+          <article class="metric-card">
+            <div><small>Sessions</small><Activity size={17} aria-hidden="true" /></div>
+            <strong>{overview.sessions.toLocaleString()}</strong>
+            <span class="metric-note"
+              >{overview.visitors ? (overview.sessions / overview.visitors).toFixed(1) : '0'} per visitor</span
+            >
+          </article>
+          <article class="metric-card">
+            <div><small>Page views</small><FileText size={17} aria-hidden="true" /></div>
+            <strong>{overview.pageViews.toLocaleString()}</strong>
+            <span class="metric-note"
+              >{overview.sessions ? (overview.pageViews / overview.sessions).toFixed(1) : '0'} per session</span
+            >
+          </article>
+          <article class="metric-card">
+            <div><small>Bounce rate</small><Gauge size={17} aria-hidden="true" /></div>
+            <strong>{Math.round(overview.bounceRate)}%</strong>
+            <span class="metric-meter" aria-hidden="true"><i style={`width:${Math.min(100, overview.bounceRate)}%`}></i></span>
+            <span class="metric-note">single-page sessions</span>
+          </article>
+          <article class="metric-card">
+            <div><small>Avg. visit</small><Timer size={17} aria-hidden="true" /></div>
+            <strong>{duration(overview.avgDuration)}</strong>
+            <span class="metric-note">per session</span>
+          </article>
+          <article class="metric-card" class:live-now={overview.currentOnline > 0}>
+            <div><small>Online now</small><Radio size={17} aria-hidden="true" /></div>
+            <strong>{overview.currentOnline}</strong>
+            <a class="metric-note metric-link" href={appHref(site.id, 'spy', days)}
+              >{overview.currentOnline ? 'Watch live' : 'Open Spy'} <ArrowRight size={12} aria-hidden="true" /></a
+            >
+          </article>
         </section>
         <section class="panel chart-panel">
           <div class="panel-head">
@@ -673,250 +738,44 @@
               <p class="eyebrow">Traffic volume</p>
               <h2>Visitors & page views</h2>
             </div>
-            <div class="legend">
+            <div class="legend" aria-hidden="true">
               <span><i class="visitors"></i>Visitors</span><span><i class="views"></i>Page views</span>
             </div>
           </div>
-          <svg class="big-chart" viewBox="0 0 1000 260" role="img" aria-label="Traffic over selected period"
-            ><g class="grid-lines"
-              ><line x1="0" y1="52" x2="1000" y2="52" /><line x1="0" y1="104" x2="1000" y2="104" /><line
-                x1="0"
-                y1="156"
-                x2="1000"
-                y2="156"
-              /><line x1="0" y1="208" x2="1000" y2="208" /></g
-            ><polyline
-              class="views-line"
-              points={sparklinePoints(
-                overview.trend.map((p) => p.pageViews),
-                1000,
-                230
-              )}
-            /><polyline
-              class="visitor-line"
-              points={sparklinePoints(
-                overview.trend.map((p) => p.visitors),
-                1000,
-                230
-              )}
-            /></svg
-          >
+          <TrafficChart trend={overview.trend} />
         </section>
         <div class="two-col">
-          <ReportTable title="Top pages" rows={topPages} />
-          <ReportTable title="Top referrers" rows={topReferrers} />
+          <ReportTable title="Top pages" rows={topPages} moreHref={appHref(site.id, 'pages', days)} />
+          <ReportTable
+            title="Top referrers"
+            rows={topReferrers}
+            moreHref={appHref(site.id, 'referrers', days)}
+          />
         </div>
       {:else if view === 'spy'}
-        <section class="spy-toolbar">
-          <div>
-            <span class="live-dot"></span><strong>Live activity</strong><span class="muted"
-              >{paused ? 'Stream paused' : 'Updating in real time'}</span
-            >
-          </div>
-          <div>
-            <label class="search"
-              ><Search size={15} /><span class="sr-only">Filter activity</span
-              ><input bind:value={spyFilter} placeholder="Filter pages, places…" /></label
-            ><button class="secondary" onclick={toggleSpy}
-              >{#if paused}<Play size={15} />Resume{:else}<Pause size={15} />Pause{/if}</button
-            >
-          </div>
-        </section>
-        <div class="spy-grid">
-          <section class="panel map-panel"><WorldMap visitors={mapVisitors} /></section>
-          <section class="panel activity-feed">
-            <div class="panel-head">
-              <h2>Visitor stream</h2>
-              <span>{filteredEvents.length} events</span>
-            </div>
-            {#if filteredEvents.length}
-              <ol>
-                {#each filteredEvents as item}
-                  <li>
-                    <span class="event-icon"><Eye size={15} /></span><button
-                      onclick={() =>
-                        (selectedVisitor =
-                          visitors.find((visitor) => visitor.id === item.visitorId) ?? null)}
-                      ><strong>{item.page}</strong><small
-                        >{item.city ?? item.country ?? 'Unknown'} · {item.type} · {new Date(
-                          item.timestamp
-                        ).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small
-                      ></button
-                    >
-                  </li>
-                {/each}
-              </ol>
-            {:else}
-              <div class="empty"><Activity /><p>No matching live activity.</p></div>
-            {/if}
-          </section>
-        </div>
-        {#if selectedVisitor}
-          <aside class="visitor-drawer" aria-label="Visitor details">
-            <button
-              class="icon-button"
-              onclick={() => (selectedVisitor = null)}
-              aria-label="Close visitor details"><X /></button
-            >
-            <div class="visitor-badge"><Users /></div>
-            <p class="eyebrow">Visitor details</p>
-            <h2>{selectedVisitor.city ?? 'Unknown city'}, {selectedVisitor.country}</h2>
-            <dl>
-              <div>
-                <dt>Device</dt>
-                <dd>{selectedVisitor.device ?? 'Unknown'}</dd>
-              </div>
-              <div>
-                <dt>Browser</dt>
-                <dd>{selectedVisitor.browser ?? 'Unknown'}</dd>
-              </div>
-              <div>
-                <dt>Sessions</dt>
-                <dd>{selectedVisitor.sessions ?? 1}</dd>
-              </div>
-              <div>
-                <dt>Current page</dt>
-                <dd>{selectedVisitor.page ?? '—'}</dd>
-              </div>
-            </dl>
-          </aside>
-        {/if}
+        <SpyView
+          {events}
+          {visitors}
+          {streamState}
+          bind:filter={spyFilter}
+          onToggle={toggleSpy}
+          onSelect={selectStreamVisitor}
+        />
       {:else if view === 'insights'}
-        <section class="page-head">
-          <div>
-            <p class="eyebrow">Marketing intelligence</p>
-            <h2>What is driving outcomes</h2>
-            <p class="muted">Attribution, journeys, content, funnels, and AI traffic.</p>
-          </div>
-        </section>
-        <div class="metric-grid compact-insights">
-          <article class="metric-card">
-            <div><small>Revenue</small><Zap /></div>
-            <strong>{attribution
-                .reduce((sum, row) => sum + row.revenue, 0)
-                .toLocaleString(undefined, { style: 'currency', currency: 'USD' })}</strong>
-            <span>{attribution.reduce((sum, row) => sum + row.conversions, 0)} conversions</span>
-          </article>
-          <article class="metric-card">
-            <div><small>Journeys</small><Activity /></div>
-            <strong>{journeys.length}</strong><span
-              >{journeys.reduce((sum, row) => sum + row.sessions, 0)} sessions</span
-            >
-          </article>
-          <article class="metric-card">
-            <div><small>Anomalies</small><Bell /></div>
-            <strong>{anomalies.length}</strong><span>30% threshold</span>
-          </article>
-          <article class="metric-card">
-            <div><small>Funnels</small><GoalIcon /></div>
-            <strong>{funnels.length}</strong><span>Sequential visitors</span>
-          </article>
-        </div>
-        <div class="two-col insight-section">
-          <ReportTable title="Landing pages" rows={landingPages.slice(0, 10)} />
-          <ReportTable title="Exit pages" rows={exitPages.slice(0, 10)} />
-        </div>
-        <div class="two-col insight-section">
-          <ReportTable title="Traffic sources" rows={sources.slice(0, 10)} />
-          <ReportTable title="Content" rows={content.slice(0, 10)} />
-        </div>
-        <div class="two-col insight-section">
-          <ReportTable title="AI referrals" rows={aiReferrers.slice(0, 10)} />
-          <ReportTable title="AI crawlers" rows={aiCrawlers.slice(0, 10)} />
-        </div>
-        <section class="panel insight-section">
-          <div class="panel-head">
-            <h2>First-touch attribution</h2><span>{attribution.length} channels</span>
-          </div>
-          {#if attribution.length}
-            <div class="table-wrap">
-              <table>
-                <thead
-                  ><tr
-                    ><th>Source / medium</th><th>Campaign</th><th>Visitors</th
-                    ><th>Conversions</th><th>Revenue</th></tr
-                  ></thead
-                >
-                <tbody>
-                  {#each attribution as row}
-                    <tr>
-                      <th>{row.source} / {row.medium}</th>
-                      <td>{row.campaign}</td>
-                      <td class="numeric">{row.visitors.toLocaleString()}</td>
-                      <td class="numeric">{row.conversions.toLocaleString()}</td>
-                      <td class="numeric"
-                        >{row.revenue.toLocaleString(undefined, {
-                          style: 'currency',
-                          currency: 'USD'
-                        })}</td
-                      >
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {:else}
-            <div class="empty"><Activity /><p>No attributed traffic in this period.</p></div>
-          {/if}
-        </section>
-        <div class="two-col insight-section">
-          <section class="panel">
-            <div class="panel-head"><h2>Common journeys</h2><span>Ordered paths</span></div>
-            {#if journeys.length}
-              <div class="insight-list">
-                {#each journeys.slice(0, 10) as journey}
-                  <div
-                    ><strong>{journey.steps.join(' → ')}</strong><span
-                      >{journey.sessions} sessions</span
-                    ></div
-                  >
-                {/each}
-              </div>
-            {:else}
-              <div class="empty"><Activity /><p>No journeys yet.</p></div>
-            {/if}
-          </section>
-          <section class="panel">
-            <div class="panel-head"><h2>Anomalies</h2><span>Trailing baseline</span></div>
-            {#if anomalies.length}
-              <div class="insight-list">
-                {#each anomalies as anomaly}
-                  <div
-                    ><strong>{anomaly.date}</strong><span
-                      >{anomaly.deviationPercent > 0 ? '+' : ''}{anomaly.deviationPercent.toFixed(
-                        1
-                      )}%</span
-                    ></div
-                  >
-                {/each}
-              </div>
-            {:else}
-              <div class="empty"><Bell /><p>No material anomalies.</p></div>
-            {/if}
-          </section>
-        </div>
-        <section class="panel insight-section">
-          <div class="panel-head"><h2>Funnels</h2><span>Sequential unique visitors</span></div>
-          {#if funnelReports.length}
-            <div class="funnel-list">
-              {#each funnelReports as funnel}
-                <article>
-                  <strong>{funnel.name}</strong>
-                  <div>
-                    {#each funnel.steps as step}
-                      <span
-                        ><small>{step.label}</small><b>{step.visitors}</b
-                        ><i>{step.conversionRate.toFixed(1)}%</i></span
-                      >
-                    {/each}
-                  </div>
-                </article>
-              {/each}
-            </div>
-          {:else}
-            <div class="empty"><GoalIcon /><p>No funnels configured.</p></div>
-          {/if}
-        </section>
+        <InsightsView
+          {attribution}
+          {journeys}
+          {anomalies}
+          {funnelReports}
+          {landingPages}
+          {exitPages}
+          {sources}
+          {content}
+          {aiReferrers}
+          {aiCrawlers}
+          failed={insightFailures}
+          retry={() => void loadView()}
+        />
       {:else if
         [
           'pages',
@@ -1182,6 +1041,9 @@
             {/key}
           </div>
         </section>
+      {/if}
+      {#if selectedVisitor && site}
+        <VisitorDrawer visitor={selectedVisitor} {events} onClose={() => (selectedVisitor = null)} />
       {/if}
     </main>
   </div>

@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help setup env tracker test test-backend test-cli test-frontend test-tracker check build up dev dev-logs down logs clean deploy
+.PHONY: help setup env tracker test test-backend test-cli test-frontend test-tracker check build up dev dev-logs sync-account geoip down logs clean deploy
 
 help:
 	@printf '%s\n' \
@@ -14,6 +14,8 @@ help:
 	  'make up             Start the production-like Docker stack' \
 	  'make dev            Start the Docker stack with live reload' \
 	  'make dev-logs       Follow live-reload frontend and backend logs' \
+	  'make sync-account   Copy the SYNC_EMAIL account from a remote deployment into local Docker' \
+	  'make geoip          Download the free DB-IP City Lite database for visitor locations' \
 	  'make down           Stop the Docker stack' \
 	  'make logs           Follow Docker logs'
 
@@ -81,6 +83,14 @@ dev:
 
 dev-logs:
 	$(DEV_COMPOSE) logs -f frontend backend
+
+sync-account:
+	./scripts/sync-account.sh $(SYNC_ARGS)
+
+geoip:
+	./scripts/update-geoip.sh
+	@if docker compose ps --status running --services 2>/dev/null | grep -qx backend; then \
+	  docker compose restart backend >/dev/null && echo 'Backend restarted with the GeoIP database.'; fi
 
 down:
 	docker compose down
