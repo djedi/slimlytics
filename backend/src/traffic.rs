@@ -65,6 +65,10 @@ impl RateLimiter {
     }
     pub fn check(&self, key: &str) -> bool {
         let now = Instant::now();
+        if self.hits.len() > 10_000 {
+            self.hits
+                .retain(|_, (start, _)| now.duration_since(*start) < self.window);
+        }
         let mut entry = self.hits.entry(key.to_owned()).or_insert((now, 0));
         if now.duration_since(entry.0) >= self.window {
             *entry = (now, 0);
@@ -127,8 +131,8 @@ pub fn collection_origin_allowed(
     referer
         .and_then(|value| url::Url::parse(value).ok())
         .and_then(|url| {
-            let host = url.host_str()?;
-            Some(format!("{}://{}", url.scheme(), host))
+            url.host_str()?;
+            Some(url.origin().ascii_serialization())
         })
         .is_some_and(|ref_origin| allowed.iter().any(|item| item == &ref_origin))
 }

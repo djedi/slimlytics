@@ -73,6 +73,7 @@ pub struct AppState {
     jwt_secret: Arc<String>,
     identity_secret: Arc<Vec<u8>>,
     limiter: RateLimiter,
+    login_limiter: RateLimiter,
     stream_tx: broadcast::Sender<StreamMessage>,
     internal_ips: Arc<Vec<IpAddr>>,
     access_token_ttl_seconds: i64,
@@ -89,6 +90,7 @@ impl AppState {
             jwt_secret: Arc::new(jwt_secret),
             identity_secret: Arc::new(identity_secret),
             limiter: RateLimiter::new(120, Duration::from_secs(60)),
+            login_limiter: RateLimiter::new(10, Duration::from_secs(60)),
             stream_tx,
             internal_ips: Arc::new(Vec::new()),
             access_token_ttl_seconds: 3600,
@@ -415,12 +417,20 @@ async fn login(
     State(state): State<AppState>,
     Json(input): Json<Credentials>,
 ) -> Result<Json<TokenResponse>, ApiError> {
+    let email = input.email.trim().to_lowercase();
+    if input.password.len() > 1024 || !state.login_limiter.check(&email) {
+        return Err(ApiError::RateLimited);
+    }
     let row: Option<(Uuid, String)> =
         sqlx::query_as("SELECT id,password_hash FROM users WHERE email=lower($1)")
-            .bind(input.email.trim())
+            .bind(&email)
             .fetch_optional(&state.pool)
             .await?;
-    let (id, hash) = row.ok_or(ApiError::Unauthorized)?;
+    let Some((id, hash)) = row else {
+        // Spend comparable time so unknown emails are not distinguishable by latency.
+        let _ = hash_password(&input.password);
+        return Err(ApiError::Unauthorized);
+    };
     if !verify_password(&input.password, &hash).map_err(|_| ApiError::Unauthorized)? {
         return Err(ApiError::Unauthorized);
     }
@@ -551,7 +561,11 @@ async fn revoke_current_api_token(
 }
 
 fn validate_credentials(value: &Credentials) -> Result<(), ApiError> {
-    if !value.email.contains('@') || value.password.len() < 12 {
+    if !value.email.contains('@')
+        || value.password.chars().count() < 12
+        || value.password.len() > 1024
+        || value.email.len() > 320
+    {
         return Err(ApiError::BadRequest(
             "valid email and password of at least 12 characters required".into(),
         ));
@@ -887,6 +901,19 @@ async fn collect(
         return Err(ApiError::BadRequest(
             "occurred_at outside accepted window".into(),
         ));
+    }
+    if input.name.trim().is_empty()
+        || input.name.chars().count() > 200
+        || input.url.len() > 2048
+        || input.referrer.as_ref().is_some_and(|v| v.len() > 2048)
+        || input
+            .title
+            .as_ref()
+            .is_some_and(|v| v.chars().count() > 500)
+        || input.properties.to_string().len() > 16 * 1024
+    {
+        record_collection_rejection(&state.pool, site, "invalid_payload").await;
+        return Err(ApiError::BadRequest("event payload too large".into()));
     }
     let clean = sanitize_url(&input.url).map_err(|_| ApiError::BadRequest("invalid url".into()))?;
     let parsed = Url::parse(&input.url).map_err(|_| ApiError::BadRequest("invalid url".into()))?;

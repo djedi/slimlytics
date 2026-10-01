@@ -84,3 +84,18 @@ fn rate_limiter_rejects_over_limit() {
     assert!(limiter.check("key"));
     assert!(!limiter.check("key"));
 }
+
+#[test]
+fn referer_fallback_keeps_the_port_when_matching_origins() {
+    let allowed = vec!["http://localhost:3000".to_string()];
+    assert!(slimlytics_backend::traffic::collection_origin_allowed(
+        None,
+        Some("http://localhost:3000/page?x=1"),
+        &allowed
+    ));
+    assert!(!slimlytics_backend::traffic::collection_origin_allowed(
+        None,
+        Some("http://localhost:4000/page"),
+        &allowed
+    ));
+}

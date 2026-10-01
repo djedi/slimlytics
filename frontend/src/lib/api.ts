@@ -114,12 +114,14 @@ export class ApiClient {
   private token = '';
   private base: string;
   constructor(base = '/api', private fetcher: Fetcher = fetch, private demo = false) { this.base = base.replace(/\/$/, ''); }
+  onUnauthorized?: () => void;
   setToken(token: string) { this.token = token; }
   private async request<T>(path: string, init: RequestInit = {}, fallback?: () => T): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...(this.token ? { authorization: `Bearer ${this.token}` } : {}), ...(init.headers as Record<string, string> ?? {}) };
     try {
       const response = await this.fetcher(`${this.base}${path}`, { ...init, headers });
       if (!response.ok) {
+        if (response.status === 401 && this.token && !this.demo && !path.startsWith('/auth/login') && !path.startsWith('/auth/register')) this.onUnauthorized?.();
         let message = `Request failed (${response.status})`;
         try {
           const body = await response.json() as { message?: string; error?: string | { message?: string } };
@@ -196,6 +198,7 @@ export class ApiClient {
   streamUrl(id: string, token?: string) { const query = token ? `?token=${encodeURIComponent(token)}` : ''; return `${this.base}/sites/${id}/stream${query}`; }
   async downloadExport(id: string, days: number) {
     const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(days)}`, { headers: this.token ? { authorization: `Bearer ${this.token}` } : {} });
+    if (response.status === 401 && this.token && !this.demo) this.onUnauthorized?.();
     if (!response.ok) throw new ApiError(response.status, `Export failed (${response.status})`);
     return response.blob();
   }
