@@ -29,14 +29,21 @@ describe('all-sites rollup helpers', () => {
     expect(trendPaths([0, 0, 0], 100, 20).line).toBe('M0,20 C16.67,20 33.33,20 50,20 C66.67,20 83.33,20 100,20');
   });
 
-  it('totals the portfolio and derives combined change from each previous period', () => {
+  it('totals the portfolio from actual previous-period visitors', () => {
     const totals = portfolioTotals([
-      { visitors: 10, pageViews: 77, currentOnline: 1, change: -50 },
-      { visitors: 30, pageViews: 48, currentOnline: 0, change: 50 },
+      { visitors: 10, pageViews: 77, currentOnline: 1, previousVisitors: 20 },
+      { visitors: 30, pageViews: 48, currentOnline: 0, previousVisitors: 20 },
       undefined
     ]);
-    // previous = 20 + 20 = 40; current = 40 → 0% change.
     expect(totals).toEqual({ visitors: 40, pageViews: 125, online: 1, change: 0 });
+    // A site that dropped to zero keeps its previous visitors: (100 - 200) / 200 = -50%.
+    expect(
+      portfolioTotals([
+        { visitors: 0, pageViews: 0, currentOnline: 0, previousVisitors: 100 },
+        { visitors: 100, pageViews: 100, currentOnline: 0, previousVisitors: 100 }
+      ]).change
+    ).toBe(-50);
+    expect(portfolioTotals([{ visitors: 5, pageViews: 5, currentOnline: 0, previousVisitors: 0 }]).change).toBe(0);
   });
 
   it('gives each domain a stable avatar hue', () => {

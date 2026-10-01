@@ -94,6 +94,12 @@ local_base_url="$(env_value SLIMLYTICS_BASE_URL)"
 for command in ssh docker; do
   command -v "$command" >/dev/null || die "Required command not found: $command"
 done
+# A loopback base URL does not prove where `docker compose` writes: DOCKER_HOST or a remote
+# Docker context would point every local write below at another machine's database.
+# DOCKER_HOST takes precedence over the context, matching the Docker CLI.
+docker_endpoint="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)}"
+[[ "$docker_endpoint" == unix://* || "$docker_endpoint" == npipe://* ]] \
+  || die "Refusing to run: Docker endpoint '${docker_endpoint:-unknown}' is not a local socket. Unset DOCKER_HOST or switch to a local Docker context."
 docker compose ps --status running --services 2>/dev/null | grep -qx db \
   || die 'The local db service is not running. Start it with make up or make dev.'
 
@@ -159,8 +165,25 @@ query_for() {
 }
 
 printf 'Exporting %s from %s…\n' "$email" "$source_ssh"
+# One read-only, repeatable-read transaction gives every table the same snapshot, so parents
+# and children stay consistent while the remote keeps taking writes. The tables share a single
+# output stream, separated by a random marker line that real CSV data won't contain.
+marker="__slimlytics_sync_${RANDOM}${RANDOM}_$$__"
+{
+  echo 'begin isolation level repeatable read read only;'
+  for table in "${tables[@]}"; do
+    printf '\\echo %s %s\n' "$marker" "$table"
+    echo "copy ($(query_for "$table")) to stdout with (format csv);"
+  done
+  echo 'commit;'
+} | remote_psql > "$work/export.stream"
+awk -v marker="$marker" -v dir="$work" '
+  $1 == marker { file = dir "/" $2 ".csv"; printf "" > file; next }
+  file { print > file }
+' "$work/export.stream"
+rm -f "$work/export.stream"
 for table in "${tables[@]}"; do
-  remote_psql > "$work/$table.csv" <<<"copy ($(query_for "$table")) to stdout with (format csv);"
+  [[ -f "$work/$table.csv" ]] || die "Export is missing $table; nothing was changed locally."
   printf '  %-24s %8s rows\n' "$table" "$(wc -l < "$work/$table.csv" | tr -d ' ')"
 done
 site_count="$(wc -l < "$work/sites.csv" | tr -d ' ')"

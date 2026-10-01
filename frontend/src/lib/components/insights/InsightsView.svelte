@@ -51,8 +51,10 @@
   const day = (date: string) =>
     new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
+  // Never derive highlights from a section whose latest load failed.
+  const usableAttribution = $derived(failed.has('attribution') ? [] : attribution);
   const totals = $derived(
-    attribution.reduce(
+    usableAttribution.reduce(
       (sum, row) => ({
         visitors: sum.visitors + row.visitors,
         conversions: sum.conversions + row.conversions,
@@ -62,7 +64,7 @@
     )
   );
   const hasRevenue = $derived(totals.revenue > 0);
-  const topChannel = $derived(attribution[0]);
+  const topChannel = $derived(usableAttribution[0]);
   const channelMax = $derived(Math.max(1, ...attribution.map((row) => row.visitors)));
   const journeyMax = $derived(Math.max(1, ...journeys.map((row) => row.sessions)));
   const latestAnomaly = $derived([...anomalies].sort((a, b) => b.date.localeCompare(a.date))[0]);
@@ -81,9 +83,9 @@
 <section class="portfolio-summary insights-summary" aria-label="Insight highlights">
   <div>
     <span class="label"><Target size={15} aria-hidden="true" /> Conversions</span>
-    <strong>{compactNumber(totals.conversions)}</strong>
+    <strong>{failed.has('attribution') ? '—' : compactNumber(totals.conversions)}</strong>
     <small>
-      {#if hasRevenue}{money(totals.revenue)} revenue{:else if totals.conversions}{(totals.conversions / Math.max(1, totals.visitors)).toFixed(2)} per visitor{:else}No goals completed yet{/if}
+      {#if failed.has('attribution')}Unavailable{:else if hasRevenue}{money(totals.revenue)} revenue{:else if totals.conversions}{(totals.conversions / Math.max(1, totals.visitors)).toFixed(2)} per visitor{:else}No goals completed yet{/if}
     </small>
   </div>
   <div>
@@ -92,25 +94,31 @@
       >{topChannel ? channelName(topChannel) : '—'}</strong
     >
     <small
-      >{topChannel
-        ? `${Math.round((topChannel.visitors / Math.max(1, totals.visitors)) * 100)}% of visitors`
-        : 'No traffic in this period'}</small
+      >{failed.has('attribution')
+        ? 'Unavailable'
+        : topChannel
+          ? `${Math.round((topChannel.visitors / Math.max(1, totals.visitors)) * 100)}% of visitors`
+          : 'No traffic in this period'}</small
     >
   </div>
   <div>
     <span class="label"><CircleAlert size={15} aria-hidden="true" /> Anomalies</span>
-    <strong>{anomalies.length}</strong>
+    <strong>{failed.has('anomalies') ? '—' : anomalies.length}</strong>
     <small
-      >{latestAnomaly
+      >{failed.has('anomalies')
+        ? 'Unavailable'
+        : latestAnomaly
         ? `Latest ${day(latestAnomaly.date)}`
         : 'Traffic within its usual range'}</small
     >
   </div>
   <div>
     <span class="label"><Filter size={15} aria-hidden="true" /> Funnels</span>
-    <strong>{funnelReports.length}</strong>
+    <strong>{failed.has('funnels') ? '—' : funnelReports.length}</strong>
     <small
-      >{funnelReports.length
+      >{failed.has('funnels')
+        ? 'Unavailable'
+        : funnelReports.length
         ? `${plural(funnelReports.reduce((sum, f) => sum + (f.steps.at(-1)?.visitors ?? 0), 0), 'completion')}`
         : 'None defined yet'}</small
     >

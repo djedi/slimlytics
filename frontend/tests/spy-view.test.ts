@@ -27,4 +27,23 @@ describe('spy view', () => {
     await fireEvent.click(screen.getAllByRole('button', { name: /signup/ })[0]);
     expect(onSelect).toHaveBeenCalledWith('v1');
   });
+
+  it('computes live totals from the full time window, not the capped feed', () => {
+    const windowEvents = Array.from({ length: 150 }, (_, index) => ({
+      id: `w${index}`,
+      type: 'pageview',
+      page: '/',
+      visitorId: `v${index % 40}`,
+      country: 'US',
+      timestamp: new Date(now - index * 5_000).toISOString()
+    }));
+    render(SpyView, {
+      props: { events: windowEvents.slice(0, 100), windowEvents, visitors: [], streamState: 'live', onToggle: vi.fn(), onSelect: vi.fn() }
+    });
+    const totals = screen.getByRole('region', { name: 'Live totals' });
+    expect(totals).toHaveTextContent(/Last 30 minutes\s*150/);
+    // 40 distinct visitors appear within the last five minutes of the window.
+    expect(totals).toHaveTextContent(/Active now\s*40/);
+    expect(screen.getByText('100 events')).toBeInTheDocument();
+  });
 });

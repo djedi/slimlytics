@@ -1,5 +1,5 @@
 export interface TrendPoint { date: string; visitors: number; pageViews: number }
-export interface Overview { visitors: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
+export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
 export type AntiAdblockServer = 'caddy' | 'nginx' | 'apache';
 export interface AntiAdblockSettings { serverType: AntiAdblockServer; jsPath: string; beaconPath: string }
 export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; overview?: Overview }
@@ -160,6 +160,7 @@ export class ApiClient {
     const change = wire.visitors.change_percent ?? wire.views.change_percent ?? 0;
     return {
       visitors: wire.visitors.current,
+      previousVisitors: wire.visitors.previous,
       sessions: wire.sessions.current,
       pageViews: wire.views.current,
       bounceRate: wire.bounceRate ?? wire.bounce_rate ?? 0,

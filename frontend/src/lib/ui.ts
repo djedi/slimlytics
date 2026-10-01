@@ -99,9 +99,11 @@ export function trendPaths(
   return { line, area: `${line} L${width},${height} L0,${height} Z` };
 }
 
-type OverviewTotalsInput = { visitors: number; pageViews: number; currentOnline: number; change: number } | undefined;
+type OverviewTotalsInput =
+  | { visitors: number; pageViews: number; currentOnline: number; previousVisitors?: number }
+  | undefined;
 
-/** Workspace totals; combined change is weighted by each site's previous-period visitors. */
+/** Workspace totals; combined change compares summed current and previous-period visitors. */
 export function portfolioTotals(overviews: OverviewTotalsInput[]) {
   let visitors = 0;
   let pageViews = 0;
@@ -112,8 +114,7 @@ export function portfolioTotals(overviews: OverviewTotalsInput[]) {
     visitors += overview.visitors;
     pageViews += overview.pageViews;
     online += overview.currentOnline;
-    const factor = 1 + overview.change / 100;
-    previous += factor > 0 ? overview.visitors / factor : overview.visitors;
+    previous += overview.previousVisitors ?? 0;
   }
   const change = previous > 0 ? Number((((visitors - previous) / previous) * 100).toFixed(1)) : 0;
   return { visitors, pageViews, online, change: Object.is(change, -0) ? 0 : change };

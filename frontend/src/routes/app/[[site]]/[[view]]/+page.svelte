@@ -112,6 +112,15 @@
   let topReferrers = $state<ReportRow[]>([]);
   let visitors = $state<Visitor[]>([]);
   let events = $state<LiveEvent[]>([]);
+  // Spy totals need every event in the last 30 minutes; `events` is a capped display feed.
+  let liveWindow = $state<LiveEvent[]>([]);
+  const LIVE_WINDOW_MS = 30 * 60000;
+  function addToWindow(items: LiveEvent[]) {
+    const since = Date.now() - LIVE_WINDOW_MS;
+    const byId = new Map(liveWindow.map((item) => [item.id, item]));
+    for (const item of items) byId.set(item.id, item);
+    liveWindow = [...byId.values()].filter((item) => new Date(item.timestamp).getTime() >= since);
+  }
   let goals = $state<Goal[]>([]);
   let journeys = $state<Journey[]>([]);
   let attribution = $state<Attribution[]>([]);
@@ -198,7 +207,6 @@
     segment: string | undefined;
     nextDays: number;
   }) {
-    const daysChanged = nextDays !== days;
     days = nextDays;
     menuOpen = false;
     error = routeNotice;
@@ -210,7 +218,7 @@
       source?.close();
       site = null;
       view = 'rollup';
-      if (daysChanged) await loadSites();
+      if (sitesDays !== days) await loadSites();
       return;
     }
     const next = sites.find((item) => item.id === siteId);
@@ -245,17 +253,22 @@
       sitesLoaded = true;
     }
   }
+  // The date range the workspace overviews were loaded with. A site view can change the
+  // range, so returning to All sites must reload when it no longer matches.
+  let sitesDays: number | null = null;
   async function refreshSitesQuietly() {
+    const range = days;
     const loaded = await api.sites();
     sites = await Promise.all(
       loaded.map(async (item) => {
         try {
-          return { ...item, overview: await api.overview(item.id, days) };
+          return { ...item, overview: await api.overview(item.id, range) };
         } catch {
           return item;
         }
       })
     );
+    sitesDays = range;
   }
   async function loadView() {
     if (!site) return;
@@ -305,18 +318,34 @@
         ]);
       const failed = new Set<InsightSection>();
       if (journeysResult.status === 'fulfilled') journeys = journeysResult.value;
-      else failed.add('journeys');
+      else {
+        journeys = [];
+        failed.add('journeys');
+      }
       if (attributionResult.status === 'fulfilled') attribution = attributionResult.value;
-      else failed.add('attribution');
+      else {
+        attribution = [];
+        failed.add('attribution');
+      }
       if (anomaliesResult.status === 'fulfilled') anomalies = anomaliesResult.value;
-      else failed.add('anomalies');
+      else {
+        anomalies = [];
+        failed.add('anomalies');
+      }
       if (funnelsResult.status === 'fulfilled') {
         funnels = funnelsResult.value.list;
         funnelReports = funnelsResult.value.reports;
-      } else failed.add('funnels');
+      } else {
+        funnels = [];
+        funnelReports = [];
+        failed.add('funnels');
+      }
       if (reportsResult.status === 'fulfilled')
         [landingPages, exitPages, sources, content, aiReferrers, aiCrawlers] = reportsResult.value;
-      else failed.add('reports');
+      else {
+        [landingPages, exitPages, sources, content, aiReferrers, aiCrawlers] = [[], [], [], [], [], []];
+        failed.add('reports');
+      }
       insightFailures = failed;
     } else if (
       [
@@ -335,6 +364,8 @@
     else if (view === 'visitors') visitors = await api.visitors(site.id);
     else if (view === 'spy') {
       events = await api.events(site.id);
+      if (resetStream) liveWindow = [];
+      addToWindow(events);
       visitors = await api.visitors(site.id);
       if (resetStream || !source || source.readyState === EventSource.CLOSED) connectSpy();
     } else if (view === 'goals') goals = await api.goals(site.id);
@@ -359,6 +390,7 @@
         // The stream replays recent events on connect; skip ones already loaded.
         if (events.some((existing) => existing.id === item.id)) return;
         events = [item, ...events].slice(0, 100);
+        addToWindow([item]);
       } catch {
         /* malformed event */
       }
@@ -755,6 +787,7 @@
       {:else if view === 'spy'}
         <SpyView
           {events}
+          windowEvents={liveWindow}
           {visitors}
           {streamState}
           bind:filter={spyFilter}

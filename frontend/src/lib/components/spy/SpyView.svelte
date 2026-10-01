@@ -10,13 +10,17 @@
 
   let {
     events,
+    windowEvents = events,
     visitors,
     streamState,
     filter = $bindable(''),
     onToggle,
     onSelect
   }: {
+    /** Display feed (capped). */
     events: LiveEvent[];
+    /** Every event in the last 30 minutes, uncapped; live totals are computed from this. */
+    windowEvents?: LiveEvent[];
     visitors: Visitor[];
     streamState: StreamState;
     filter?: string;
@@ -40,9 +44,9 @@
         .includes(query)
     );
   });
-  const activeNow = $derived(activeVisitorCount(events, now, 5));
-  const recent = $derived(events.filter((item) => now - new Date(item.timestamp).getTime() < 30 * 60000));
-  const buckets = $derived(minuteBuckets(events, now, 30));
+  const activeNow = $derived(activeVisitorCount(windowEvents, now, 5));
+  const recent = $derived(windowEvents.filter((item) => now - new Date(item.timestamp).getTime() < 30 * 60000));
+  const buckets = $derived(minuteBuckets(windowEvents, now, 30));
   const bucketMax = $derived(Math.max(1, ...buckets));
 
   const rank = <T,>(items: T[], key: (item: T) => string) => {
