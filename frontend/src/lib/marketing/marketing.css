@@ -624,3 +624,49 @@ a:hover > .mkt-arrow { transform: translateX(3px); }
 @media (prefers-reduced-motion: reduce) {
   .auth-shell .primary, .auth-shell .secondary { transition: none; }
 }
+
+/* Homepage tour video */
+.mkt-tour-link { display: inline-flex; align-items: center; gap: 10px; margin-top: 18px; color: var(--m-ink-text); font-size: 15px; font-weight: 600; text-decoration: none; }
+.mkt-tour-link:hover { color: #fff; }
+.mkt-tour-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.22); color: var(--m-glow); transition: transform 0.18s ease, border-color 0.18s ease; }
+.mkt-tour-link:hover .mkt-tour-icon { transform: scale(1.08); border-color: var(--m-glow); }
+.mkt-video-section { padding-bottom: clamp(32px, 5vw, 64px); }
+.mkt-video {
+  position: relative;
+  margin: 0 auto;
+  max-width: 1040px;
+  padding: 10px;
+  border-radius: 26px;
+  background: linear-gradient(140deg, rgba(52, 211, 153, 0.55), rgba(122, 162, 255, 0.45) 55%, rgba(52, 211, 153, 0.25));
+  box-shadow: 0 50px 100px -40px rgba(5, 150, 105, 0.55);
+}
+.mkt-video video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 18px; background: #070c14; }
+.mkt-video-play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  padding: 0 0 0 6px;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(140deg, #10b981, #047857);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 0 0 12px rgba(52, 211, 153, 0.18), 0 24px 50px -10px rgba(0, 0, 0, 0.6);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  animation: tour-pulse 2.4s ease-in-out infinite;
+}
+.mkt-video-play:hover, .mkt-video-play:focus-visible { transform: scale(1.07); box-shadow: 0 0 0 18px rgba(52, 211, 153, 0.22), 0 24px 50px -10px rgba(0, 0, 0, 0.6); }
+.mkt-video-play[hidden] { display: none; }
+@keyframes tour-pulse { 50% { box-shadow: 0 0 0 22px rgba(52, 211, 153, 0.08), 0 24px 50px -10px rgba(0, 0, 0, 0.6); } }
+@media (max-width: 620px) {
+  .mkt-video { padding: 6px; border-radius: 18px; }
+  .mkt-video video { border-radius: 13px; }
+  .mkt-video-play { width: 60px; height: 60px; box-shadow: 0 0 0 8px rgba(52, 211, 153, 0.18), 0 16px 32px -8px rgba(0, 0, 0, 0.6); }
+  .mkt-video-play svg { width: 24px; height: 24px; }
+}
+@media (prefers-reduced-motion: reduce) { .mkt-video-play { animation: none; } }
+#tour { scroll-margin-top: 72px; }
