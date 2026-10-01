@@ -21,6 +21,7 @@
     <nav aria-label="Footer documentation">
       <strong>Docs</strong>
       <a href="/docs">Overview</a>
+      <a href="/docs/mcp">MCP agent setup</a>
       <a href="/docs/cli">CLI</a>
       <a href="/docs/api">API reference</a>
       <a href="/login">Sign in</a>
