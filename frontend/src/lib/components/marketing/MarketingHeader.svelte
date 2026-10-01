@@ -6,7 +6,11 @@
   let signedIn = $state(false);
 
   onMount(() => {
-    signedIn = Boolean(localStorage.getItem('slimlytics_token'));
+    try {
+      signedIn = Boolean(globalThis.localStorage?.getItem('slimlytics_token'));
+    } catch {
+      signedIn = false;
+    }
   });
 </script>
 
