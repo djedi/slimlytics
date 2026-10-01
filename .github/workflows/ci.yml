@@ -27,7 +27,7 @@ jobs:
       # Persistent across runs on the self-hosted runner, so builds are incremental.
       CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain PATH
         run: |
           echo /opt/homebrew/opt/rustup/bin >> "$GITHUB_PATH"
@@ -64,7 +64,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain PATH
         run: |
           echo /opt/homebrew/opt/rustup/bin >> "$GITHUB_PATH"
@@ -93,7 +93,7 @@ jobs:
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/cli
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain PATH
         run: |
           echo /opt/homebrew/opt/rustup/bin >> "$GITHUB_PATH"
@@ -118,7 +118,7 @@ jobs:
       COMPOSE_PROJECT_NAME: slimlytics-ci-${{ github.run_id }}-${{ github.run_attempt }}
       HTTP_PORT: "18080"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Toolchain PATH
         run: |
           echo /opt/homebrew/bin >> "$GITHUB_PATH"
