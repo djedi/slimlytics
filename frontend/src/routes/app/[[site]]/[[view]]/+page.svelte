@@ -298,6 +298,8 @@
       sites = sites.map((item) =>
         item.id === site?.id ? { ...item, overview: nextOverview } : item
       );
+      // That entry now holds this range; the workspace cache no longer has one consistent range.
+      if (days !== sitesDays) sitesDays = null;
     } else if (view === 'insights') {
       // Load sections independently so one failing query cannot blank the whole page.
       const id = site.id;
@@ -534,6 +536,7 @@
   let siteSort = $state<'visitors' | 'change' | 'name'>('visitors');
   const totals = $derived(portfolioTotals(sites.map((item) => item.overview)));
   const activeSites = $derived(sites.filter((item) => (item.overview?.visitors ?? 0) > 0).length);
+  const unavailableSites = $derived(sites.filter((item) => !item.overview).length);
   const sortedSites = $derived(
     [...sites].sort((a, b) => {
       if (siteSort === 'name') return a.name.localeCompare(b.name);
@@ -665,6 +668,12 @@
               <small>with visits in {days} days</small>
             </div>
           </section>
+          {#if unavailableSites}
+            <p class="rollup-note" role="status">
+              Totals exclude {unavailableSites}
+              {unavailableSites === 1 ? 'site whose stats' : 'sites whose stats'} couldn’t load.
+            </p>
+          {/if}
           <div class="rollup-toolbar">
             <h3>Sites</h3>
             <label class="sort-picker"

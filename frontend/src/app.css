@@ -151,3 +151,4 @@
 @media(prefers-reduced-motion:reduce){.stream-status.live i::after,.spy-stream li.fresh{animation:none}}
 .geo-credit{display:block;margin-top:8px;padding:0 11px;color:#8d9aab;font-size:10px;text-decoration:none}
 .geo-credit:hover{color:var(--accent)}
+.rollup-note{margin:-14px 0 20px;color:var(--muted);font-size:12px}

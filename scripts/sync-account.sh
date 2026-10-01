@@ -96,8 +96,9 @@ for command in ssh docker; do
 done
 # A loopback base URL does not prove where `docker compose` writes: DOCKER_HOST or a remote
 # Docker context would point every local write below at another machine's database.
-# DOCKER_HOST takes precedence over the context, matching the Docker CLI.
-docker_endpoint="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)}"
+# Ask the Docker CLI which endpoint it will use, so its own precedence rules apply
+# (DOCKER_HOST, DOCKER_CONTEXT, and the configured context) rather than re-implementing them.
+docker_endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)"
 [[ "$docker_endpoint" == unix://* || "$docker_endpoint" == npipe://* ]] \
   || die "Refusing to run: Docker endpoint '${docker_endpoint:-unknown}' is not a local socket. Unset DOCKER_HOST or switch to a local Docker context."
 docker compose ps --status running --services 2>/dev/null | grep -qx db \

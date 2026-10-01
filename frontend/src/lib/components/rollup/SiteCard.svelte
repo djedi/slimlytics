@@ -11,7 +11,10 @@
   const trend = $derived(overview?.trend ?? []);
   const values = $derived(trend.map((point) => point.visitors));
   const paths = $derived(trendPaths(values, 300, 60));
-  const quiet = $derived((overview?.visitors ?? 0) === 0 && values.every((value) => value === 0));
+  // No overview means the request failed: show that as unavailable, not as a quiet site.
+  const unavailable = $derived(!overview);
+  const quiet = $derived(!unavailable && overview!.visitors === 0 && values.every((value) => value === 0));
+  const muted = $derived(quiet || unavailable);
   const peak = $derived(
     trend.reduce<{ date: string; visitors: number } | null>(
       (best, point) => (!best || point.visitors > best.visitors ? point : best),
@@ -40,12 +43,17 @@
   </header>
 
   <div class="headline">
-    <strong>{compactNumber(overview?.visitors ?? 0)}</strong>
+    <strong>{unavailable ? '—' : compactNumber(overview?.visitors ?? 0)}</strong>
     <span>visitors</span>
-    {#if !quiet}<ChangeBadge change={overview?.change} />{/if}
+    {#if !muted}<ChangeBadge change={overview?.change} />{/if}
   </div>
 
-  {#if quiet}
+  {#if unavailable}
+    <div class="empty-chart">
+      <span>Stats unavailable</span>
+      <span class="hint-muted">Couldn’t load this site’s overview. It will retry shortly.</span>
+    </div>
+  {:else if quiet}
     <div class="empty-chart">
       <span>No visits in the last {days} days</span>
       <span class="hint"><Settings size={13} aria-hidden="true" /> Check installation</span>
@@ -64,9 +72,9 @@
   {/if}
 
   <dl>
-    <div><dt>Page views</dt><dd>{compactNumber(overview?.pageViews ?? 0)}</dd></div>
-    <div><dt>Bounce rate</dt><dd>{quiet ? '—' : `${Math.round(overview?.bounceRate ?? 0)}%`}</dd></div>
-    <div><dt>Avg. visit</dt><dd>{quiet ? '—' : duration(overview?.avgDuration ?? 0)}</dd></div>
+    <div><dt>Page views</dt><dd>{unavailable ? '—' : compactNumber(overview?.pageViews ?? 0)}</dd></div>
+    <div><dt>Bounce rate</dt><dd>{muted ? '—' : `${Math.round(overview?.bounceRate ?? 0)}%`}</dd></div>
+    <div><dt>Avg. visit</dt><dd>{muted ? '—' : duration(overview?.avgDuration ?? 0)}</dd></div>
   </dl>
 
   <span class="open" aria-hidden="true">{quiet ? 'Set up tracking' : 'Open dashboard'} <ArrowRight size={14} /></span>
@@ -230,6 +238,9 @@
     color: var(--muted);
     font-size: 13px;
     text-align: center;
+  }
+  .empty-chart .hint-muted {
+    font-size: 12px;
   }
   .empty-chart .hint {
     display: inline-flex;
