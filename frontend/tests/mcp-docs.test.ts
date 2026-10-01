@@ -46,6 +46,10 @@ describe('public MCP documentation', () => {
     expect(headless).toBeDefined();
     expect(headless).not.toMatch(/--allowedTools "mcp__slimlytics"/);
     expect(headless).toContain('mcp__slimlytics__analytics_summary');
-    expect(headless).not.toContain('setup_site');
+    // --allowedTools only pre-approves; an explicit deny overrides any existing allow rule.
+    expect(headless).toContain('--disallowedTools "mcp__slimlytics__setup_site"');
+    expect(headless).not.toMatch(/--allowedTools "[^"]*setup_site/);
+    // The hard boundary is a credential that cannot write.
+    expect(document.body).toHaveTextContent(/unattended jobs[^.]*sites:read analytics:read/i);
   });
 });

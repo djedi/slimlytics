@@ -27,7 +27,8 @@
 }`;
   const claudeHeadless = `claude -p "Summarize last week's traffic for shop.example.com \\
   with the Slimlytics MCP server. Compare it with the week before." \\
-  --allowedTools "mcp__slimlytics__list_sites,mcp__slimlytics__analytics_summary,mcp__slimlytics__dimension_report,mcp__slimlytics__marketing_brief"`;
+  --allowedTools "mcp__slimlytics__list_sites,mcp__slimlytics__analytics_summary,mcp__slimlytics__dimension_report,mcp__slimlytics__marketing_brief" \\
+  --disallowedTools "mcp__slimlytics__setup_site"`;
   const claudeToken = `claude mcp add --transport http slimlytics ${mcpUrl} \\
   --header "Authorization: Bearer $SLIMLYTICS_TOKEN"`;
 
@@ -146,10 +147,16 @@ hermes mcp test slimlytics`;
           <CodeBlock code={claudeSettings} label="Claude Code permissions" lang="json" />
           <p>
             Run reports non-interactively in scripts or CI-style jobs with print mode. Authenticate
-            interactively once first; the stored OAuth token is reused. List only the read-only tools
-            so an unattended run cannot call <code>setup_site</code>.
+            interactively once first; the stored OAuth token is reused. <code>--allowedTools</code> only
+            pre-approves the reporting tools; <code>--disallowedTools</code> blocks <code>setup_site</code>
+            even if your settings already allow it.
           </p>
           <CodeBlock code={claudeHeadless} label="Claude Code headless report" />
+          <p>
+            For unattended jobs that must never change sites, also connect with a personal API token
+            limited to <code>sites:read analytics:read</code> (see <a href="#other-clients">other
+            clients</a>). Slimlytics then rejects site setup regardless of client permissions.
+          </p>
         </article>
 
         <article id="codex" class="client">
