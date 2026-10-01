@@ -41,7 +41,7 @@ Container checks use `compose.ci.yaml` to poll health every second instead of wa
 
 ## Local AI review
 
-Non-draft PRs receive a separate **Local AI review** check on Dustin’s Mac mini, using the dedicated `slimlytics-mini-review` runner labeled `slimlytics-reviewer`. It uses the same zero-tool Hermes setup as Envelope Budget (`openai-codex`, `gpt-6-astra`) and posts a GitHub review summary, per-file summaries, and inline findings with suggestions when appropriate. Test jobs continue using `slimlytics-mini`, so reviews do not occupy their runner queue. Both services still share the Mac mini’s CPU and network.
+Non-draft PRs receive a separate **Local AI review** check on Dustin’s Mac mini, using the dedicated `slimlytics-mini-review` runner labeled `slimlytics-reviewer`. It uses the same zero-tool Hermes setup as Envelope Budget (`openai-codex`, `gpt-6.1-sol`) and posts a GitHub review summary, per-file summaries, and inline findings with suggestions when appropriate. Test jobs continue using `slimlytics-mini`, so reviews do not occupy their runner queue. Both services still share the Mac mini’s CPU and network.
 
 The workflow uses `pull_request_target`, checks out only the trusted base SHA, and obtains the PR diff and changed files through the GitHub API as text. It never checks out or executes PR code. Repository instructions come from the base branch’s `AGENTS.md` and `.github/review-instructions.md`. A toolset preflight rejects any exposed model tools, and GitHub tokens and SSH agent access are removed from the model subprocess environment. Fork contributions can be reviewed as text without enabling fork execution in test CI.
 

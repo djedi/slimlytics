@@ -133,6 +133,17 @@ class ReviewerBoundaryTest(unittest.TestCase):
                 'unexpected prose\n{"summary":"accepted","findings":[]}'
             )
 
+    def test_reviewer_uses_requested_model(self):
+        completed = SimpleNamespace(stdout='{"summary":"ok","findings":[]}')
+        with (
+            patch.object(local_pr_review, 'assert_zero_toolset'),
+            patch.object(local_pr_review.pathlib.Path, 'read_text', return_value='{}'),
+            patch.object(local_pr_review.subprocess, 'run', return_value=completed) as run,
+        ):
+            local_pr_review.run_model_review('', local_pr_review.pathlib.Path('schema.json'))
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index('--model') + 1], 'gpt-6.1-sol')
+
     def test_github_pagination_reads_every_page(self):
         first_page = [{'id': index} for index in range(100)]
         with patch.object(

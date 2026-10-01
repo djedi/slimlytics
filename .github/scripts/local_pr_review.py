@@ -443,7 +443,7 @@ If no actionable defects exist, return an empty findings array. Return only JSON
             '--provider',
             'openai-codex',
             '--model',
-            'gpt-6-astra',
+            'gpt-6.1-sol',
             '--max-turns',
             '1',
             '--query-file',
