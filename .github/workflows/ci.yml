@@ -8,57 +8,69 @@ on:
 permissions:
   contents: read
 
+# Cancel superseded runs of the same PR/branch.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
-  DATABASE_URL: postgres://slimlytics:slimlytics@localhost:5432/slimlytics_test
   JWT_SECRET: ci-only-jwt-secret-at-least-thirty-two-bytes
   VISITOR_HASH_SECRET: ci-only-visitor-secret-at-least-thirty-two-bytes
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: slimlytics
-          POSTGRES_PASSWORD: slimlytics
-          POSTGRES_DB: slimlytics_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U slimlytics -d slimlytics_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
+    # Self-hosted runner on a public repo: never run fork PR code on it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
+    env:
+      # Persistent across runs on the self-hosted runner, so builds are incremental.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/backend
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/opt/rustup/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/opt/node@24/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /usr/local/bin >> "$GITHUB_PATH"
+      - name: Start disposable PostgreSQL
+        run: |
+          name="pg-slimlytics-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "PG_CONTAINER=$name" >> "$GITHUB_ENV"
+          docker run -d --name "$name" -p 127.0.0.1::5432 \
+            -e POSTGRES_USER=slimlytics -e POSTGRES_PASSWORD=slimlytics -e POSTGRES_DB=slimlytics_test \
+            postgres:17-alpine
+          for i in $(seq 1 40); do
+            docker exec "$name" pg_isready -U slimlytics -d slimlytics_test && break
+            sleep 1
+          done
+          port=$(docker port "$name" 5432/tcp | head -n1 | sed 's/.*://')
+          url="postgres://slimlytics:slimlytics@127.0.0.1:$port/slimlytics_test"
+          echo "DATABASE_URL=$url" >> "$GITHUB_ENV"
+          echo "TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
       - name: Format
         run: cargo fmt --manifest-path backend/Cargo.toml --all -- --check
       - name: Lint
         run: cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings
       - name: Test, including PostgreSQL integration tests
-        env:
-          TEST_DATABASE_URL: ${{ env.DATABASE_URL }}
         run: cargo test --manifest-path backend/Cargo.toml --all-targets -- --include-ignored --test-threads=1
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker rm -f "$PG_CONTAINER" || true
 
   web:
-    runs-on: ubuntu-latest
+    # Self-hosted runner on a public repo: never run fork PR code on it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            frontend/package-lock.json
-            tracker/package-lock.json
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/opt/rustup/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/opt/node@24/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /usr/local/bin >> "$GITHUB_PATH"
       - name: Install tracker
         run: npm --prefix tracker ci
       - name: Test and build tracker
@@ -75,15 +87,19 @@ jobs:
         run: npm --prefix frontend run check && npm --prefix frontend test -- --run && npm --prefix frontend run build
 
   cli:
-    runs-on: ubuntu-latest
+    # Self-hosted runner on a public repo: never run fork PR code on it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/cli
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: cli
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/opt/rustup/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/opt/node@24/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /usr/local/bin >> "$GITHUB_PATH"
       - name: Format
         run: cargo fmt --manifest-path cli/Cargo.toml --all -- --check
       - name: Lint
@@ -94,10 +110,19 @@ jobs:
         run: cargo build --manifest-path cli/Cargo.toml --release --locked && sh -n scripts/install-cli.sh
 
   container:
-    runs-on: ubuntu-latest
+    # Self-hosted runner on a public repo: never run fork PR code on it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
     needs: [backend, web, cli]
+    env:
+      COMPOSE_PROJECT_NAME: slimlytics-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      HTTP_PORT: "18080"
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /usr/local/bin >> "$GITHUB_PATH"
       - name: Generate disposable Compose environment
         run: ./scripts/generate-env.sh
       - name: Validate Compose
@@ -108,7 +133,7 @@ jobs:
         run: |
           docker compose up -d
           for i in {1..30}; do
-            curl --fail --silent http://127.0.0.1:8080/health && curl --fail --silent http://127.0.0.1:8080/ready && exit 0
+            curl --fail --silent http://127.0.0.1:18080/health && curl --fail --silent http://127.0.0.1:18080/ready && exit 0
             sleep 2
           done
           docker compose ps
