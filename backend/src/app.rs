@@ -1620,14 +1620,14 @@ async fn attribution(
            FROM events WHERE site_id=$1 AND occurred_at >= $2 AND occurred_at < $3
              AND traffic_class='human' GROUP BY visitor_id
          )
-         SELECT source,medium,campaign,count(*)::bigint,
-           COALESCE(sum(conversions.conversions),0)::bigint,
-           COALESCE(sum(revenue.revenue),0)::float8
+         SELECT source,medium,campaign,count(*)::bigint AS visitor_total,
+           COALESCE(sum(conversions.conversions),0)::bigint AS conversion_total,
+           COALESCE(sum(revenue.revenue),0)::float8 AS revenue_total
          FROM first_touch
          LEFT JOIN conversions USING(visitor_id)
          LEFT JOIN revenue USING(visitor_id)
          GROUP BY source,medium,campaign
-         ORDER BY conversions DESC,revenue DESC,count(*) DESC LIMIT $4",
+         ORDER BY conversion_total DESC,revenue_total DESC,visitor_total DESC LIMIT $4",
     )
     .bind(site)
     .bind(a)

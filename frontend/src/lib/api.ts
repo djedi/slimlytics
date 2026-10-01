@@ -1,11 +1,11 @@
 export interface TrendPoint { date: string; visitors: number; pageViews: number }
-export interface Overview { visitors: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
+export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
 export type AntiAdblockServer = 'caddy' | 'nginx' | 'apache';
 export interface AntiAdblockSettings { serverType: AntiAdblockServer; jsPath: string; beaconPath: string }
 export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; overview?: Overview }
 export interface User { id: string; email: string; name?: string }
 export interface AuthResponse { token?: string; accessToken?: string; user: User }
-export interface ReportRow { label: string; value: number; secondary?: string; change?: number }
+export interface ReportRow { label: string; value: number; visitors?: number; secondary?: string; change?: number }
 export interface Visitor { id: string; country: string; region?: string; city?: string; device?: string; browser?: string; page?: string; lastSeen?: string; sessions?: number }
 export interface LiveEvent { id: string; type: string; page: string; visitorId?: string; country?: string; city?: string; timestamp: string; referrer?: string }
 export interface Goal { id: string; name: string; type: string; target: string; conversions?: number; conversionRate?: number }
@@ -160,6 +160,7 @@ export class ApiClient {
     const change = wire.visitors.change_percent ?? wire.views.change_percent ?? 0;
     return {
       visitors: wire.visitors.current,
+      previousVisitors: wire.visitors.previous,
       sessions: wire.sessions.current,
       pageViews: wire.views.current,
       bounceRate: wire.bounceRate ?? wire.bounce_rate ?? 0,
@@ -169,7 +170,7 @@ export class ApiClient {
       trend: wire.trend ?? []
     };
   }
-  async report(id: string, type: string, days = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(days)}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, secondary: `${row.visitors} visitors` })); }
+  async report(id: string, type: string, days = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(days)}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, visitors: row.visitors })); }
   journeys(id: string, days = 28) { return this.request<Journey[]>(`/sites/${id}/insights/journeys?${dateQuery(days)}`, {}, () => []); }
   attribution(id: string, days = 28) { return this.request<Attribution[]>(`/sites/${id}/insights/attribution?${dateQuery(days)}`, {}, () => []); }
   anomalies(id: string, days = 28) { return this.request<Anomaly[]>(`/sites/${id}/insights/anomalies?${dateQuery(days)}`, {}, () => []); }
