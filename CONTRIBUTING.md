@@ -30,3 +30,11 @@ Migrations are append-only after release. Use explicit indexes and constraints, 
 ## Commit format
 
 Use conventional prefixes such as `feat:`, `fix:`, `test:`, `docs:`, `refactor:`, and `chore:`.
+
+## Pull request checks
+
+CI selects checks from the full PR diff. Backend or migration changes run Rust and database tests; frontend or tracker changes run web checks; CLI changes run CLI checks. Changes to `docs/openapi.json` run both backend and web checks because both compile it. Application and container changes also build and smoke-test the Compose stack. Prose-only documentation skips application builds. Unknown files, shared tooling, and CI changes select all gates; pushes to `main` always run the full suite.
+
+The change selection rules are in `scripts/ci-changes.mjs`, with coverage run by `node --test scripts/ci-changes.test.mjs`. The job names remain `backend`, `web`, `cli`, and `container`; unaffected jobs appear as skipped. The existing restriction that fork PR code cannot execute on the persistent self-hosted runner remains in place.
+
+Container checks use `compose.ci.yaml` to poll health every second instead of waiting for production polling intervals. The frontend Docker build skips duplicate checks only when the web job passed for the same revision; ordinary Docker builds still run their checks. Rust build dependencies and targets are cached in BuildKit mounts, with the executable copied into the image outside the cache. The first build fills the cache; later source changes reuse dependency compilation.

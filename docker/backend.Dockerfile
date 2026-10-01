@@ -6,14 +6,21 @@ COPY backend/src ./backend/src
 COPY docs/openapi.json ./docs/openapi.json
 COPY migrations ./migrations
 WORKDIR /src/backend
-RUN cargo build --locked --release
+# Preserve dependency builds across source changes on the persistent CI builder.
+# Copy the executable outside the mount so it is part of the image layer.
+RUN --mount=type=cache,id=slimlytics-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=slimlytics-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=slimlytics-backend-target,target=/src/backend/target,sharing=locked \
+    touch src/lib.rs src/main.rs \
+    && cargo build --locked --release \
+    && cp target/release/slimlytics-backend /usr/local/bin/slimlytics-backend
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl libssl3 \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --create-home slimlytics
-COPY --from=builder /src/backend/target/release/slimlytics-backend /usr/local/bin/slimlytics
+COPY --from=builder /usr/local/bin/slimlytics-backend /usr/local/bin/slimlytics
 COPY migrations /app/migrations
 WORKDIR /app
 USER slimlytics
