@@ -1,0 +1,41 @@
+name: Local AI review
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: slimlytics-ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: [self-hosted, macOS, ARM64, slimlytics-reviewer]
+    timeout-minutes: 20
+    steps:
+      - name: Check out trusted base revision only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/opt/python@3.13/bin >> "$GITHUB_PATH"
+
+      - name: Verify reviewer contracts
+        run: python3 .github/scripts/local_pr_review_test.py -v
+
+      - name: Review untrusted diff without checking out PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/local_pr_review.py

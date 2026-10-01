@@ -1,0 +1,22 @@
+# CI uses fast health polling; production retains the normal intervals.
+services:
+  db:
+    healthcheck:
+      interval: 1s
+      retries: 60
+  backend:
+    healthcheck:
+      interval: 1s
+      retries: 60
+  frontend:
+    build:
+      args:
+        # Skip duplicated checks only when the web CI job has already passed.
+        RUN_CHECKS: ${CI_RUN_WEB_CHECKS:-true}
+    healthcheck:
+      interval: 1s
+      retries: 60
+  caddy:
+    healthcheck:
+      interval: 1s
+      retries: 60
