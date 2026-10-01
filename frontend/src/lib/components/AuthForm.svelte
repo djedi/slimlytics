@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { env } from '$env/dynamic/public';
-  import { BarChart3, CircleDot, Eye, EyeOff, Zap } from '@lucide/svelte';
+  import { BarChart3, CircleDot, Eye, EyeOff, ShieldCheck, TrendingUp, Zap } from '@lucide/svelte';
   import { ApiClient } from '$lib/api';
 
   type AuthMode = 'login' | 'register';
@@ -54,7 +54,7 @@
 <main id="main" class="auth-shell">
   <section class="auth-pitch">
     <a class="brand" href="/" aria-label="Slimlytics home">
-      <span class="brand-mark"><BarChart3 size={21} /></span>Slimlytics
+      <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span>Slimlytics
     </a>
     <div>
       <p class="eyebrow">Privacy-first web analytics</p>
@@ -64,30 +64,36 @@
         an overgrown interface.
       </p>
       <ul>
-        <li><CircleDot size={15} /> Cookieless by default</li>
-        <li><CircleDot size={15} /> Self-hosted and fast</li>
-        <li><CircleDot size={15} /> Every metric in one glance</li>
+        <li><ShieldCheck size={18} aria-hidden="true" /> Cookieless by default</li>
+        <li><Zap size={18} aria-hidden="true" /> Self-hosted and fast</li>
+        <li><TrendingUp size={18} aria-hidden="true" /> Every metric in one glance</li>
       </ul>
+      <div class="auth-stat" aria-hidden="true">
+        <span class="mkt-live"><i></i></span>
+        <span><strong>3,421</strong><small>visitors · last 28 days</small></span>
+        <span class="positive">+12.8%</span>
+      </div>
     </div>
     <footer>Independent analytics for independent teams.</footer>
   </section>
 
   <section class="mobile-intro" aria-labelledby="mobile-intro-title">
     <a class="brand" href="/" aria-label="Slimlytics home">
-      <span class="brand-mark"><BarChart3 size={20} /></span>Slimlytics
+      <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span>Slimlytics
     </a>
     <div>
       <p class="eyebrow">Privacy-first web analytics</p>
-      <h1 id="mobile-intro-title">Private analytics without the clutter.</h1>
+      <h1 id="mobile-intro-title">Private analytics <em>without the clutter.</em></h1>
       <p>Clear traffic insights. No invasive profiles.</p>
     </div>
     <ul aria-label="Slimlytics benefits">
-      <li><CircleDot size={13} /> Cookieless by default</li>
-      <li><Zap size={13} /> Live, focused insights</li>
+      <li><CircleDot size={14} aria-hidden="true" /> Cookieless by default</li>
+      <li><Zap size={14} aria-hidden="true" /> Live, focused insights</li>
     </ul>
   </section>
 
   <section class="auth-card" aria-labelledby="auth-title">
+    <a class="auth-back" href="/">← Back to site</a>
     <div class="auth-card-inner">
       <p class="eyebrow">{mode === 'login' ? 'Welcome back' : 'Start measuring'}</p>
       <h2 id="auth-title">
@@ -135,7 +141,7 @@
               aria-pressed={passwordVisible}
               onclick={() => (passwordVisible = !passwordVisible)}
             >
-              {#if passwordVisible}<EyeOff size={18} />{:else}<Eye size={18} />{/if}
+              {#if passwordVisible}<EyeOff size={18} aria-hidden="true" />{:else}<Eye size={18} aria-hidden="true" />{/if}
             </button>
           </span>
         </div>

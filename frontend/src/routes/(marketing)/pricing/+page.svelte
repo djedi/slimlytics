@@ -22,7 +22,10 @@
     </p>
   </header>
 
-  <PricingCards />
+  <section class="mkt-plans" aria-labelledby="plans-title">
+    <h2 id="plans-title" class="sr-only">Plans</h2>
+    <PricingCards />
+  </section>
 
   <section class="mkt-section" aria-labelledby="compare-title">
     <div class="mkt-section-head">
@@ -44,22 +47,13 @@
             <tr>
               <th scope="row">{row.feature}</th>
               <td
-                >{#if row.selfHosted}<Check size={16} aria-label="Included" />{:else}<Minus
-                    size={16}
-                    aria-label="Not included"
-                  />{/if}</td
+                >{#if row.selfHosted}<Check size={18} aria-label="Included" role="img" />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
               >
               <td
-                >{#if row.starter}<Check size={16} aria-label="Included" />{:else}<Minus
-                    size={16}
-                    aria-label="Not included"
-                  />{/if}</td
+                >{#if row.starter}<Check size={18} aria-label="Included" role="img" />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
               >
               <td
-                >{#if row.pro}<Check size={16} aria-label="Included" />{:else}<Minus
-                    size={16}
-                    aria-label="Not included"
-                  />{/if}</td
+                >{#if row.pro}<Check size={18} aria-label="Included" role="img" />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
               >
             </tr>
           {/each}

@@ -28,6 +28,64 @@ The browser displays the agent name and requested permissions. Enter your Slimly
 
 You can also use the IDE's MCP settings: add a Streamable HTTP server with this URL and select Authenticate. Agents that support remote MCP OAuth with dynamic client registration can use the same URL. A client that only supports static bearer tokens can use an existing scoped personal API token instead; see [AGENT_INTEGRATION.md](AGENT_INTEGRATION.md).
 
+## Connect Claude Code
+
+```sh
+claude mcp add --transport http slimlytics https://analytics.example.com/api/mcp
+```
+
+Start `claude`, run `/mcp`, select **slimlytics**, and choose **Authenticate** to complete browser login. Verify with `claude mcp list` or `claude mcp get slimlytics`. Add `--scope user` to make the server available in every project, or `--scope project` to write a shareable `.mcp.json` (it holds only the URL; each teammate authenticates separately):
+
+```json
+{
+  "mcpServers": {
+    "slimlytics": { "type": "http", "url": "https://analytics.example.com/api/mcp" }
+  }
+}
+```
+
+Pre-approve read-only tools in `.claude/settings.json` and leave `setup_site` on manual approval:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__slimlytics__list_sites",
+      "mcp__slimlytics__analytics_summary",
+      "mcp__slimlytics__dimension_report",
+      "mcp__slimlytics__marketing_brief"
+    ]
+  }
+}
+```
+
+Headless reports (authenticate interactively once first):
+
+```sh
+claude -p "Summarize last week's traffic for shop.example.com with the Slimlytics MCP server." \
+  --allowedTools "mcp__slimlytics"
+```
+
+Static bearer token fallback: `claude mcp add --transport http slimlytics https://analytics.example.com/api/mcp --header "Authorization: Bearer $SLIMLYTICS_TOKEN"`.
+
+## Connect Hermes Agent
+
+Add the server to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  slimlytics:
+    url: "https://analytics.example.com/api/mcp"
+    auth: oauth
+```
+
+Then run `hermes mcp login slimlytics` and `hermes mcp test slimlytics`. Hermes prints an authorize URL, opens the browser, and waits for the callback on a loopback port. Use `/reload-mcp` inside a session after config changes. To expose only reporting tools, add:
+
+```yaml
+    tools:
+      include: [list_sites, analytics_summary, dimension_report, marketing_brief]
+```
+
 ## Ask for installation
 
 Example:
@@ -44,6 +102,17 @@ DNT, and GPC. Check both verification URLs and confirm a page view in analytics.
 Reuse the existing site on retries. Keep account tokens and server ingestion keys
 out of browser code. Report any deployment step that still needs operator access.
 ```
+
+Claude Code reads `CLAUDE.md`; the same instruction works there.
+
+More example prompts (any client):
+
+- "Add Slimlytics to this SvelteKit app on Vercel. Call setup_site for https://blog.example.com, implement the two returned proxy paths as server routes, add the script to the root layout, and verify both test URLs on a preview deploy."
+- "Summarize traffic for shop.example.com from last Monday through Sunday, compare with the previous week, and call out the biggest page and referrer changes."
+- "Pull the campaigns report for the last 14 days. Which utm_campaign values reached the signup goal?"
+- "Get yesterday's marketing_brief for shop.example.com and turn it into three actions with supporting numbers."
+- "Compare search_console_report queries with the pages report for 28 days and flag high-impression, low-CTR queries."
+- "List every site I can access, fetch tracking_setup for each, and check scriptTestUrl and beaconTestUrl."
 
 `setup_site` returns whether the site was created and a `setup` object containing `siteId`, `serverType`, `serverConfig`, `snippet`, the JavaScript and beacon paths, and verification URLs. Repeating it for the same domain reuses the site. Existing timezone, retention, and origin settings are preserved; an explicit `serverType` changes only the proxy type, retaining its paths. Existing sites require administrator or owner access for setup.
 
@@ -81,7 +150,7 @@ Discovery:
 
 Authorization and token requests must include `resource` equal to the configured MCP URL. The default scopes are `sites:read sites:write analytics:read`. Optional `integrations:read` enables Search Console reports. Scope checks and site membership checks apply independently. Read-only clients should request `sites:read analytics:read`; they cannot set up sites.
 
-Access tokens are stored only as hashes, restricted to `/api/mcp`, and expire after 30 days. Refresh tokens are not issued: reconnect using browser login after expiry. Revoke a connection immediately from the account's API token settings; OAuth connections appear as **MCP OAuth agent**. Agent calls use the existing audit log. Never put bearer tokens, passwords, or server ingestion keys in website code or committed MCP configuration. Collection keys in generated proxy configuration are public ingestion credentials, not account credentials.
+Access tokens are stored only as hashes, restricted to `/api/mcp`, and expire after 30 days. Refresh tokens are not issued: reconnect using browser login after expiry (`/mcp` in Claude Code, `codex mcp login slimlytics`, or `hermes mcp login slimlytics`). Revoke a connection immediately from the account's API token settings; OAuth connections appear as **MCP OAuth agent**. Agent calls use the existing audit log. Never put bearer tokens, passwords, or server ingestion keys in website code or committed MCP configuration. Collection keys in generated proxy configuration are public ingestion credentials, not account credentials.
 
 The transport is stateless Streamable HTTP with JSON responses. It negotiates revisions `2025-03-26`, `2025-06-18`, and `2025-11-25`; initialization notifications return HTTP 202. GET returns 405 because this server does not offer a server-to-client SSE stream. An unauthenticated POST returns HTTP 401 with OAuth discovery in `WWW-Authenticate`.
 

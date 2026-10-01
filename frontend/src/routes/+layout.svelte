@@ -1,5 +1,6 @@
 <script lang="ts">
   import '../app.css';
+  import '$lib/marketing/marketing.css';
   import { onMount } from 'svelte';
   import { applyTheme, type Theme } from '$lib/ui';
   let { children } = $props();

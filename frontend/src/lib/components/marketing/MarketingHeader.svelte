@@ -1,53 +1,59 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { BarChart3, Menu, X } from '@lucide/svelte';
+  import { BarChart3, Menu, Monitor, Moon, Sun, X } from '@lucide/svelte';
 
-  let open = $state(false);
-  let signedIn = $state(false);
+  const themes = [
+    { value: 'light', label: 'Light', icon: Sun },
+    { value: 'dark', label: 'Dark', icon: Moon },
+    { value: 'system', label: 'System', icon: Monitor }
+  ];
 
-  onMount(() => {
-    try {
-      signedIn = Boolean(globalThis.localStorage?.getItem('slimlytics_token'));
-    } catch {
-      signedIn = false;
-    }
-  });
+  // Marketing pages render without client-side Svelte. The inline script in app.html opens the
+  // mobile menu, swaps the data-auth links for signed-in visitors, and applies the theme radios.
 </script>
 
 <header class="mkt-header">
   <div class="mkt-header-inner">
     <a class="brand" href="/" aria-label="Slimlytics home">
-      <span class="brand-mark"><BarChart3 size={20} /></span>
+      <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span>
       <strong>Slimlytics</strong>
     </a>
 
-    <nav class="mkt-nav" class:open aria-label="Marketing">
-      <a href="/#features" onclick={() => (open = false)}>Features</a>
-      <a href="/pricing" onclick={() => (open = false)}>Pricing</a>
-      <a href="/privacy" onclick={() => (open = false)}>Privacy</a>
-      <a href="/docs" onclick={() => (open = false)}>Docs</a>
+    <nav id="mkt-nav" class="mkt-nav" data-mkt-nav aria-label="Marketing">
+      <a href="/#features">Features</a>
+      <a href="/docs/mcp">Agents</a>
+      <a href="/pricing">Pricing</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/docs">Docs</a>
       <div class="mkt-nav-actions">
-        {#if signedIn}
-          <a class="primary" href="/app" onclick={() => (open = false)}>Open dashboard</a>
-        {:else}
-          <a class="mkt-link-quiet" href="/login" onclick={() => (open = false)}>Sign in</a>
-          <a class="primary" href="/register" onclick={() => (open = false)}>Get started</a>
-        {/if}
+        <a class="primary" href="/app" data-auth="in" hidden>Open dashboard</a>
+        <a class="mkt-link-quiet" href="/login" data-auth="out">Sign in</a>
+        <a class="primary" href="/register" data-auth="out">Get started</a>
       </div>
     </nav>
+
+    <fieldset class="mkt-theme">
+      <legend class="sr-only">Color theme</legend>
+      {#each themes as theme}
+        {@const Icon = theme.icon}
+        <label title={theme.label}>
+          <input type="radio" name="mkt-theme" value={theme.value} checked={theme.value === 'system'} />
+          <Icon size={16} aria-hidden="true" />
+          <span class="sr-only">{theme.label}</span>
+        </label>
+      {/each}
+    </fieldset>
 
     <button
       class="icon-button mkt-menu"
       type="button"
-      aria-label={open ? 'Close menu' : 'Open menu'}
-      aria-expanded={open}
-      onclick={() => (open = !open)}
+      data-mkt-menu
+      aria-label="Open menu"
+      aria-expanded="false"
+      aria-controls="mkt-nav"
     >
-      {#if open}<X size={18} />{:else}<Menu size={18} />{/if}
+      <Menu class="mkt-menu-open" size={20} aria-hidden="true" />
+      <X class="mkt-menu-close" size={20} aria-hidden="true" />
     </button>
   </div>
 </header>
-{#if open}
-  <button class="mkt-scrim" type="button" aria-label="Close menu" onclick={() => (open = false)}
-  ></button>
-{/if}
+<button class="mkt-scrim" type="button" data-mkt-scrim aria-label="Close menu" hidden></button>
