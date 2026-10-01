@@ -1,0 +1,92 @@
+name: Deploy production
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel a deployment mid-flight; a newer queued run supersedes older queued ones.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only deploy main pushes that passed CI (or a manual dispatch from main).
+    if: >-
+      ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
+           github.event.workflow_run.head_branch == 'main') }}
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/opt/node@24/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /usr/local/bin >> "$GITHUB_PATH"
+
+      - name: Skip if main has moved past the tested commit
+        id: current
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          if [[ "$(git rev-parse HEAD)" == "$TESTED_SHA" ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main is now $(git rev-parse --short HEAD); skipping $TESTED_SHA in favor of the newer run."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install SSH deploy key
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.SLIMLYTICS_DEPLOY_SSH_KEY }}
+        run: |
+          [[ -n "$DEPLOY_SSH_KEY" ]] || { echo 'SLIMLYTICS_DEPLOY_SSH_KEY secret is not set.' >&2; exit 1; }
+          ssh_dir="$RUNNER_TEMP/deploy-ssh"
+          mkdir -m 700 -p "$ssh_dir/bin"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
+          chmod 600 "$ssh_dir/key"
+          # Pinned production host key (verified against cheap.redseam.com).
+          echo 'cheap.redseam.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDxaqcHT6cPkz93XZf1cbqPuKCkTrJT3/RoJ629PVIOy' > "$ssh_dir/known_hosts"
+          # Wrapper so the deploy script's ssh and rsync use only this key and host key,
+          # without touching the persistent runner's ~/.ssh.
+          cat > "$ssh_dir/bin/ssh" <<EOF
+          #!/bin/sh
+          exec /usr/bin/ssh -i "$ssh_dir/key" -o IdentitiesOnly=yes -o IdentityAgent=none \
+            -o UserKnownHostsFile="$ssh_dir/known_hosts" -o StrictHostKeyChecking=yes "\$@"
+          EOF
+          chmod 700 "$ssh_dir/bin/ssh"
+          echo "$ssh_dir/bin" >> "$GITHUB_PATH"
+
+      # CI already ran the full test/check suite on this commit; the deploy script
+      # still needs the built frontend to verify the deployed API docs assets.
+      - name: Build tracker and frontend
+        if: steps.current.outputs.deploy == 'true'
+        run: |
+          npm --prefix tracker ci
+          npm --prefix frontend ci
+          make tracker
+          npm --prefix frontend run build
+
+      - name: Deploy
+        if: steps.current.outputs.deploy == 'true'
+        run: ./scripts/deploy-production.sh --skip-checks
+
+      - name: Remove SSH deploy key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/deploy-ssh"
