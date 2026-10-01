@@ -1,0 +1,57 @@
+# Live-reload development overlay. Use `make dev` (or
+# `docker compose -f compose.yaml -f compose.dev.yaml up --build`).
+#
+# - frontend: Vite dev server with HMR, proxied by Caddy on the usual :8080.
+# - backend: cargo-watch rebuilds and restarts on Rust, manifest, build script, migration, or
+#   OpenAPI changes.
+# - db and caddy are unchanged from compose.yaml.
+services:
+  frontend:
+    build:
+      target: dev
+    command:
+      - sh
+      - -c
+      # Reinstall dependencies only when the lockfile changes.
+      - >-
+        cmp -s package-lock.json node_modules/.dev-lock || { npm ci --no-audit --no-fund && cp package-lock.json node_modules/.dev-lock; } &&
+        exec npx vite dev --host 0.0.0.0 --port 3000 --strictPort
+    environment:
+      NODE_ENV: development
+      VITE_HMR_CLIENT_PORT: ${HTTP_PORT:-8080}
+      VITE_WATCH_POLLING: ${VITE_WATCH_POLLING:-false}
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    healthcheck:
+      # The first request compiles the app, so allow a generous start period.
+      start_period: 180s
+      timeout: 30s
+    mem_limit: 1536m
+    cpus: 2.0
+    pids_limit: 400
+
+  backend:
+    build:
+      target: dev
+    command: ["cargo", "watch", "--why", "-w", "src", "-w", "Cargo.toml", "-w", "Cargo.lock", "-w", "build.rs", "-w", "../migrations", "-w", "../docs/openapi.json", "-x", "run"]
+    environment:
+      CARGO_TARGET_DIR: /cargo-target
+      RUST_LOG: ${RUST_LOG:-slimlytics=debug,tower_http=info}
+    volumes:
+      - ./backend:/src/backend
+      - ./migrations:/src/migrations:ro
+      - ./docs:/src/docs:ro
+      - backend-target:/cargo-target
+      - cargo-registry:/usr/local/cargo/registry
+    healthcheck:
+      # The first debug build of all dependencies takes a few minutes.
+      start_period: 600s
+    mem_limit: 4g
+    cpus: 4.0
+    pids_limit: 1000
+
+volumes:
+  frontend-node-modules:
+  backend-target:
+  cargo-registry:

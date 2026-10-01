@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help setup env tracker test test-backend test-cli test-frontend test-tracker check build up down logs clean deploy
+.PHONY: help setup env tracker test test-backend test-cli test-frontend test-tracker check build up dev dev-logs down logs clean deploy
 
 help:
 	@printf '%s\n' \
@@ -12,6 +12,8 @@ help:
 	  'make build          Build backend, CLI, tracker, and frontend' \
 	  'make deploy         Back up, deploy, and verify production' \
 	  'make up             Start the production-like Docker stack' \
+	  'make dev            Start the Docker stack with live reload' \
+	  'make dev-logs       Follow live-reload frontend and backend logs' \
 	  'make down           Stop the Docker stack' \
 	  'make logs           Follow Docker logs'
 
@@ -69,6 +71,16 @@ deploy:
 up:
 	@test -f .env || (echo 'Copy .env.example to .env and replace every placeholder first.' >&2; exit 1)
 	docker compose up --build -d
+
+DEV_COMPOSE := docker compose -f compose.yaml -f compose.dev.yaml
+
+dev:
+	@test -f .env || (echo 'Copy .env.example to .env and replace every placeholder first.' >&2; exit 1)
+	$(DEV_COMPOSE) up --build -d
+	@echo 'Live reload running at http://localhost:$${HTTP_PORT:-8080} — follow with: make dev-logs'
+
+dev-logs:
+	$(DEV_COMPOSE) logs -f frontend backend
 
 down:
 	docker compose down

@@ -6,6 +6,59 @@
     <meta name="theme-color" content="#101722" />
     <meta name="description" content="Slimlytics — focused, privacy-first web analytics." />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><rect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%2312b886%22/><path d=%22M16 43V30h8v13zm12 0V21h8v22zm12 0V12h8v31z%22 fill=%22white%22/></svg>" />
+    <script>
+      // Runs before paint on every page. Marketing pages ship no framework JavaScript, so this
+      // also progressively enhances their header menu, signed-in links, and copy buttons.
+      (function () {
+        var d = document, root = d.documentElement, store;
+        try { store = localStorage; } catch (e) {}
+        var theme = store && store.getItem('slimlytics_theme');
+        if (theme === 'light' || theme === 'dark') { root.dataset.theme = theme; root.style.colorScheme = theme; }
+        var signedIn = !!(store && store.getItem('slimlytics_token'));
+        function setMenu(open) {
+          d.querySelectorAll('[data-mkt-nav]').forEach(function (n) { n.classList.toggle('open', open); });
+          d.querySelectorAll('[data-mkt-menu]').forEach(function (b) {
+            b.setAttribute('aria-expanded', String(open));
+            b.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+          });
+          d.querySelectorAll('[data-mkt-scrim]').forEach(function (s) { s.hidden = !open; });
+        }
+        function applyTheme(value) {
+          if (value === 'light' || value === 'dark') { root.dataset.theme = value; root.style.colorScheme = value; }
+          else { delete root.dataset.theme; root.style.colorScheme = 'light dark'; }
+        }
+        d.addEventListener('change', function (event) {
+          var t = event.target;
+          if (t.name !== 'mkt-theme') return;
+          applyTheme(t.value);
+          try { store && store.setItem('slimlytics_theme', t.value); } catch (e) {}
+        });
+        d.addEventListener('DOMContentLoaded', function () {
+          var current = root.dataset.theme || 'system';
+          d.querySelectorAll('input[name="mkt-theme"]').forEach(function (r) { r.checked = r.value === current; });
+          d.querySelectorAll('[data-auth]').forEach(function (el) {
+            el.hidden = el.getAttribute('data-auth') !== (signedIn ? 'in' : 'out');
+          });
+        });
+        d.addEventListener('click', function (event) {
+          var t = event.target.closest && event.target.closest('[data-mkt-menu],[data-mkt-scrim],[data-mkt-nav] a,[data-copy]');
+          if (!t) return;
+          if (t.hasAttribute('data-mkt-menu')) return setMenu(t.getAttribute('aria-expanded') !== 'true');
+          if (!t.hasAttribute('data-copy')) return setMenu(false);
+          var figure = t.closest('figure'), code = figure && figure.querySelector('pre');
+          var status = figure && figure.querySelector('[aria-live]'), label = t.querySelector('[data-copy-label]');
+          if (!code || !navigator.clipboard) return;
+          navigator.clipboard.writeText(code.textContent).then(function () {
+            if (label) label.textContent = 'Copied';
+            if (status) status.textContent = t.getAttribute('data-copy') + ' copied';
+            setTimeout(function () { if (label) label.textContent = 'Copy'; }, 2000);
+          }, function () {
+            if (status) status.textContent = 'Copy failed; select the text manually';
+          });
+        });
+        d.addEventListener('keydown', function (event) { if (event.key === 'Escape') setMenu(false); });
+      })();
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

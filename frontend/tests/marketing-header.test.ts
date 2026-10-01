@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, render, screen } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MarketingHeader from '../src/lib/components/marketing/MarketingHeader.svelte';
 
@@ -25,11 +25,30 @@ describe('marketing header', () => {
     expect(screen.getByRole('link', { name: 'Get started' })).toHaveAttribute('href', '/register');
   });
 
-  it('shows open dashboard when a token is present', async () => {
-    values.set('slimlytics_token', 'test-token');
+  it('server-renders a hidden dashboard link for the inline auth script to reveal', () => {
     render(MarketingHeader);
-    await waitFor(() => {
-      expect(screen.getByRole('link', { name: 'Open dashboard' })).toHaveAttribute('href', '/app');
-    });
+    const dashboard = document.querySelector('a[data-auth="in"]');
+    expect(dashboard).toHaveTextContent('Open dashboard');
+    expect(dashboard).toHaveAttribute('href', '/app');
+    expect(dashboard).toHaveAttribute('data-auth', 'in');
+    expect(dashboard).not.toBeVisible();
+    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('data-auth', 'out');
+  });
+
+  it('exposes an accessible mobile menu toggle wired to the navigation', () => {
+    render(MarketingHeader);
+    const toggle = screen.getByRole('button', { name: 'Open menu' });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).toHaveAttribute('aria-controls', 'mkt-nav');
+  });
+
+  it('offers light, dark, and system theme radios, defaulting to system', () => {
+    render(MarketingHeader);
+    const group = screen.getByRole('group', { name: 'Color theme' });
+    expect(group).toBeInTheDocument();
+    for (const name of ['Light', 'Dark', 'System']) {
+      expect(screen.getByRole('radio', { name })).toHaveAttribute('name', 'mkt-theme');
+    }
+    expect(screen.getByRole('radio', { name: 'System' })).toBeChecked();
   });
 });

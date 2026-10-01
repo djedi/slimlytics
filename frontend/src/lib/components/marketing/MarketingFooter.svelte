@@ -6,7 +6,7 @@
   <div class="mkt-footer-inner">
     <div class="mkt-footer-brand">
       <a class="brand" href="/" aria-label="Slimlytics home">
-        <span class="brand-mark"><BarChart3 size={18} /></span>
+        <span class="brand-mark"><BarChart3 size={18} aria-hidden="true" /></span>
         Slimlytics
       </a>
       <p>Privacy-first web analytics for independent teams. Self-host free or run hosted plans.</p>
@@ -17,14 +17,16 @@
       <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
       <a href="/register">Create account</a>
+      <a href="/login">Sign in</a>
     </nav>
     <nav aria-label="Footer documentation">
       <strong>Docs</strong>
       <a href="/docs">Overview</a>
       <a href="/docs/mcp">MCP agent setup</a>
+      <a href="/docs/mcp#claude-code">Claude Code</a>
+      <a href="/docs/mcp#hermes">Hermes Agent</a>
       <a href="/docs/cli">CLI</a>
       <a href="/docs/api">API reference</a>
-      <a href="/login">Sign in</a>
     </nav>
   </div>
   <p class="mkt-footer-copy">© {new Date().getFullYear()} Slimlytics. Independent analytics for independent teams.</p>

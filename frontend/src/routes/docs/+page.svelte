@@ -40,7 +40,7 @@
         <article class="feature-card docs-card">
           <Bot size={22} aria-hidden="true" />
           <h2>MCP for agents</h2>
-          <p>Connect your coding agent with browser OAuth, then ask it to install analytics with first-party anti-adblock tracking.</p>
+          <p>Connect Claude Code, Codex, or Hermes Agent with browser OAuth, then ask it to install analytics with first-party anti-adblock tracking.</p>
           <a class="secondary" href="/docs/mcp">Open MCP setup guide</a>
         </article>
         <article class="feature-card docs-card">
