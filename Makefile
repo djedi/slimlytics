@@ -31,6 +31,7 @@ tracker:
 
 test: test-backend test-cli test-tracker test-frontend
 	node --test scripts/server-log-forwarder.test.mjs scripts/ci-changes.test.mjs
+	python3 .github/scripts/local_pr_review_test.py -v
 
 test-backend:
 	cargo test --manifest-path backend/Cargo.toml --all-targets
