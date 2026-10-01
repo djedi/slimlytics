@@ -78,6 +78,12 @@
     | 'settings';
   const demo = env.PUBLIC_DEMO_MODE === 'true';
   const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, demo);
+  // An expired or revoked session must clear the stored token, or /login would bounce straight back here.
+  api.onUnauthorized = () => {
+    localStorage.removeItem('slimlytics_token');
+    source?.close();
+    void goto('/login');
+  };
   const nav: Array<{ id: View; label: string; icon: typeof Activity }> = [
     { id: 'overview', label: 'Overview', icon: Gauge },
     { id: 'insights', label: 'Insights', icon: BarChart3 },

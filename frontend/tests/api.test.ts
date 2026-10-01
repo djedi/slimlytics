@@ -180,3 +180,17 @@ describe('ApiClient', () => {
     expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'POST' });
   });
 });
+
+describe('session expiry', () => {
+  it('notifies when an authenticated request is rejected, but not for a failed login', async () => {
+    const fetcher = (async () => new Response(JSON.stringify({ message: 'unauthorized' }), { status: 401 })) as typeof fetch;
+    const client = new ApiClient('/api', fetcher);
+    let calls = 0;
+    client.onUnauthorized = () => { calls += 1; };
+    await expect(client.login('a@b.co', 'wrong-password')).rejects.toThrow();
+    expect(calls).toBe(0);
+    client.setToken('expired');
+    await expect(client.sites()).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+});
