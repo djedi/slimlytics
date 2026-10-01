@@ -39,10 +39,15 @@ fn drops_invalid_edge_location_values() {
 
 /// Verifies a real downloaded database (`make geoip`) resolves public addresses. DB-IP's
 /// schema matches GeoIP2 City, which is what the reader decodes.
+/// CI runs ignored tests for PostgreSQL but has no 120 MB GeoIP file, so this skips
+/// unless GEOIP_TEST_DATABASE is set.
 #[test]
-#[ignore = "requires GEOIP_TEST_DATABASE pointing to a DB-IP or MaxMind City .mmdb file"]
+#[ignore = "set GEOIP_TEST_DATABASE to a DB-IP or MaxMind City .mmdb file"]
 fn resolves_public_addresses_from_a_downloaded_city_database() {
-    let path = std::env::var("GEOIP_TEST_DATABASE").expect("GEOIP_TEST_DATABASE required");
+    let Ok(path) = std::env::var("GEOIP_TEST_DATABASE") else {
+        eprintln!("skipping: GEOIP_TEST_DATABASE is not set");
+        return;
+    };
     let geoip = slimlytics_backend::enrichment::GeoIp::open(path).unwrap();
     let google = geoip.lookup("8.8.8.8".parse().unwrap()).unwrap();
     assert_eq!(google.country_code.as_deref(), Some("US"));
