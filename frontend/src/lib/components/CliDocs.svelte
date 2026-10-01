@@ -24,6 +24,7 @@
   <a class="brand" href="/" aria-label="Slimlytics home"><span><BarChart3 size={20}/></span>Slimlytics</a>
   <nav aria-label="Documentation navigation">
     <a class="active" href="/docs/cli">CLI guide</a>
+    <a href="/docs/mcp">MCP agent setup</a>
     <a href="/api/docs">Interactive API reference <ExternalLink size={14}/></a>
   </nav>
 </header>

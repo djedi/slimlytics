@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BookOpen, Code2, Terminal } from '@lucide/svelte';
+  import { BookOpen, Bot, Code2, Terminal } from '@lucide/svelte';
   import MarketingHeader from '$lib/components/marketing/MarketingHeader.svelte';
   import MarketingFooter from '$lib/components/marketing/MarketingFooter.svelte';
 </script>
@@ -8,7 +8,7 @@
   <title>Documentation · Slimlytics</title>
   <meta
     name="description"
-    content="Slimlytics documentation hub: getting started, CLI automation, and API reference."
+    content="Slimlytics documentation hub: getting started, MCP agent setup, CLI automation, and API reference."
   />
 </svelte:head>
 
@@ -19,8 +19,8 @@
       <p class="eyebrow">Documentation</p>
       <h1>Get productive quickly</h1>
       <p class="mkt-lead">
-        Create an account, add a site, install the tracker, and explore reports. Use the CLI for
-        automation or the HTTP API for integrations.
+        Create an account, add a site, install the tracker, and explore reports. Connect your agent with MCP for automatic setup, use the CLI for
+        automation, or use the HTTP API for integrations.
       </p>
     </header>
 
@@ -36,6 +36,12 @@
             <li>Open Overview and Spy as traffic arrives.</li>
           </ol>
           <a class="primary" href="/register">Create free account</a>
+        </article>
+        <article class="feature-card docs-card">
+          <Bot size={22} aria-hidden="true" />
+          <h2>MCP for agents</h2>
+          <p>Connect your coding agent with browser OAuth, then ask it to install analytics with first-party anti-adblock tracking.</p>
+          <a class="secondary" href="/docs/mcp">Open MCP setup guide</a>
         </article>
         <article class="feature-card docs-card">
           <Terminal size={22} aria-hidden="true" />
