@@ -4,7 +4,9 @@ WORKDIR /src/tracker
 COPY tracker/package.json tracker/package-lock.json* ./
 RUN npm ci
 COPY tracker/ ./
-RUN npm run test -- --run && npm run build
+ARG RUN_CHECKS=true
+RUN if [ "$RUN_CHECKS" != false ]; then npm run test -- --run; fi \
+    && npm run build
 
 FROM node:24-bookworm-slim AS frontend-builder
 WORKDIR /src/frontend
@@ -17,7 +19,9 @@ COPY --from=tracker /src/tracker/dist/slimlytics.js ./src/lib/server/generated/t
 ARG PUBLIC_API_BASE_URL=/api
 ENV PUBLIC_API_BASE_URL=$PUBLIC_API_BASE_URL
 ENV PUBLIC_DEMO_MODE=false
-RUN npm run check && npm run test -- --run && npm run build
+ARG RUN_CHECKS=true
+RUN if [ "$RUN_CHECKS" != false ]; then npm run check && npm run test -- --run; fi \
+    && npm run build
 
 FROM node:24-bookworm-slim AS runtime-deps
 WORKDIR /app

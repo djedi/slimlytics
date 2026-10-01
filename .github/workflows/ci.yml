@@ -19,9 +19,32 @@ env:
   VISITOR_HASH_SECRET: ci-only-visitor-secret-at-least-thirty-two-bytes
 
 jobs:
-  backend:
-    # Self-hosted runner on a public repo: never run fork PR code on it.
+  changes:
+    # Keep fork PR code off the persistent self-hosted machine.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.select.outputs.backend }}
+      web: ${{ steps.select.outputs.web }}
+      cli: ${{ steps.select.outputs.cli }}
+      container: ${{ steps.select.outputs.container }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Test change selection
+        run: node --test scripts/ci-changes.test.mjs
+      - name: Select affected checks
+        id: select
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/ci-changes.mjs
+
+  backend:
+    needs: changes
+    # Select only affected PR checks; pushes to main select all gates.
+    if: needs.changes.outputs.backend == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     env:
       # Persistent across runs on the self-hosted runner, so builds are incremental.
@@ -57,11 +80,12 @@ jobs:
         run: cargo test --manifest-path backend/Cargo.toml --all-targets -- --include-ignored --test-threads=1
       - name: Stop PostgreSQL
         if: always()
-        run: docker rm -f "$PG_CONTAINER" || true
+        run: if [ -n "${PG_CONTAINER:-}" ]; then docker rm -f "$PG_CONTAINER"; fi
 
   web:
-    # Self-hosted runner on a public repo: never run fork PR code on it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    # Select only affected PR checks; pushes to main select all gates.
+    if: needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     steps:
       - uses: actions/checkout@v7
@@ -87,8 +111,9 @@ jobs:
         run: npm --prefix frontend run check && npm --prefix frontend test -- --run && npm --prefix frontend run build
 
   cli:
-    # Self-hosted runner on a public repo: never run fork PR code on it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    # Select only affected PR checks; pushes to main select all gates.
+    if: needs.changes.outputs.cli == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/cli
@@ -111,12 +136,18 @@ jobs:
 
   container:
     # Self-hosted runner on a public repo: never run fork PR code on it.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # Allow unrelated jobs to be skipped, but never build after a failure/cancellation.
+    if: >-
+      ${{ !failure() && !cancelled() && needs.changes.result == 'success' &&
+          needs.changes.outputs.container == 'true' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
-    needs: [backend, web, cli]
+    needs: [changes, backend, web, cli]
     env:
       COMPOSE_PROJECT_NAME: slimlytics-ci-${{ github.run_id }}-${{ github.run_attempt }}
       HTTP_PORT: "18080"
+      COMPOSE_FILE: compose.yaml:compose.ci.yaml
+      CI_RUN_WEB_CHECKS: ${{ needs.web.result == 'success' && 'false' || 'true' }}
     steps:
       - uses: actions/checkout@v7
       - name: Toolchain PATH
