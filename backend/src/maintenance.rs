@@ -81,10 +81,17 @@ pub async fn prune_oauth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
         .execute(pool)
         .await?
         .rows_affected();
+    // Lock ended connections before touching their refresh rows (the same parent-first
+    // order exchange_refresh uses). SKIP LOCKED leaves any connection a refresh is renewing
+    // right now for the next run, so a just-extended connection never loses its history.
     let refresh = sqlx::query(
-        "DELETE FROM oauth_refresh_tokens r USING api_tokens t
-         WHERE t.id=r.api_token_id
-           AND (t.revoked_at IS NOT NULL OR t.expires_at<now())",
+        "WITH ended AS (
+           SELECT t.id FROM api_tokens t
+           WHERE (t.revoked_at IS NOT NULL OR t.expires_at<now())
+             AND EXISTS (SELECT 1 FROM oauth_refresh_tokens r WHERE r.api_token_id=t.id)
+           FOR UPDATE SKIP LOCKED
+         )
+         DELETE FROM oauth_refresh_tokens r USING ended WHERE r.api_token_id=ended.id",
     )
     .execute(pool)
     .await?

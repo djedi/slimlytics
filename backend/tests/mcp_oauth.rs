@@ -676,6 +676,55 @@ async fn maintenance_keeps_replay_detection_for_active_connections() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn maintenance_does_not_prune_a_connection_being_renewed() {
+    let (pool, router) = setup().await;
+    let (email, _) = register_user(&router).await;
+    let client = register_client(&router).await;
+    let grant = connect(&router, &email, &client).await;
+    let rotated =
+        value(refresh(&router, grant["refresh_token"].as_str().unwrap(), &client).await).await;
+    let connection: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM api_tokens WHERE token_hash=$1")
+            .bind(slimlytics_backend::auth::hash_api_token(
+                rotated["access_token"].as_str().unwrap(),
+            ))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE api_tokens SET expires_at=created_at+interval '1 microsecond' WHERE id=$1")
+        .bind(connection)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // A refresh that began just before expiry holds the connection row while it renews it.
+    let mut renewal = pool.begin().await.unwrap();
+    sqlx::query("UPDATE api_tokens SET expires_at=now()+interval '90 days' WHERE id=$1")
+        .bind(connection)
+        .execute(&mut *renewal)
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        slimlytics_backend::prune_oauth_state(&pool),
+    )
+    .await
+    .expect("pruning must not block on an in-flight refresh")
+    .unwrap();
+    renewal.commit().await.unwrap();
+    let kept: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM oauth_refresh_tokens WHERE api_token_id=$1")
+            .bind(connection)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        kept, 2,
+        "the renewed connection keeps its rotated-out token for replay detection"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
 async fn concurrent_replay_and_refresh_never_fail_with_a_server_error() {
     let (_pool, router) = setup().await;
     let client = register_client(&router).await;
