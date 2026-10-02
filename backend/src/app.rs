@@ -299,6 +299,10 @@ pub fn app(state: AppState) -> Router {
             post(rotate_server_key),
         )
         .route(
+            "/api/sites/{site_id}/rotate-proxy-key",
+            post(rotate_proxy_key),
+        )
+        .route(
             "/api/sites/{site_id}/anti-adblock",
             axum::routing::put(update_anti_adblock),
         )
@@ -856,6 +860,24 @@ async fn rotate_server_key(
     .fetch_one(&state.pool)
     .await?;
     Ok(Json(json!({"serverWriteKey":key})))
+}
+
+/// Replace a site's proxy key, e.g. after it leaked. The old key stops vouching for forwarded
+/// visitor IPs immediately; the site's proxy configuration must be updated with the new one.
+async fn rotate_proxy_key(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&state.pool, user, site, true).await?;
+    let key: Uuid = sqlx::query_scalar(
+        "UPDATE sites SET proxy_key=gen_random_uuid(),updated_at=now() \
+         WHERE id=$1 RETURNING proxy_key",
+    )
+    .bind(site)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(json!({"proxyKey":key})))
 }
 
 /// The visitor IP for a collected event. A site's first-party proxy connects from the

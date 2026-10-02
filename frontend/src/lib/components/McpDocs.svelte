@@ -231,7 +231,8 @@ hermes mcp test slimlytics`;
           Set-Cookie. On the collection route, send the visitor’s IP as
           <code>X-Slimlytics-Client-IP</code> and the setup’s <code>proxyKey</code> as
           <code>X-Slimlytics-Proxy-Key</code>, or locations and visitor counts will reflect your web
-          server instead of your visitors. Avoid caching collection responses or accepting arbitrary
+          server instead of your visitors. Keep the proxy key out of public repositories; it is a
+          server-side secret. Avoid caching collection responses or accepting arbitrary
           upstream URLs.
         </p>
         <h3 id="prompts">Prompt library</h3>

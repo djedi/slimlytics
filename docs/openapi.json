@@ -4098,6 +4098,21 @@
         }
       }
     },
+    "/api/sites/{siteId}/rotate-proxy-key": {
+      "post": {
+        "tags": ["Sites"],
+        "summary": "Rotate the first-party proxy key",
+        "operationId": "rotateProxyKey",
+        "parameters": [{"$ref": "#/components/parameters/SiteId"}],
+        "responses": {
+          "200": {"description": "New proxy key", "content": {"application/json": {"schema": {"type": "object", "required": ["proxyKey"], "properties": {"proxyKey": {"type": "string", "format": "uuid"}}}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
     "/api/ingest": {
       "post": {
         "tags": ["Collection"],
@@ -4638,7 +4653,7 @@
           "proxyKey": {
             "type": "string",
             "format": "uuid",
-            "description": "Sent by the site's first-party proxy as X-Slimlytics-Proxy-Key with X-Slimlytics-Client-IP so locations and visitor IDs use the real visitor IP; grants no other access"
+            "description": "Server-side secret sent by the site's first-party proxy as X-Slimlytics-Proxy-Key with X-Slimlytics-Client-IP so locations and visitor IDs use the real visitor IP. Keep it out of public repositories; rotate with POST /api/sites/{siteId}/rotate-proxy-key if exposed"
           },
           "antiAdblockServer": {
             "type": "string",

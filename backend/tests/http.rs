@@ -132,6 +132,7 @@ async fn openapi_document_covers_every_public_backend_route() {
         ("/api/sites/{siteId}", "delete"),
         ("/api/sites/{siteId}/rotate-key", "post"),
         ("/api/sites/{siteId}/rotate-server-key", "post"),
+        ("/api/sites/{siteId}/rotate-proxy-key", "post"),
         ("/api/sites/{siteId}/anti-adblock", "put"),
         ("/api/sites/{siteId}/collection-health", "get"),
         ("/api/sites/{siteId}/overview", "get"),

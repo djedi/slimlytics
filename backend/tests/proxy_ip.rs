@@ -122,6 +122,62 @@ async fn proxy_forwarded_visitor_ips_count_as_separate_visitors_only_with_the_ke
         1,
         "missing or wrong key falls back to the connecting server's IP"
     );
+
+    // A leaked key can be replaced: the old one stops vouching immediately.
+    let rotated = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            &format!("/api/sites/{site_id}/rotate-proxy-key"),
+            Some(&token),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(rotated.status(), StatusCode::OK);
+    let new_key = body_json(rotated.into_body()).await["proxyKey"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(new_key, proxy_key);
+    for (path, key) in [
+        ("/old-key", proxy_key.as_str()),
+        ("/new-key", new_key.as_str()),
+    ] {
+        for client_ip in ["81.2.69.160", "8.8.8.8"] {
+            let mut request = json_request(
+                "POST",
+                &format!("/api/e/{write_key}"),
+                None,
+                json!({"name":"pageview","url":format!("{origin}{path}")}),
+            );
+            let headers = request.headers_mut();
+            headers.insert(header::ORIGIN, origin.parse().unwrap());
+            headers.insert(
+                header::USER_AGENT,
+                "Mozilla/5.0 (Macintosh) Chrome/129".parse().unwrap(),
+            );
+            headers.insert("x-slimlytics-client-ip", client_ip.parse().unwrap());
+            headers.insert("x-slimlytics-proxy-key", key.parse().unwrap());
+            request.extensions_mut().insert(ConnectInfo(
+                website_server.parse::<std::net::SocketAddr>().unwrap(),
+            ));
+            assert_eq!(
+                router.clone().oneshot(request).await.unwrap().status(),
+                StatusCode::ACCEPTED
+            );
+        }
+    }
+    assert_eq!(
+        distinct("/old-key").await,
+        1,
+        "rotated-out key is no longer trusted"
+    );
+    assert_eq!(
+        distinct("/new-key").await,
+        2,
+        "new key vouches for visitor IPs"
+    );
 }
 
 fn json_request(method: &str, uri: &str, token: Option<&str>, body: Value) -> Request<Body> {

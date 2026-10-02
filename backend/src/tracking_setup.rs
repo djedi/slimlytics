@@ -17,7 +17,8 @@ pub struct TrackingSetup {
     pub beacon_test_url: String,
     pub server_ingest_url: String,
     /// Sent as X-Slimlytics-Proxy-Key with X-Slimlytics-Client-IP by the collection route so
-    /// visitor locations and IDs use the real visitor IP. Grants no other access.
+    /// visitor locations and IDs use the real visitor IP. A server-side secret: anyone holding it
+    /// can choose the IP Slimlytics records, so keep it out of public repositories.
     pub proxy_key: Uuid,
     pub next_steps: Vec<String>,
 }
@@ -95,6 +96,7 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
             "Add snippet to every page before the closing </body> tag.".into(),
             "Open scriptTestUrl and beaconTestUrl; both must return HTTP 200.".into(),
             "Custom or edge routes must send the visitor IP as X-Slimlytics-Client-IP and proxyKey as X-Slimlytics-Proxy-Key on the collection route, or locations and visitor counts will reflect the website's server.".into(),
+            "Treat proxyKey as a secret: keep serverConfig out of public repositories (load the key from private deployment config) and rotate it with POST /api/sites/{siteId}/rotate-proxy-key if it is exposed.".into(),
         ],
     })
 }
