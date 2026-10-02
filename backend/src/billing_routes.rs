@@ -1,0 +1,869 @@
+//! Billing HTTP routes: plans, account status and usage, Stripe Checkout and Customer
+//! Portal sessions, the Stripe webhook, and site-limit enforcement. See `crate::billing` for
+//! configuration. All routes report `enabled: false` (or 404 for actions) when billing is off.
+use super::*;
+use crate::billing::{
+    verify_webhook_signature, BillingConfig, Interval, Plan, StripeConfig, STRIPE_API_VERSION,
+};
+use axum::body::Bytes;
+
+/// Tags Checkout Sessions created by this integration in the Stripe Dashboard.
+const INTEGRATION_IDENTIFIER: &str = "slimlytics-subscriptions-qhtwkzpd";
+const WEBHOOK_TOLERANCE_SECONDS: i64 = 300;
+
+pub(super) fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/billing/plans", get(plans))
+        .route("/api/billing", get(status))
+        .route("/api/billing/checkout", post(checkout))
+        .route("/api/billing/portal", post(portal))
+        .route("/api/billing/webhook", post(webhook))
+}
+
+/// A signed-in person. Billing changes money, so API and agent tokens are refused.
+struct SessionUser(Uuid);
+impl FromRequestParts<AppState> for SessionUser {
+    type Rejection = ApiError;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let bearer = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if bearer.starts_with("slyt_") {
+            return Err(ApiError::Forbidden);
+        }
+        let CurrentUser(user) = CurrentUser::from_request_parts(parts, state).await?;
+        Ok(Self(user))
+    }
+}
+
+fn config(state: &AppState) -> Result<&Arc<BillingConfig>, ApiError> {
+    state.billing.as_ref().ok_or(ApiError::NotFound)
+}
+
+fn stripe(state: &AppState) -> Result<&StripeConfig, ApiError> {
+    config(state)?
+        .stripe
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("payments are not configured on this server".into()))
+}
+
+#[derive(sqlx::FromRow)]
+struct Account {
+    /// The plan the Stripe subscription grants; always kept in sync by webhooks.
+    plan: String,
+    /// An administrator's grant, which overrides `plan` until released.
+    admin_plan: Option<String>,
+    stripe_customer_id: Option<String>,
+    subscription_status: Option<String>,
+    billing_interval: Option<String>,
+    current_period_end: Option<DateTime<Utc>>,
+}
+
+async fn account<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    user: Uuid,
+) -> Result<Option<Account>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT plan,admin_plan,stripe_customer_id,subscription_status,billing_interval,current_period_end
+         FROM account_billing WHERE user_id=$1",
+    )
+    .bind(user)
+    .fetch_optional(executor)
+    .await?)
+}
+
+/// The plan governing an account. Admin grants apply as stored; a Stripe-managed plan only
+/// applies while its subscription is in good standing (e.g. after an admin grant is released
+/// from an account that never subscribed), otherwise the default plan does.
+fn effective_plan(config: &BillingConfig, account: Option<&Account>) -> Plan {
+    let id = match account {
+        Some(Account {
+            admin_plan: Some(plan),
+            ..
+        }) => plan.as_str(),
+        Some(a)
+            if matches!(
+                a.subscription_status.as_deref(),
+                Some("active" | "trialing" | "past_due")
+            ) =>
+        {
+            a.plan.as_str()
+        }
+        _ => config.default_plan.as_str(),
+    };
+    config.plan(id)
+}
+
+/// Serializes work per key for the life of the transaction (site creation per account,
+/// checkout per account, subscription sync per customer).
+async fn advisory_lock(conn: &mut sqlx::PgConnection, key: &str) -> Result<(), ApiError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+async fn owned_sites<'e>(executor: impl sqlx::PgExecutor<'e>, user: Uuid) -> Result<i64, ApiError> {
+    Ok(sqlx::query_scalar(
+        "SELECT count(*) FROM site_memberships WHERE user_id=$1 AND role='owner'",
+    )
+    .bind(user)
+    .fetch_one(executor)
+    .await?)
+}
+
+/// Serializes site creation for an account. Both creation paths take it before inserting, so
+/// locks are always acquired in the same order. Re-taking it in the same transaction is a no-op.
+pub(super) async fn lock_account_sites(
+    tx: &mut sqlx::PgConnection,
+    user: Uuid,
+) -> Result<(), ApiError> {
+    advisory_lock(tx, &format!("slimlytics-sites:{user}")).await
+}
+
+/// Rejects creating another site when billing is on and the account's plan is full. Runs in
+/// the creating transaction and locks the account, so concurrent creations can't both pass.
+pub(super) async fn ensure_site_allowance(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    user: Uuid,
+) -> Result<(), ApiError> {
+    let Some(config) = state.billing.as_ref() else {
+        return Ok(());
+    };
+    lock_account_sites(tx, user).await?;
+    let plan = effective_plan(config, account(&mut *tx, user).await?.as_ref());
+    if let Some(limit) = plan.sites {
+        if owned_sites(&mut *tx, user).await? >= i64::from(limit) {
+            return Err(ApiError::PlanLimit(format!(
+                "the {} plan includes {limit} {}; upgrade to add more",
+                plan.name,
+                if limit == 1 { "site" } else { "sites" }
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Plans as shown to clients: lookup keys stay server-side, but which intervals can be bought
+/// is exposed so the UI can offer annual-only (or monthly-only) plans correctly.
+fn public_plans(config: &BillingConfig) -> Vec<Value> {
+    config
+        .plans
+        .iter()
+        .map(|plan| {
+            let mut value = serde_json::to_value(plan).unwrap_or(Value::Null);
+            let intervals: Vec<&str> = [(Interval::Month, "month"), (Interval::Year, "year")]
+                .into_iter()
+                .filter(|(interval, _)| plan.lookup_key(*interval).is_some())
+                .map(|(_, name)| name)
+                .collect();
+            value["intervals"] = json!(intervals);
+            value
+        })
+        .collect()
+}
+
+async fn plans(State(state): State<AppState>) -> Json<Value> {
+    match state.billing.as_ref() {
+        Some(config) => Json(
+            json!({"enabled": true, "plans": public_plans(config), "checkoutAvailable": config.stripe.is_some()}),
+        ),
+        None => Json(json!({"enabled": false, "plans": []})),
+    }
+}
+
+async fn status(
+    State(state): State<AppState>,
+    SessionUser(user): SessionUser,
+) -> Result<Json<Value>, ApiError> {
+    let Some(config) = state.billing.as_ref() else {
+        return Ok(Json(json!({"enabled": false})));
+    };
+    let account = account(&state.pool, user).await?;
+    let plan = effective_plan(config, account.as_ref());
+    let sites = owned_sites(&state.pool, user).await?;
+    // Human page views since UTC midnight across the account's own sites.
+    let page_views_today: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM events e JOIN site_memberships m ON m.site_id=e.site_id
+         WHERE m.user_id=$1 AND m.role='owner' AND e.event_name='pageview' AND e.traffic_class='human'
+           AND e.occurred_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'",
+    )
+    .bind(user)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(json!({
+        "enabled": true,
+        "plan": plan,
+        "planSource": match &account {
+            Some(a) if a.admin_plan.is_some() => "admin",
+            Some(_) => "stripe",
+            None => "default",
+        },
+        "subscriptionStatus": account.as_ref().and_then(|a| a.subscription_status.clone()),
+        "interval": account.as_ref().and_then(|a| a.billing_interval.clone()),
+        "currentPeriodEnd": account.as_ref().and_then(|a| a.current_period_end),
+        "hasBillingAccount": account.as_ref().is_some_and(|a| a.stripe_customer_id.is_some()),
+        "usage": {"sites": sites, "pageViewsToday": page_views_today},
+        "plans": public_plans(config),
+        "checkoutAvailable": config.stripe.is_some(),
+    })))
+}
+
+#[derive(Deserialize)]
+struct CheckoutInput {
+    plan: String,
+    #[serde(default = "monthly")]
+    interval: Interval,
+}
+fn monthly() -> Interval {
+    Interval::Month
+}
+
+async fn checkout(
+    State(state): State<AppState>,
+    SessionUser(user): SessionUser,
+    Json(input): Json<CheckoutInput>,
+) -> Result<Json<Value>, ApiError> {
+    let config = config(&state)?.clone();
+    let stripe = stripe(&state)?.clone();
+    let plan = config
+        .plans
+        .iter()
+        .find(|plan| plan.id == input.plan)
+        .ok_or_else(|| ApiError::BadRequest("unknown plan".into()))?;
+    let lookup_key = plan.lookup_key(input.interval).ok_or_else(|| {
+        ApiError::BadRequest("this plan cannot be purchased with that interval".into())
+    })?;
+    // One checkout at a time per account. A session-level try-lock on a dedicated connection:
+    // concurrent attempts fail fast instead of parking pooled connections, and every write
+    // below commits at once (so attempt state is durable before Stripe is called). The
+    // connection is closed rather than pooled afterwards, which releases the lock even if this
+    // request is cancelled.
+    let mut lock = state.pool.acquire().await?;
+    lock.close_on_drop();
+    let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtextextended($1, 0))")
+        .bind(format!("slimlytics-checkout:{user}"))
+        .fetch_one(&mut *lock)
+        .await?;
+    if !acquired {
+        return Err(ApiError::BadRequest(
+            "a checkout is already being prepared; try again in a moment".into(),
+        ));
+    }
+    // All database work below reuses the lock's connection, so a checkout never waits on the
+    // pool while holding one.
+    let existing = account(&mut *lock, user).await?;
+    if existing.as_ref().is_some_and(|a| a.admin_plan.is_some()) {
+        return Err(ApiError::BadRequest(
+            "your plan is managed by an administrator".into(),
+        ));
+    }
+    let customer = ensure_customer(&state, &mut lock, &stripe, user, existing.as_ref()).await?;
+    // Retire earlier unpaid sessions first, so the reconciliation below sees any that completed
+    // in the meantime. Expiring one that just completed fails; the sync then finds its
+    // subscription and sends the user to the portal instead of a second checkout.
+    // Every open session, following pagination.
+    let mut open: Vec<Value> = Vec::new();
+    loop {
+        let after = open
+            .last()
+            .and_then(|s| s["id"].as_str())
+            .map(str::to_owned);
+        let mut query = vec![
+            ("customer", customer.as_str()),
+            ("status", "open"),
+            ("limit", "100"),
+        ];
+        if let Some(after) = after.as_deref() {
+            query.push(("starting_after", after));
+        }
+        let page = stripe_get(&state, &stripe, "/v1/checkout/sessions", &query).await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let done = data.is_empty() || !page["has_more"].as_bool().unwrap_or(false);
+        open.extend(data);
+        if done {
+            break;
+        }
+    }
+    for session in &open {
+        if let Some(id) = session["id"].as_str() {
+            let path = format!("/v1/checkout/sessions/{id}/expire");
+            if stripe_post(&state, &stripe, &path, &[], None)
+                .await
+                .is_err()
+            {
+                // Fine if it already completed or expired; otherwise it may still be payable,
+                // so fail closed rather than open a second checkout.
+                let current =
+                    stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[])
+                        .await?;
+                if !matches!(current["status"].as_str(), Some("complete" | "expired")) {
+                    return Err(ApiError::BadRequest(
+                        "a previous checkout is still open; try again in a moment".into(),
+                    ));
+                }
+            }
+        }
+    }
+    // Reconcile with Stripe: a subscription may exist that no webhook has delivered yet.
+    sync_customer(&state, &mut lock, &stripe, &customer).await?;
+    // Decide from one fresh, complete listing taken after the sync: any non-terminal
+    // subscription blocks a new checkout. A pending one that completes while we look shows up
+    // as either incomplete or active, and both outcomes block, so nothing can slip between two
+    // separate status checks.
+    let subscriptions = list_subscriptions(&state, &stripe, &customer, true).await?;
+    let with_status = |statuses: &[&str]| {
+        subscriptions.iter().find(|s| {
+            s["status"]
+                .as_str()
+                .is_some_and(|st| statuses.contains(&st))
+        })
+    };
+    // Plan changes for existing subscribers go through the Customer Portal (proration,
+    // cancellation), never a second subscription.
+    if with_status(&["active", "trialing", "past_due", "unpaid", "paused"]).is_some() {
+        let url = portal_session(&state, &stripe, &customer).await?;
+        return Ok(Json(json!({"url": url, "portal": true})));
+    }
+    // A subscription whose first payment is still pending (e.g. awaiting authentication) is
+    // never cancelled here, since it could complete at any moment. Send the user to finish that
+    // payment instead of opening a second subscription; Stripe expires it after about a day.
+    if let Some(subscription) = with_status(&["incomplete"]) {
+        return match subscription["latest_invoice"]["hosted_invoice_url"].as_str() {
+            Some(url) => Ok(Json(json!({"url": url, "portal": false, "pending": true}))),
+            None => Err(ApiError::BadRequest(
+                "a previous subscription payment is still pending; try again shortly".into(),
+            )),
+        };
+    }
+    let prices = stripe_get(
+        &state,
+        &stripe,
+        "/v1/prices",
+        &[
+            ("lookup_keys[]", lookup_key),
+            ("active", "true"),
+            ("limit", "1"),
+        ],
+    )
+    .await?;
+    let price = prices["data"][0]["id"]
+        .as_str()
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "no active Stripe price with lookup key {lookup_key}"
+            ))
+        })?
+        .to_owned();
+    let base = state.public_url.trim_end_matches('/');
+    let user_id = user.to_string();
+    let success_url = format!("{base}/app?billing=success");
+    let cancel_url = format!("{base}/pricing");
+    let params = |price: &str| -> Vec<(&str, String)> {
+        vec![
+            ("mode", "subscription".into()),
+            ("customer", customer.clone()),
+            ("client_reference_id", user_id.clone()),
+            ("line_items[0][price]", price.to_owned()),
+            ("line_items[0][quantity]", "1".into()),
+            (
+                "subscription_data[metadata][slimlytics_user_id]",
+                user_id.clone(),
+            ),
+            ("success_url", success_url.clone()),
+            ("cancel_url", cancel_url.clone()),
+            ("integration_identifier", INTEGRATION_IDENTIFIER.into()),
+        ]
+    };
+    // Each attempt has an idempotency key from `checkout_nonce`. Before Stripe is called, the
+    // attempt (its price and start time) is saved as pending; it is retired (nonce advanced,
+    // pending cleared) only on a definitive answer, which Stripe caches against the key. An
+    // attempt without one (timeout, 5xx, ...) is replayed with its exact price by the next
+    // checkout, so Stripe returns the same session rather than a second payable one.
+    #[allow(clippy::type_complexity)]
+    let (mut nonce, pending, since, last_sent): (
+        i64,
+        Option<String>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    ) = sqlx::query_as(
+        "SELECT checkout_nonce,checkout_pending_price,checkout_pending_since,checkout_last_sent
+         FROM account_billing WHERE user_id=$1",
+    )
+    .bind(user)
+    .fetch_one(&mut *lock)
+    .await?;
+    let send_attempt = |nonce: i64, price: String| {
+        let request = state
+            .http
+            .post(format!("{}/v1/checkout/sessions", stripe.api_base))
+            .form(&params(&price))
+            .header(
+                "Idempotency-Key",
+                format!("slimlytics-checkout-{user}-{nonce}"),
+            );
+        send_answered(request, &stripe)
+    };
+    // Ok((url, portal)).
+    let result: Result<(String, bool), ApiError> = async {
+        if let Some(earlier) = pending {
+            // An attempt that began over ten minutes ago and hasn't been sent in the last two has
+            // settled: the sweep and listing above already saw any session or subscription it
+            // made. Retire it without sending again, since a replay could itself create a
+            // session after that sweep. Replays don't extend the ten minutes, so a permanently
+            // cached failure can't block checkout forever.
+            let older = |t: Option<DateTime<Utc>>, minutes| {
+                t.is_none_or(|t| Utc::now() - t > chrono::Duration::minutes(minutes))
+            };
+            let stale = older(since, 10) && older(last_sent, 2);
+            if !stale {
+                sqlx::query("UPDATE account_billing SET checkout_last_sent=now() WHERE user_id=$1")
+                    .bind(user)
+                    .execute(&mut *lock)
+                    .await?;
+                match send_attempt(nonce, earlier.clone()).await {
+                    // Still no definitive answer: keep it unresolved.
+                    Err(_) => return Err(ApiError::BadRequest(
+                        "a previous checkout is still being processed; try again in a few minutes"
+                            .into(),
+                    )),
+                    Ok(Err(_)) => {}
+                    Ok(Ok(session)) => {
+                        let id = session["id"].as_str().ok_or(ApiError::Internal)?;
+                        let current = stripe_get(
+                            &state,
+                            &stripe,
+                            &format!("/v1/checkout/sessions/{id}"),
+                            &[],
+                        )
+                        .await?;
+                        match current["status"].as_str() {
+                            Some("open") if earlier == price => {
+                                save_attempt(&mut lock, user, nonce + 1, None).await?;
+                                return session["url"]
+                                    .as_str()
+                                    .map(|url| (url.to_owned(), false))
+                                    .ok_or(ApiError::Internal);
+                            }
+                            Some("open") => {
+                                let path = format!("/v1/checkout/sessions/{id}/expire");
+                                stripe_post(&state, &stripe, &path, &[], None).await?;
+                            }
+                            Some("complete") => {
+                                save_attempt(&mut lock, user, nonce + 1, None).await?;
+                                sync_customer(&state, &mut lock, &stripe, &customer).await?;
+                                return Ok((
+                                    portal_session(&state, &stripe, &customer).await?,
+                                    true,
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            nonce += 1;
+            save_attempt(&mut lock, user, nonce, None).await?;
+        }
+        for _ in 0..3 {
+            save_attempt(&mut lock, user, nonce, Some(&price)).await?;
+            // No definitive answer: the attempt stays pending for the next checkout to replay.
+            let answer = send_attempt(nonce, price.clone()).await?;
+            nonce += 1;
+            save_attempt(&mut lock, user, nonce, None).await?;
+            let session = answer?;
+            let id = session["id"].as_str().ok_or(ApiError::Internal)?;
+            // Replays return the original response, so check the session's current status.
+            let current =
+                stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[]).await?;
+            match current["status"].as_str() {
+                Some("open") => {
+                    return session["url"]
+                        .as_str()
+                        .map(|url| (url.to_owned(), false))
+                        .ok_or(ApiError::Internal);
+                }
+                // The earlier attempt was paid in the meantime: record it and manage that
+                // subscription instead of opening another checkout.
+                Some("complete") => {
+                    sync_customer(&state, &mut lock, &stripe, &customer).await?;
+                    return Ok((portal_session(&state, &stripe, &customer).await?, true));
+                }
+                _ => {}
+            }
+        }
+        Err(ApiError::BadRequest(
+            "could not start checkout; try again in a moment".into(),
+        ))
+    }
+    .await;
+    let (url, portal) = result?;
+    Ok(Json(json!({"url": url, "portal": portal})))
+}
+
+/// Records checkout attempt state immediately (the checkout connection runs in autocommit).
+/// `pending` is the price of an attempt about to be sent; `None` retires it.
+async fn save_attempt(
+    conn: &mut sqlx::PgConnection,
+    user: Uuid,
+    nonce: i64,
+    pending: Option<&str>,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE account_billing SET checkout_nonce=$2, checkout_pending_price=$3,
+           checkout_pending_since=CASE WHEN $3::text IS NULL THEN NULL ELSE now() END,
+           checkout_last_sent=CASE WHEN $3::text IS NULL THEN NULL ELSE now() END
+         WHERE user_id=$1",
+    )
+    .bind(user)
+    .bind(nonce)
+    .bind(pending)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+async fn portal(
+    State(state): State<AppState>,
+    SessionUser(user): SessionUser,
+) -> Result<Json<Value>, ApiError> {
+    let stripe = stripe(&state)?.clone();
+    let customer = account(&state.pool, user)
+        .await?
+        .and_then(|a| a.stripe_customer_id)
+        .ok_or_else(|| {
+            ApiError::BadRequest("no billing account yet; choose a plan first".into())
+        })?;
+    Ok(Json(
+        json!({"url": portal_session(&state, &stripe, &customer).await?}),
+    ))
+}
+
+async fn portal_session(
+    state: &AppState,
+    stripe: &StripeConfig,
+    customer: &str,
+) -> Result<String, ApiError> {
+    let return_url = format!("{}/app", state.public_url.trim_end_matches('/'));
+    let session = stripe_post(
+        state,
+        stripe,
+        "/v1/billing_portal/sessions",
+        &[("customer", customer), ("return_url", &return_url)],
+        None,
+    )
+    .await?;
+    session["url"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or(ApiError::Internal)
+}
+
+/// The account's Stripe customer, created on first checkout. The idempotency key makes
+/// retries (double clicks, network errors) reuse one customer.
+async fn ensure_customer(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    stripe: &StripeConfig,
+    user: Uuid,
+    existing: Option<&Account>,
+) -> Result<String, ApiError> {
+    if let Some(customer) = existing.and_then(|a| a.stripe_customer_id.clone()) {
+        return Ok(customer);
+    }
+    let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id=$1")
+        .bind(user)
+        .fetch_one(&mut *conn)
+        .await?;
+    let user_id = user.to_string();
+    let customer = stripe_post(
+        state,
+        stripe,
+        "/v1/customers",
+        &[
+            ("email", email.as_str()),
+            ("metadata[slimlytics_user_id]", user_id.as_str()),
+        ],
+        Some(&format!("slimlytics-customer-{user}")),
+    )
+    .await?;
+    let id = customer["id"]
+        .as_str()
+        .ok_or(ApiError::Internal)?
+        .to_owned();
+    // Same order as webhook recovery: the customer lock before writing the account row.
+    advisory_lock(conn, &format!("slimlytics-stripe:{id}")).await?;
+    let default_plan = config(state)?.default_plan.clone();
+    let stored: String = sqlx::query_scalar(
+        "INSERT INTO account_billing(user_id,plan,stripe_customer_id) VALUES($1,$2,$3)
+         ON CONFLICT (user_id) DO UPDATE SET
+           stripe_customer_id=COALESCE(account_billing.stripe_customer_id,EXCLUDED.stripe_customer_id),
+           updated_at=now()
+         RETURNING stripe_customer_id",
+    )
+    .bind(user)
+    .bind(default_plan)
+    .bind(&id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(stored)
+}
+
+/// Stripe webhook: verifies the signature against the raw body, applies each event once, and
+/// re-syncs the customer's subscription from Stripe rather than trusting event ordering.
+async fn webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Value>, ApiError> {
+    let stripe = stripe(&state)?.clone();
+    let signature = headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !verify_webhook_signature(
+        &body,
+        signature,
+        &stripe.webhook_secret,
+        Utc::now().timestamp(),
+        WEBHOOK_TOLERANCE_SECONDS,
+    ) {
+        return Err(ApiError::BadRequest("invalid Stripe signature".into()));
+    }
+    let event: Value =
+        serde_json::from_slice(&body).map_err(|_| ApiError::BadRequest("invalid event".into()))?;
+    let id = event["id"]
+        .as_str()
+        .ok_or_else(|| ApiError::BadRequest("event without id".into()))?;
+    let kind = event["type"].as_str().unwrap_or("");
+    let seen: Option<String> =
+        sqlx::query_scalar("SELECT id FROM stripe_webhook_events WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&state.pool)
+            .await?;
+    if seen.is_some() {
+        return Ok(Json(json!({"received": true, "duplicate": true})));
+    }
+    let relevant = matches!(
+        kind,
+        "checkout.session.completed"
+            | "checkout.session.async_payment_succeeded"
+            | "customer.subscription.created"
+            | "customer.subscription.updated"
+            | "customer.subscription.deleted"
+            | "customer.subscription.paused"
+            | "customer.subscription.resumed"
+            | "invoice.paid"
+            | "invoice.payment_failed"
+    );
+    if relevant {
+        if let Some(customer) = event["data"]["object"]["customer"].as_str() {
+            // A failure here returns 5xx so Stripe retries; the event is recorded only after.
+            let mut conn = state.pool.acquire().await?;
+            sync_customer(&state, &mut conn, &stripe, customer).await?;
+        }
+    }
+    sqlx::query("INSERT INTO stripe_webhook_events(id,type) VALUES($1,$2) ON CONFLICT DO NOTHING")
+        .bind(id)
+        .bind(kind)
+        .execute(&state.pool)
+        .await?;
+    Ok(Json(json!({"received": true})))
+}
+
+/// Pulls the customer's subscriptions from Stripe and updates the account. Admin-comped plans
+/// keep their plan but still record the subscription details.
+async fn sync_customer(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    stripe: &StripeConfig,
+    customer: &str,
+) -> Result<(), ApiError> {
+    use sqlx::Connection;
+    let config = config(state)?;
+    // Hold a per-customer lock across the fetch and the write, so a slower handler can't
+    // overwrite a newer snapshot with an older one. Inside a caller's transaction this is a
+    // savepoint, and the lock lasts until that transaction ends.
+    let mut tx = conn.begin().await?;
+    advisory_lock(&mut tx, &format!("slimlytics-stripe:{customer}")).await?;
+    // Every subscription, following pagination: a live one may be older than many canceled ones.
+    let list = list_subscriptions(state, stripe, customer, false).await?;
+    // Prefer a subscription in good standing, then any other non-terminal one (unpaid, paused,
+    // incomplete; still resumable), and only then the most recent ended one.
+    let rank = |s: &Value| match s["status"].as_str() {
+        Some("active" | "trialing" | "past_due") => 2,
+        Some("canceled" | "incomplete_expired") | None => 0,
+        Some(_) => 1,
+    };
+    let current = list
+        .iter()
+        .max_by_key(|s| (rank(s), s["created"].as_i64().unwrap_or(0)));
+    let (plan, interval) = current
+        .map(|s| config.plan_for_subscription(s))
+        .unwrap_or((config.default_plan.clone(), None));
+    let subscription_id = current.and_then(|s| s["id"].as_str());
+    let status = current.and_then(|s| s["status"].as_str());
+    // Recent API versions report the billing period per subscription item.
+    let period_end = current
+        .and_then(|s| {
+            s["items"]["data"][0]["current_period_end"]
+                .as_i64()
+                .or_else(|| s["current_period_end"].as_i64())
+        })
+        .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
+    let interval = interval.map(|i| if i == Interval::Year { "year" } else { "month" });
+    let updated = sqlx::query(
+        "UPDATE account_billing SET
+           plan=$2,
+           stripe_subscription_id=$3, subscription_status=$4, billing_interval=$5,
+           current_period_end=$6, updated_at=now()
+         WHERE stripe_customer_id=$1",
+    )
+    .bind(customer)
+    .bind(&plan)
+    .bind(subscription_id)
+    .bind(status)
+    .bind(interval)
+    .bind(period_end)
+    .execute(&mut *tx)
+    .await?;
+    if updated.rows_affected() == 0 {
+        // No local link to this customer, e.g. checkout's transaction rolled back after Stripe
+        // created a payable session. Recover the account from the customer's metadata (set at
+        // creation) so a paid subscription is never orphaned.
+        let found = stripe_get(state, stripe, &format!("/v1/customers/{customer}"), &[]).await?;
+        let user = found["metadata"]["slimlytics_user_id"]
+            .as_str()
+            .and_then(|id| id.parse::<Uuid>().ok());
+        if let Some(user) = user {
+            sqlx::query(
+                "INSERT INTO account_billing(user_id,plan,stripe_customer_id,stripe_subscription_id,
+                   subscription_status,billing_interval,current_period_end)
+                 SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS (SELECT 1 FROM users WHERE id=$1)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                   plan=EXCLUDED.plan, stripe_customer_id=EXCLUDED.stripe_customer_id,
+                   stripe_subscription_id=EXCLUDED.stripe_subscription_id,
+                   subscription_status=EXCLUDED.subscription_status,
+                   billing_interval=EXCLUDED.billing_interval,
+                   current_period_end=EXCLUDED.current_period_end, updated_at=now()
+                 WHERE account_billing.stripe_customer_id IS NULL",
+            )
+            .bind(user)
+            .bind(&plan)
+            .bind(customer)
+            .bind(subscription_id)
+            .bind(status)
+            .bind(interval)
+            .bind(period_end)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Every subscription of a customer, following pagination: a live one may be older than many
+/// ended ones. `with_invoice` expands each latest invoice (for its hosted payment page).
+async fn list_subscriptions(
+    state: &AppState,
+    stripe: &StripeConfig,
+    customer: &str,
+    with_invoice: bool,
+) -> Result<Vec<Value>, ApiError> {
+    let mut list: Vec<Value> = Vec::new();
+    loop {
+        let mut query = vec![("customer", customer), ("status", "all"), ("limit", "100")];
+        if with_invoice {
+            query.push(("expand[]", "data.latest_invoice"));
+        }
+        let after = list
+            .last()
+            .and_then(|s| s["id"].as_str())
+            .map(str::to_owned);
+        if let Some(after) = after.as_deref() {
+            query.push(("starting_after", after));
+        }
+        let page = stripe_get(state, stripe, "/v1/subscriptions", &query).await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let done = data.is_empty() || !page["has_more"].as_bool().unwrap_or(false);
+        list.extend(data);
+        if done {
+            return Ok(list);
+        }
+    }
+}
+
+async fn stripe_get(
+    state: &AppState,
+    stripe: &StripeConfig,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<Value, ApiError> {
+    let request = state
+        .http
+        .get(format!("{}{path}", stripe.api_base))
+        .query(query);
+    send(request, stripe).await
+}
+
+async fn stripe_post(
+    state: &AppState,
+    stripe: &StripeConfig,
+    path: &str,
+    form: &[(&str, &str)],
+    idempotency_key: Option<&str>,
+) -> Result<Value, ApiError> {
+    let mut request = state
+        .http
+        .post(format!("{}{path}", stripe.api_base))
+        .form(form);
+    if let Some(key) = idempotency_key {
+        request = request.header("Idempotency-Key", key);
+    }
+    send(request, stripe).await
+}
+
+async fn send(request: reqwest::RequestBuilder, stripe: &StripeConfig) -> Result<Value, ApiError> {
+    send_answered(request, stripe).await?
+}
+
+/// Like `send`, but separates "Stripe gave a definitive answer" (inner result; Stripe caches
+/// it against any idempotency key) from "no definitive answer" (outer error: transport failure,
+/// timeout, a concurrent request with the same key, rate limiting, or a 5xx), to be replayed.
+async fn send_answered(
+    request: reqwest::RequestBuilder,
+    stripe: &StripeConfig,
+) -> Result<Result<Value, ApiError>, ApiError> {
+    let response = request
+        .bearer_auth(&stripe.secret_key)
+        .header("Stripe-Version", STRIPE_API_VERSION)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Stripe request failed");
+            ApiError::Internal
+        })?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|_| ApiError::Internal)?;
+    if !status.is_success() {
+        // Stripe error messages are safe to log; they never contain the key.
+        tracing::error!(%status, message = body["error"]["message"].as_str().unwrap_or(""), "Stripe API error");
+        // Not definitive: a concurrent request with the same key, rate limiting, or a server
+        // error (which may have had side effects). Callers keep such attempts unresolved.
+        if matches!(status.as_u16(), 409 | 429) || status.is_server_error() {
+            return Err(ApiError::Internal);
+        }
+        return Ok(Err(ApiError::Internal));
+    }
+    Ok(Ok(body))
+}

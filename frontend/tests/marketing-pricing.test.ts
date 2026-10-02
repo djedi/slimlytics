@@ -17,7 +17,7 @@ describe('marketing pricing page', () => {
     values.clear();
   });
 
-  it('renders all draft plans with signup CTAs', () => {
+  it('renders all plans with signup CTAs', () => {
     render(Page);
 
     for (const plan of pricingPlans) {
@@ -25,16 +25,16 @@ describe('marketing pricing page', () => {
       expect(screen.getAllByText(plan.price).length).toBeGreaterThan(0);
     }
 
-    const accountLinks = screen.getAllByRole('link', { name: /create account|get started free/i });
+    const accountLinks = screen.getAllByRole('link', { name: /create account|get started free|start (pro|business)/i });
     expect(accountLinks.length).toBeGreaterThanOrEqual(3);
     expect(accountLinks.some((link) => link.getAttribute('href')?.startsWith('/register'))).toBe(
       true
     );
   });
 
-  it('states that checkout is not required yet', () => {
+  it('links paid plans to sign-up with the plan preselected', () => {
     render(Page);
-    expect(screen.getAllByText(/checkout is not required/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /start pro/i }).getAttribute('href')).toBe('/register?plan=pro');
   });
 
   it('shows a feature comparison table', () => {

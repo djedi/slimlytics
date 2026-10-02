@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { env } from '$env/dynamic/public';
   import {
@@ -56,6 +56,7 @@
     type ReportRow,
     type ReportSubscription,
     type SearchConsoleStatus,
+    type BillingStatus,
     type Site,
     type Visitor
   } from '$lib/api';
@@ -63,6 +64,7 @@
   import { appHref, parseDays, parseView, type SiteView } from '$lib/app-routes';
   import ChangeBadge from '$lib/components/rollup/ChangeBadge.svelte';
   import SiteCard from '$lib/components/rollup/SiteCard.svelte';
+  import PlanCard from '$lib/components/billing/PlanCard.svelte';
   import AntiAdblockSettingsPanel from '$lib/components/AntiAdblockSettings.svelte';
   import ReportTable from '$lib/components/ReportTable.svelte';
   import TrafficChart from '$lib/components/TrafficChart.svelte';
@@ -171,7 +173,10 @@
     // Keep stats fresh while the dashboard stays open (e.g. phone browsing + desktop dashboard).
     const refresh = () => {
       if (document.visibilityState !== 'visible' || loading) return;
-      if (!site) void refreshSitesQuietly().catch(() => {});
+      if (!site) {
+        void refreshSitesQuietly().catch(() => {});
+        void refreshBillingQuietly();
+      }
       else if (view !== 'settings') void refreshViewQuietly().catch(() => {});
     };
     const interval = window.setInterval(refresh, 15_000);
@@ -241,9 +246,84 @@
     source?.close();
     void goto('/');
   }
+  // Hosted-plan billing; stays { enabled: false } on self-hosted installs.
+  let billingStatus = $state<BillingStatus>({ enabled: false });
+  // True once the server has answered; until then a failed load is retried on refresh.
+  let billingKnown = false;
+  let billingBusy = $state(false);
+  let billingNotice = $state('');
+  async function loadBilling() {
+    try {
+      billingStatus = await api.billing();
+      billingKnown = true;
+    } catch {
+      // Keep the last good status on a transient failure; only an unknown state hides billing.
+      if (!billingKnown) billingStatus = { enabled: false };
+    }
+  }
+  // Keeps usage meters and limit warnings current (and rolls over at UTC midnight) without
+  // hiding the card on a transient error.
+  async function refreshBillingQuietly() {
+    if (billingKnown && !billingStatus.enabled) return;
+    try {
+      billingStatus = await api.billing();
+      billingKnown = true;
+    } catch {
+      /* keep the last known status */
+    }
+  }
+  async function startCheckout(plan: string, interval: 'month' | 'year') {
+    billingBusy = true;
+    try {
+      const { url } = await api.billingCheckout(plan, interval);
+      location.assign(url);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not start checkout.';
+      billingBusy = false;
+    }
+  }
+  async function openBillingPortal() {
+    billingBusy = true;
+    try {
+      location.assign((await api.billingPortal()).url);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not open billing.';
+      billingBusy = false;
+    }
+  }
+  // Returning from Stripe Checkout: the webhook updates the plan asynchronously, so re-check
+  // briefly until it lands.
+  async function confirmCheckout() {
+    billingNotice = 'Thanks! Your subscription is being activated…';
+    // Activated means a subscription in good standing, whether the webhook landed before the
+    // page's first billing fetch or during the polling below.
+    const isActive = () =>
+      billingStatus.planSource === 'stripe' &&
+      ['active', 'trialing'].includes(billingStatus.subscriptionStatus ?? '');
+    let activated = isActive();
+    for (let attempt = 0; attempt < 8 && !activated; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await loadBilling();
+      activated = isActive();
+    }
+    if (!activated) {
+      // Keep ?billing=success so a reload checks again; the regular refresh also picks it up.
+      billingNotice = 'Payment received. Your plan is still activating — this can take a minute; refresh to check.';
+      return;
+    }
+    billingNotice = `You’re on the ${billingStatus.plan?.name} plan.`;
+    // Drop ?billing=success only if the user is still on the page they returned to.
+    if (page.url.searchParams.get('billing') === 'success' && !site) {
+      replaceState(appHref(null, null, days), page.state);
+    }
+  }
+
   async function loadSites() {
     loading = true;
     error = '';
+    void loadBilling().then(() => {
+      if (page.url.searchParams.get('billing') === 'success') void confirmCheckout();
+    });
     try {
       await refreshSitesQuietly();
     } catch (reason) {
@@ -511,6 +591,7 @@
         allowedOrigins: [origin]
       });
       sites = [...sites, { ...created, overview: await api.overview(created.id, days) }];
+      void refreshBillingQuietly();
       newSite = false;
       siteName = '';
       siteDomain = '';
@@ -647,6 +728,11 @@
           </div>
           <button class="primary" onclick={() => (newSite = true)}><Plus size={16} /> Add site</button>
         </section>
+        <!-- Account-level billing shows even with no sites, so subscribers can always manage it. -->
+        {#if billingNotice}<p class="success-message billing-notice" role="status">{billingNotice}</p>{/if}
+        {#if billingStatus.enabled && billingStatus.plan}
+          <PlanCard status={billingStatus} busy={billingBusy} onCheckout={startCheckout} onPortal={openBillingPortal} />
+        {/if}
         {#if sites.length}
           <section class="portfolio-summary" aria-label="Workspace totals">
             <div>

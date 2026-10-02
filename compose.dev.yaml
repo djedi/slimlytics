@@ -41,6 +41,7 @@ services:
     volumes:
       - ./backend:/src/backend
       - ./migrations:/src/migrations:ro
+      - ./config:/src/config:ro
       - ./docs:/src/docs:ro
       - backend-target:/cargo-target
       - cargo-registry:/usr/local/cargo/registry

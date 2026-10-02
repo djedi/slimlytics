@@ -42,6 +42,11 @@ services:
       TRUST_PROXY: ${TRUST_PROXY:-false}
       # Populated by `make geoip` (DB-IP City Lite). Missing file = locations disabled.
       GEOIP_DATABASE_PATH: ${GEOIP_DATABASE_PATH:-/data/geoip/dbip-city-lite.mmdb}
+      # Hosted-plan billing (off by default; self-hosted installs need none of this).
+      BILLING_ENABLED: ${BILLING_ENABLED:-false}
+      BILLING_PLANS_FILE: ${BILLING_PLANS_FILE:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
@@ -49,6 +54,7 @@ services:
       RUST_LOG: ${RUST_LOG:-slimlytics=info,tower_http=info}
     volumes:
       - ./data/geoip:/data/geoip:ro
+      - ./config:/config:ro
     depends_on:
       db:
         condition: service_healthy
