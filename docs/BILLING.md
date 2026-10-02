@@ -70,6 +70,8 @@ The runtime key also reads Customers, to recover an account link from the custom
    - `customer.subscription.created`
    - `customer.subscription.updated`
    - `customer.subscription.deleted`
+   - `customer.subscription.paused`
+   - `customer.subscription.resumed`
    - `invoice.paid`
    - `invoice.payment_failed`
 
