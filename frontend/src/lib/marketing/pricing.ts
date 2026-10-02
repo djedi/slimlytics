@@ -4,81 +4,117 @@ export interface PricingPlan {
   tagline: string;
   price: string;
   priceNote: string;
+  /** Annual billing, shown under the monthly price. */
+  annualNote?: string;
   highlighted?: boolean;
   ctaLabel: string;
   ctaHref: string;
   features: string[];
 }
 
-/** Draft commercial tiers — marketing only; no billing is enforced yet. */
+/**
+ * Draft commercial tiers — marketing only; no billing is enforced yet.
+ * Limits are daily page views (like Clicky's) so the plans compare directly, and every
+ * feature is included on every plan: tiers differ only in sites, volume, and support.
+ */
 export const pricingPlans: PricingPlan[] = [
   {
     id: 'self-hosted',
     name: 'Self-hosted',
-    tagline: 'Full product on your infrastructure.',
+    tagline: 'The full open-source product on your own servers.',
     price: '$0',
-    priceNote: 'Free forever',
-    ctaLabel: 'Get started free',
-    ctaHref: '/register?plan=self-hosted',
+    priceNote: 'free forever',
+    ctaLabel: 'Read the setup guide',
+    ctaHref: '/docs',
     features: [
-      'Unlimited sites you host',
-      'Unlimited events on your servers',
-      'Docker Compose deployment',
-      'Cookieless tracker & first-party proxy',
-      'Real-time Spy, goals, and CSV export',
-      'You manage ops & backups'
+      'Unlimited sites and page views',
+      'Every feature included',
+      'Docker Compose setup in minutes',
+      'Your servers, your data',
+      'Community support'
     ]
   },
   {
-    id: 'starter',
-    name: 'Starter',
-    tagline: 'Hosted analytics without the ops burden.',
-    price: '$9',
+    id: 'free',
+    name: 'Free',
+    tagline: 'Hosted analytics for a personal site.',
+    price: '$0',
     priceNote: 'per month',
-    ctaLabel: 'Create account',
-    ctaHref: '/register?plan=starter',
+    ctaLabel: 'Get started free',
+    ctaHref: '/register?plan=free',
     features: [
-      'Up to 3 sites',
-      '100k page views / month',
-      '12-month data retention',
-      'Cookieless by default',
-      'Real-time Spy & goals',
-      'Email support'
+      '1 website',
+      '3,000 page views / day',
+      'Every feature included',
+      'MCP server, CLI, and API',
+      'Community support'
     ]
   },
   {
     id: 'pro',
     name: 'Pro',
-    tagline: 'For growing product and content teams.',
-    price: '$29',
+    tagline: 'For independent makers with a handful of sites.',
+    price: '$7',
     priceNote: 'per month',
+    annualNote: 'or $56 / year — save 33%',
     highlighted: true,
     ctaLabel: 'Create account',
     ctaHref: '/register?plan=pro',
     features: [
-      'Up to 15 sites',
-      '1M page views / month',
-      '24-month data retention',
-      'Everything in Starter',
-      'Priority support',
-      'CSV export & multi-site rollup'
+      '10 websites',
+      '30,000 page views / day',
+      'Every feature included',
+      'MCP server, CLI, and API',
+      'Email support'
+    ]
+  },
+  {
+    id: 'business',
+    name: 'Business',
+    tagline: 'For teams and agencies running many sites.',
+    price: '$15',
+    priceNote: 'per month',
+    annualNote: 'or $120 / year — save 33%',
+    ctaLabel: 'Create account',
+    ctaHref: '/register?plan=business',
+    features: [
+      '30 websites',
+      '100,000 page views / day',
+      'Every feature included',
+      'MCP server, CLI, and API',
+      'Priority email support'
     ]
   }
 ];
 
-export const pricingComparison = [
-  { feature: 'Cookieless tracking', selfHosted: true, starter: true, pro: true },
-  { feature: 'Real-time Spy (SSE)', selfHosted: true, starter: true, pro: true },
-  { feature: 'Pages, referrers, countries, devices, campaigns', selfHosted: true, starter: true, pro: true },
-  { feature: 'Goals & custom events', selfHosted: true, starter: true, pro: true },
-  { feature: 'First-party anti-adblock proxy', selfHosted: true, starter: true, pro: true },
-  { feature: 'CSV export', selfHosted: true, starter: true, pro: true },
-  { feature: 'You control the servers', selfHosted: true, starter: false, pro: false },
-  { feature: 'Managed hosting', selfHosted: false, starter: true, pro: true },
-  { feature: 'Priority support', selfHosted: false, starter: false, pro: true }
-] as const;
+type Cell = boolean | string;
+export const pricingComparison: { feature: string; selfHosted: Cell; free: Cell; pro: Cell; business: Cell }[] = [
+  { feature: 'Websites', selfHosted: 'Unlimited', free: '1', pro: '10', business: '30' },
+  { feature: 'Page views per day', selfHosted: 'Unlimited', free: '3,000', pro: '30,000', business: '100,000' },
+  { feature: 'Annual price', selfHosted: '$0', free: '$0', pro: '$56', business: '$120' },
+  { feature: 'Real-time Spy and visitor details', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'Goals, funnels, and revenue', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'Attribution, campaigns, and journeys', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'MCP server for AI agents', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'CLI, REST API, and CSV export', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'First-party anti-adblock proxy', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'Cookieless, privacy-first tracking', selfHosted: true, free: true, pro: true, business: true },
+  { feature: 'Run it on your own servers', selfHosted: true, free: false, pro: false, business: false },
+  { feature: 'Managed hosting and backups', selfHosted: false, free: true, pro: true, business: true },
+  { feature: 'Support', selfHosted: 'Community', free: 'Community', pro: 'Email', business: 'Priority email' }
+];
 
 export const pricingFaqs = [
+  {
+    question: 'Are any features locked to paid plans?',
+    answer:
+      'No. Every plan, including Free and self-hosted, gets every feature. Plans differ only in how many sites and page views you track and in the support you get.'
+  },
+  {
+    question: 'How does Slimlytics compare to Clicky?',
+    answer:
+      'Clicky is mature and has extras Slimlytics does not offer yet, such as heatmaps and uptime monitoring. Slimlytics is open source and self-hostable, built in Rust, includes an MCP server so AI agents can install and query it, and costs less at every tier with no features held back.'
+  },
   {
     question: 'Is billing live today?',
     answer:
@@ -87,7 +123,7 @@ export const pricingFaqs = [
   {
     question: 'What is included when I self-host?',
     answer:
-      'The complete Slimlytics product: multi-site analytics, cookieless tracker, real-time Spy, reports, goals, CSV export, and first-party proxy setup. You run Docker Compose and own the data.'
+      'The complete open-source product: multi-site analytics, the cookieless tracker, real-time Spy, reports, goals, the MCP server, CLI, and first-party proxy setup. You run Docker Compose and own the data.'
   },
   {
     question: 'Do you use cookies or sell visitor data?',
@@ -97,6 +133,6 @@ export const pricingFaqs = [
   {
     question: 'Can I move from hosted to self-hosted later?',
     answer:
-      'Yes. Export your data via CSV/API and deploy the open stack on your own servers whenever you prefer full control.'
+      'Yes. Export your data via CSV or the API and run the same open-source stack on your own servers whenever you want full control.'
   }
 ];

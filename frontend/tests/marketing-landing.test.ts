@@ -43,8 +43,9 @@ describe('marketing landing page', () => {
   it('teases pricing plans on the homepage', () => {
     render(Page);
     expect(screen.getByText('Self-hosted')).toBeInTheDocument();
-    expect(screen.getByText('Starter')).toBeInTheDocument();
+    expect(screen.getByText('Free')).toBeInTheDocument();
     expect(screen.getByText('Pro')).toBeInTheDocument();
+    expect(screen.getByText('Business')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /compare plans in detail/i })).toHaveAttribute(
       'href',
       '/pricing'

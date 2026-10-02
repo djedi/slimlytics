@@ -252,8 +252,8 @@
   <section class="mkt-section mkt-section-alt" aria-labelledby="pricing-teaser-title">
     <div class="mkt-section-head center">
       <p class="eyebrow">Pricing</p>
-      <h2 id="pricing-teaser-title">Simple plans. Full product when you self-host.</h2>
-      <p>Start free on your own infrastructure, or pick a hosted tier when you want us to run it.</p>
+      <h2 id="pricing-teaser-title">Every feature on every plan.</h2>
+      <p>Self-host the open-source product for free, or start free in the cloud. Paid plans from $7 a month.</p>
     </div>
     <PricingCards compact />
     <p class="mkt-center">
