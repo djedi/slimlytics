@@ -34,8 +34,12 @@
   const viewsRatio = $derived(ratio(usage.pageViewsToday, plan.dailyPageViews));
   const sitesRatio = $derived(ratio(usage.sites, plan.sites));
   const fmt = (value: number) => value.toLocaleString();
-  const price = (cents: number) =>
-    (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: cents % 100 ? 2 : 0 });
+  const price = (cents: number, currency: string) =>
+    (cents / 100).toLocaleString(undefined, {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+      minimumFractionDigits: cents % 100 ? 2 : 0
+    });
 </script>
 
 <section class="plan-card" aria-label="Plan and usage">
@@ -83,7 +87,7 @@
       </div>
       {#each upgrades as option}
         <button class="primary compact" disabled={busy} onclick={() => onCheckout(option.id, interval)}>
-          Upgrade to {option.name} · {interval === 'year' ? `${price(option.annualPriceCents)}/yr` : `${price(option.monthlyPriceCents)}/mo`}
+          Upgrade to {option.name} · {interval === 'year' ? `${price(option.annualPriceCents, option.currency)}/yr` : `${price(option.monthlyPriceCents, option.currency)}/mo`}
           <ArrowUpRight size={14} aria-hidden="true" />
         </button>
       {/each}

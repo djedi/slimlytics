@@ -55,21 +55,26 @@ fn stripe(state: &AppState) -> Result<&StripeConfig, ApiError> {
 
 #[derive(sqlx::FromRow)]
 struct Account {
+    /// The plan the Stripe subscription grants; always kept in sync by webhooks.
     plan: String,
-    plan_source: String,
+    /// An administrator's grant, which overrides `plan` until released.
+    admin_plan: Option<String>,
     stripe_customer_id: Option<String>,
     subscription_status: Option<String>,
     billing_interval: Option<String>,
     current_period_end: Option<DateTime<Utc>>,
 }
 
-async fn account(pool: &PgPool, user: Uuid) -> Result<Option<Account>, ApiError> {
+async fn account<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    user: Uuid,
+) -> Result<Option<Account>, ApiError> {
     Ok(sqlx::query_as(
-        "SELECT plan,plan_source,stripe_customer_id,subscription_status,billing_interval,current_period_end
+        "SELECT plan,admin_plan,stripe_customer_id,subscription_status,billing_interval,current_period_end
          FROM account_billing WHERE user_id=$1",
     )
     .bind(user)
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?)
 }
 
@@ -78,7 +83,10 @@ async fn account(pool: &PgPool, user: Uuid) -> Result<Option<Account>, ApiError>
 /// from an account that never subscribed), otherwise the default plan does.
 fn effective_plan(config: &BillingConfig, account: Option<&Account>) -> Plan {
     let id = match account {
-        Some(a) if a.plan_source == "admin" => a.plan.as_str(),
+        Some(Account {
+            admin_plan: Some(plan),
+            ..
+        }) => plan.as_str(),
         Some(a)
             if matches!(
                 a.subscription_status.as_deref(),
@@ -122,7 +130,7 @@ pub(super) async fn ensure_site_allowance(
         return Ok(());
     };
     advisory_lock(tx, &format!("slimlytics-sites:{user}")).await?;
-    let plan = effective_plan(config, account(&state.pool, user).await?.as_ref());
+    let plan = effective_plan(config, account(&mut *tx, user).await?.as_ref());
     if let Some(limit) = plan.sites {
         if owned_sites(&mut *tx, user).await? >= i64::from(limit) {
             return Err(ApiError::PlanLimit(format!(
@@ -166,7 +174,11 @@ async fn status(
     Ok(Json(json!({
         "enabled": true,
         "plan": plan,
-        "planSource": account.as_ref().map(|a| a.plan_source.as_str()).unwrap_or("default"),
+        "planSource": match &account {
+            Some(a) if a.admin_plan.is_some() => "admin",
+            Some(_) => "stripe",
+            None => "default",
+        },
         "subscriptionStatus": account.as_ref().and_then(|a| a.subscription_status.clone()),
         "interval": account.as_ref().and_then(|a| a.billing_interval.clone()),
         "currentPeriodEnd": account.as_ref().and_then(|a| a.current_period_end),
@@ -202,11 +214,21 @@ async fn checkout(
     let lookup_key = plan.lookup_key(input.interval).ok_or_else(|| {
         ApiError::BadRequest("this plan cannot be purchased with that interval".into())
     })?;
-    // One checkout at a time per account, held until the new session exists.
+    // One checkout at a time per account, held until the new session exists. A try-lock, so
+    // concurrent attempts fail fast instead of parking pooled connections behind the holder.
     let mut lock = state.pool.begin().await?;
-    advisory_lock(&mut lock, &format!("slimlytics-checkout:{user}")).await?;
+    let acquired: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("slimlytics-checkout:{user}"))
+            .fetch_one(&mut *lock)
+            .await?;
+    if !acquired {
+        return Err(ApiError::BadRequest(
+            "a checkout is already being prepared; try again in a moment".into(),
+        ));
+    }
     let existing = account(&state.pool, user).await?;
-    if existing.as_ref().is_some_and(|a| a.plan_source == "admin") {
+    if existing.as_ref().is_some_and(|a| a.admin_plan.is_some()) {
         return Err(ApiError::BadRequest(
             "your plan is managed by an administrator".into(),
         ));
@@ -450,17 +472,25 @@ async fn sync_customer(
     // overwrite a newer snapshot with an older one.
     let mut tx = state.pool.begin().await?;
     advisory_lock(&mut tx, &format!("slimlytics-stripe:{customer}")).await?;
-    let subscriptions = stripe_get(
-        state,
-        stripe,
-        "/v1/subscriptions",
-        &[("customer", customer), ("status", "all"), ("limit", "20")],
-    )
-    .await?;
-    let list = subscriptions["data"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    // Every subscription, following pagination: a live one may be older than many canceled ones.
+    let mut list: Vec<Value> = Vec::new();
+    loop {
+        let mut query = vec![("customer", customer), ("status", "all"), ("limit", "100")];
+        let after = list
+            .last()
+            .and_then(|s| s["id"].as_str())
+            .map(str::to_owned);
+        if let Some(after) = after.as_deref() {
+            query.push(("starting_after", after));
+        }
+        let page = stripe_get(state, stripe, "/v1/subscriptions", &query).await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let done = data.is_empty() || !page["has_more"].as_bool().unwrap_or(false);
+        list.extend(data);
+        if done {
+            break;
+        }
+    }
     // Prefer a subscription in good standing; otherwise the most recent one.
     let current = list
         .iter()
@@ -491,7 +521,7 @@ async fn sync_customer(
     let interval = interval.map(|i| if i == Interval::Year { "year" } else { "month" });
     sqlx::query(
         "UPDATE account_billing SET
-           plan = CASE WHEN plan_source='stripe' THEN $2 ELSE plan END,
+           plan=$2,
            stripe_subscription_id=$3, subscription_status=$4, billing_interval=$5,
            current_period_end=$6, updated_at=now()
          WHERE stripe_customer_id=$1",

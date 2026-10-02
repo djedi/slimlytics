@@ -25,12 +25,14 @@ SELECT id AS user_id FROM users WHERE lower(email) = lower(:'email') \gset
 \endif
 SELECT (:'plan' = '--release') AS release \gset
 \if :release
-  UPDATE account_billing SET plan_source = 'stripe', updated_at = now() WHERE user_id = :'user_id';
+  UPDATE account_billing SET admin_plan = NULL, updated_at = now() WHERE user_id = :'user_id';
   \echo 'Released: the plan now follows the Stripe subscription, or the default plan when there is none.'
 \else
-  INSERT INTO account_billing(user_id, plan, plan_source) VALUES (:'user_id', :'plan', 'admin')
-  ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan, plan_source = 'admin', updated_at = now();
+  -- `plan` (the Stripe-derived plan) starts as the grant for new rows but is unused while
+  -- admin_plan is set; webhooks overwrite it with the subscription's real plan.
+  INSERT INTO account_billing(user_id, plan, admin_plan) VALUES (:'user_id', :'plan', :'plan')
+  ON CONFLICT (user_id) DO UPDATE SET admin_plan = EXCLUDED.admin_plan, updated_at = now();
   \echo 'Granted.'
 \endif
-SELECT u.email, b.plan, b.plan_source FROM users u JOIN account_billing b ON b.user_id = u.id WHERE u.id = :'user_id';
+SELECT u.email, coalesce(b.admin_plan, b.plan) AS plan, b.admin_plan IS NOT NULL AS granted FROM users u JOIN account_billing b ON b.user_id = u.id WHERE u.id = :'user_id';
 SQL

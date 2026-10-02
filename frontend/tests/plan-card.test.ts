@@ -33,6 +33,12 @@ describe('plan card', () => {
     expect(screen.queryByRole('button', { name: /Upgrade to Free/ })).toBeNull();
   });
 
+  it('prices upgrades in the plan currency', () => {
+    const euro = plans.map((plan) => ({ ...plan, currency: 'eur' }));
+    render(PlanCard, { props: { status: status({ plans: euro, plan: euro[0] }), onCheckout: vi.fn(), onPortal: vi.fn() } });
+    expect(screen.getByRole('button', { name: /Upgrade to Pro/ })).toHaveTextContent('€7');
+  });
+
   it('warns when today is over the soft page-view limit without blocking collection', () => {
     render(PlanCard, { props: { status: status({ usage: { sites: 1, pageViewsToday: 4500 } }), onCheckout: vi.fn(), onPortal: vi.fn() } });
     expect(screen.getByRole('status')).toHaveTextContent(/over today’s limit.*still being collected/i);

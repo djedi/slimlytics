@@ -267,20 +267,19 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
     assert_eq!(plan, "free");
 
     // Admin comps survive webhooks and lift limits.
-    sqlx::query(
-        "UPDATE account_billing SET plan='unlimited', plan_source='admin' WHERE user_id=$1",
-    )
-    .bind(user)
-    .execute(&pool)
-    .await
-    .unwrap();
-    let again = json!({"id": "evt_3", "type": "invoice.paid", "data": {"object": {"customer": "cus_test_1"}}}).to_string();
-    webhook(&router, &again, &sign(&again)).await;
-    let plan: String = sqlx::query_scalar("SELECT plan FROM account_billing WHERE user_id=$1")
+    sqlx::query("UPDATE account_billing SET admin_plan='unlimited' WHERE user_id=$1")
         .bind(user)
-        .fetch_one(&pool)
+        .execute(&pool)
         .await
         .unwrap();
+    let again = json!({"id": "evt_3", "type": "invoice.paid", "data": {"object": {"customer": "cus_test_1"}}}).to_string();
+    webhook(&router, &again, &sign(&again)).await;
+    let plan: String =
+        sqlx::query_scalar("SELECT admin_plan FROM account_billing WHERE user_id=$1")
+            .bind(user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(plan, "unlimited");
     assert_eq!(
         call(&router, "POST", "/api/sites", Some(&token), site("five"))
@@ -290,13 +289,33 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
     );
 
     // Releasing a grant without a live subscription falls back to the default plan at once.
-    sqlx::query("UPDATE account_billing SET plan_source='stripe' WHERE user_id=$1")
+    sqlx::query("UPDATE account_billing SET admin_plan=NULL WHERE user_id=$1")
         .bind(user)
         .execute(&pool)
         .await
         .unwrap();
     let status = body(call(&router, "GET", "/api/billing", Some(&token), Value::Null).await).await;
     assert_eq!(status["plan"]["id"], "free");
+
+    // Releasing a grant from a paying subscriber restores their subscription's plan.
+    stripe.lock().unwrap().subscription = json!({
+        "id": "sub_2", "status": "active", "created": 2,
+        "items": {"data": [{"price": {"lookup_key": "slimlytics_business_monthly"}, "current_period_end": 1_900_000_000}]}
+    });
+    sqlx::query("UPDATE account_billing SET admin_plan='unlimited' WHERE user_id=$1")
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let renewed = json!({"id": "evt_4", "type": "customer.subscription.created", "data": {"object": {"customer": "cus_test_1"}}}).to_string();
+    webhook(&router, &renewed, &sign(&renewed)).await;
+    sqlx::query("UPDATE account_billing SET admin_plan=NULL WHERE user_id=$1")
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let status = body(call(&router, "GET", "/api/billing", Some(&token), Value::Null).await).await;
+    assert_eq!(status["plan"]["id"], "business");
 }
 
 fn sign(payload: &str) -> String {
