@@ -173,7 +173,10 @@
     // Keep stats fresh while the dashboard stays open (e.g. phone browsing + desktop dashboard).
     const refresh = () => {
       if (document.visibilityState !== 'visible' || loading) return;
-      if (!site) void refreshSitesQuietly().catch(() => {});
+      if (!site) {
+        void refreshSitesQuietly().catch(() => {});
+        void refreshBillingQuietly();
+      }
       else if (view !== 'settings') void refreshViewQuietly().catch(() => {});
     };
     const interval = window.setInterval(refresh, 15_000);
@@ -252,6 +255,16 @@
       billingStatus = await api.billing();
     } catch {
       billingStatus = { enabled: false };
+    }
+  }
+  // Keeps usage meters and limit warnings current (and rolls over at UTC midnight) without
+  // hiding the card on a transient error.
+  async function refreshBillingQuietly() {
+    if (!billingStatus.enabled) return;
+    try {
+      billingStatus = await api.billing();
+    } catch {
+      /* keep the last known status */
     }
   }
   async function startCheckout(plan: string, interval: 'month' | 'year') {
@@ -560,6 +573,7 @@
         allowedOrigins: [origin]
       });
       sites = [...sites, { ...created, overview: await api.overview(created.id, days) }];
+      void refreshBillingQuietly();
       newSite = false;
       siteName = '';
       siteDomain = '';

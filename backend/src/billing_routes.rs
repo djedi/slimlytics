@@ -227,16 +227,38 @@ async fn checkout(
             "a checkout is already being prepared; try again in a moment".into(),
         ));
     }
-    let existing = account(&state.pool, user).await?;
+    // All database work below reuses the lock's connection, so a checkout never waits on the
+    // pool while holding one.
+    let existing = account(&mut *lock, user).await?;
     if existing.as_ref().is_some_and(|a| a.admin_plan.is_some()) {
         return Err(ApiError::BadRequest(
             "your plan is managed by an administrator".into(),
         ));
     }
-    let customer = ensure_customer(&state, &stripe, user, existing.as_ref()).await?;
-    // Reconcile with Stripe first: a subscription may exist that no webhook has delivered yet.
-    sync_customer(&state, &stripe, &customer).await?;
-    let existing = account(&state.pool, user).await?;
+    let customer = ensure_customer(&state, &mut lock, &stripe, user, existing.as_ref()).await?;
+    // Retire earlier unpaid sessions first, so the reconciliation below sees any that completed
+    // in the meantime. Expiring one that just completed fails; the sync then finds its
+    // subscription and sends the user to the portal instead of a second checkout.
+    let open = stripe_get(
+        &state,
+        &stripe,
+        "/v1/checkout/sessions",
+        &[
+            ("customer", customer.as_str()),
+            ("status", "open"),
+            ("limit", "100"),
+        ],
+    )
+    .await?;
+    for session in open["data"].as_array().into_iter().flatten() {
+        if let Some(id) = session["id"].as_str() {
+            let path = format!("/v1/checkout/sessions/{id}/expire");
+            let _ = stripe_post(&state, &stripe, &path, &[], None).await;
+        }
+    }
+    // Reconcile with Stripe: a subscription may exist that no webhook has delivered yet.
+    sync_customer(&state, &mut lock, &stripe, &customer).await?;
+    let existing = account(&mut *lock, user).await?;
     // Plan changes for existing subscribers go through the Customer Portal (proration,
     // cancellation), never a second subscription.
     if existing
@@ -266,30 +288,6 @@ async fn checkout(
             ))
         })?
         .to_owned();
-    // Expire earlier unpaid sessions so only one payable checkout exists per account.
-    let open = stripe_get(
-        &state,
-        &stripe,
-        "/v1/checkout/sessions",
-        &[
-            ("customer", customer.as_str()),
-            ("status", "open"),
-            ("limit", "100"),
-        ],
-    )
-    .await?;
-    for session in open["data"].as_array().into_iter().flatten() {
-        if let Some(id) = session["id"].as_str() {
-            stripe_post(
-                &state,
-                &stripe,
-                &format!("/v1/checkout/sessions/{id}/expire"),
-                &[],
-                None,
-            )
-            .await?;
-        }
-    }
     let base = state.public_url.trim_end_matches('/');
     let user_id = user.to_string();
     let session = stripe_post(
@@ -358,6 +356,7 @@ async fn portal_session(
 /// retries (double clicks, network errors) reuse one customer.
 async fn ensure_customer(
     state: &AppState,
+    conn: &mut sqlx::PgConnection,
     stripe: &StripeConfig,
     user: Uuid,
     existing: Option<&Account>,
@@ -367,7 +366,7 @@ async fn ensure_customer(
     }
     let email: String = sqlx::query_scalar("SELECT email FROM users WHERE id=$1")
         .bind(user)
-        .fetch_one(&state.pool)
+        .fetch_one(&mut *conn)
         .await?;
     let user_id = user.to_string();
     let customer = stripe_post(
@@ -396,7 +395,7 @@ async fn ensure_customer(
     .bind(user)
     .bind(default_plan)
     .bind(&id)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(stored)
 }
@@ -449,7 +448,8 @@ async fn webhook(
     if relevant {
         if let Some(customer) = event["data"]["object"]["customer"].as_str() {
             // A failure here returns 5xx so Stripe retries; the event is recorded only after.
-            sync_customer(&state, &stripe, customer).await?;
+            let mut conn = state.pool.acquire().await?;
+            sync_customer(&state, &mut conn, &stripe, customer).await?;
         }
     }
     sqlx::query("INSERT INTO stripe_webhook_events(id,type) VALUES($1,$2) ON CONFLICT DO NOTHING")
@@ -464,13 +464,16 @@ async fn webhook(
 /// keep their plan but still record the subscription details.
 async fn sync_customer(
     state: &AppState,
+    conn: &mut sqlx::PgConnection,
     stripe: &StripeConfig,
     customer: &str,
 ) -> Result<(), ApiError> {
+    use sqlx::Connection;
     let config = config(state)?;
     // Hold a per-customer lock across the fetch and the write, so a slower handler can't
-    // overwrite a newer snapshot with an older one.
-    let mut tx = state.pool.begin().await?;
+    // overwrite a newer snapshot with an older one. Inside a caller's transaction this is a
+    // savepoint, and the lock lasts until that transaction ends.
+    let mut tx = conn.begin().await?;
     advisory_lock(&mut tx, &format!("slimlytics-stripe:{customer}")).await?;
     // Every subscription, following pagination: a live one may be older than many canceled ones.
     let mut list: Vec<Value> = Vec::new();

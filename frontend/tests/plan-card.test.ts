@@ -33,6 +33,11 @@ describe('plan card', () => {
     expect(screen.queryByRole('button', { name: /Upgrade to Free/ })).toBeNull();
   });
 
+  it('keeps Manage billing for a comped account that still has a Stripe customer', () => {
+    render(PlanCard, { props: { status: status({ planSource: 'admin', hasBillingAccount: true }), onCheckout: vi.fn(), onPortal: vi.fn() } });
+    expect(screen.getByRole('button', { name: /Manage billing/ })).toBeInTheDocument();
+  });
+
   it('prices upgrades in the plan currency', () => {
     const euro = plans.map((plan) => ({ ...plan, currency: 'eur' }));
     render(PlanCard, { props: { status: status({ plans: euro, plan: euro[0] }), onCheckout: vi.fn(), onPortal: vi.fn() } });

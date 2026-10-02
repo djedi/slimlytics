@@ -53,7 +53,8 @@
         {:else}Free — upgrade any time{/if}
       </p>
     </div>
-    {#if status.hasBillingAccount && !comped}
+    <!-- Always reachable with a Stripe customer, even when comped, so a running subscription can be cancelled. -->
+    {#if status.hasBillingAccount}
       <button class="secondary compact" onclick={onPortal} disabled={busy}><CreditCard size={15} aria-hidden="true" />Manage billing</button>
     {/if}
   </header>
