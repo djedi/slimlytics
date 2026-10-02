@@ -392,7 +392,8 @@ async fn checkout(
     // Any attempt that got a response from Stripe is settled: its session is now either returned
     // or retired (an open leftover gets expired by the next checkout). So the advanced nonce is
     // saved whatever happens next, and later retries can't get stuck replaying dead sessions.
-    let result: Result<String, ApiError> = async {
+    // Ok((url, portal)).
+    let result: Result<(String, bool), ApiError> = async {
         for _ in 0..3 {
             let key = format!("slimlytics-checkout-{user}-{nonce}-{price}");
             let session = stripe_post(
@@ -408,11 +409,20 @@ async fn checkout(
             // Replays return the original response, so check the session's current status.
             let current =
                 stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[]).await?;
-            if current["status"].as_str() == Some("open") {
-                return session["url"]
-                    .as_str()
-                    .map(str::to_owned)
-                    .ok_or(ApiError::Internal);
+            match current["status"].as_str() {
+                Some("open") => {
+                    return session["url"]
+                        .as_str()
+                        .map(|url| (url.to_owned(), false))
+                        .ok_or(ApiError::Internal);
+                }
+                // The earlier attempt was paid in the meantime: record it and manage that
+                // subscription instead of opening another checkout.
+                Some("complete") => {
+                    sync_customer(&state, &mut lock, &stripe, &customer).await?;
+                    return Ok((portal_session(&state, &stripe, &customer).await?, true));
+                }
+                _ => {}
             }
         }
         Err(ApiError::BadRequest(
@@ -422,9 +432,9 @@ async fn checkout(
     .await;
     if nonce == start {
         // Stripe never answered: keep the nonce so a retry replays this same attempt.
-        let url = result?;
+        let (url, portal) = result?;
         lock.commit().await?;
-        return Ok(Json(json!({"url": url, "portal": false})));
+        return Ok(Json(json!({"url": url, "portal": portal})));
     }
     sqlx::query("UPDATE account_billing SET checkout_nonce=$2 WHERE user_id=$1")
         .bind(user)
@@ -433,8 +443,8 @@ async fn checkout(
         .await?;
     // Commit even when this request fails, so the progress is kept.
     lock.commit().await?;
-    let url = result?;
-    Ok(Json(json!({"url": url, "portal": false})))
+    let (url, portal) = result?;
+    Ok(Json(json!({"url": url, "portal": portal})))
 }
 
 async fn portal(
@@ -617,20 +627,16 @@ async fn sync_customer(
             break;
         }
     }
-    // Prefer a subscription in good standing; otherwise the most recent one.
+    // Prefer a subscription in good standing, then any other non-terminal one (unpaid, paused,
+    // incomplete; still resumable), and only then the most recent ended one.
+    let rank = |s: &Value| match s["status"].as_str() {
+        Some("active" | "trialing" | "past_due") => 2,
+        Some("canceled" | "incomplete_expired") | None => 0,
+        Some(_) => 1,
+    };
     let current = list
         .iter()
-        .filter(|s| {
-            matches!(
-                s["status"].as_str(),
-                Some("active" | "trialing" | "past_due")
-            )
-        })
-        .max_by_key(|s| s["created"].as_i64().unwrap_or(0))
-        .or_else(|| {
-            list.iter()
-                .max_by_key(|s| s["created"].as_i64().unwrap_or(0))
-        });
+        .max_by_key(|s| (rank(s), s["created"].as_i64().unwrap_or(0)));
     let (plan, interval) = current
         .map(|s| config.plan_for_subscription(s))
         .unwrap_or((config.default_plan.clone(), None));
