@@ -257,7 +257,8 @@
       billingStatus = await api.billing();
       billingKnown = true;
     } catch {
-      billingStatus = { enabled: false };
+      // Keep the last good status on a transient failure; only an unknown state hides billing.
+      if (!billingKnown) billingStatus = { enabled: false };
     }
   }
   // Keeps usage meters and limit warnings current (and rolls over at UTC midnight) without

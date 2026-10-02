@@ -43,7 +43,13 @@ for (const plan of plans) {
   let product = (await stripe('GET', '/v1/products/search', { query: `metadata['slimlytics_plan']:'${plan.id}'` })).data[0];
   for (const [interval, lookupKey, amount] of variants) {
     const existing = (await stripe('GET', '/v1/prices', { 'lookup_keys[]': lookupKey, active: 'true', limit: '1' })).data[0];
-    if (existing && existing.unit_amount === amount && existing.currency === (plan.currency || 'usd')) {
+    const matches =
+      existing &&
+      existing.unit_amount === amount &&
+      existing.currency === (plan.currency || 'usd') &&
+      existing.recurring?.interval === interval &&
+      existing.recurring?.interval_count === 1;
+    if (matches) {
       if (existing.metadata?.slimlytics_plan === plan.id) {
         console.log(`- ${lookupKey}: ok (${existing.id})`);
       } else {
@@ -52,7 +58,7 @@ for (const plan of plans) {
       }
       continue;
     }
-    console.log(`- ${lookupKey}: ${existing ? `amount changed ${existing.unit_amount} → ${amount}` : 'missing'}; will create ${amount} ${plan.currency || 'usd'}/${interval}`);
+    console.log(`- ${lookupKey}: ${existing ? `differs (${existing.unit_amount} ${existing.currency}/${existing.recurring?.interval_count ?? '?'} ${existing.recurring?.interval ?? 'one-time'})` : 'missing'}; will create ${amount} ${plan.currency || 'usd'}/${interval}`);
     if (!apply) continue;
     // Tag the superseded price first: once its lookup key moves, this metadata is the only way
     // to map its existing subscribers to the plan.

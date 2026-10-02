@@ -259,8 +259,10 @@ async fn checkout(
         ],
     )
     .await?;
+    let mut expired = Vec::new();
     for session in open["data"].as_array().into_iter().flatten() {
         if let Some(id) = session["id"].as_str() {
+            expired.push(id.to_owned());
             let path = format!("/v1/checkout/sessions/{id}/expire");
             if stripe_post(&state, &stripe, &path, &[], None)
                 .await
@@ -346,28 +348,54 @@ async fn checkout(
         .to_owned();
     let base = state.public_url.trim_end_matches('/');
     let user_id = user.to_string();
-    let session = stripe_post(
-        &state,
-        &stripe,
-        "/v1/checkout/sessions",
-        &[
-            ("mode", "subscription"),
-            ("customer", customer.as_str()),
-            ("client_reference_id", user_id.as_str()),
-            ("line_items[0][price]", price.as_str()),
-            ("line_items[0][quantity]", "1"),
-            (
-                "subscription_data[metadata][slimlytics_user_id]",
-                user_id.as_str(),
-            ),
-            ("success_url", &format!("{base}/app?billing=success")),
-            ("cancel_url", &format!("{base}/pricing")),
-            ("integration_identifier", INTEGRATION_IDENTIFIER),
-        ],
-        None,
-    )
-    .await?;
+    let params = [
+        ("mode", "subscription"),
+        ("customer", customer.as_str()),
+        ("client_reference_id", user_id.as_str()),
+        ("line_items[0][price]", price.as_str()),
+        ("line_items[0][quantity]", "1"),
+        (
+            "subscription_data[metadata][slimlytics_user_id]",
+            user_id.as_str(),
+        ),
+        ("success_url", &format!("{base}/app?billing=success")),
+        ("cancel_url", &format!("{base}/pricing")),
+        ("integration_identifier", INTEGRATION_IDENTIFIER),
+    ];
+    // The idempotency key only advances after a successful response. A retry after an
+    // ambiguous failure (e.g. a timeout once Stripe had accepted the request) therefore gets
+    // the same session back rather than a second payable one. If that replayed session is one
+    // just expired above, the earlier attempt is settled and a fresh key is used.
+    let mut nonce: i64 =
+        sqlx::query_scalar("SELECT checkout_nonce FROM account_billing WHERE user_id=$1")
+            .bind(user)
+            .fetch_one(&mut *lock)
+            .await?;
+    let mut session = Value::Null;
+    for _ in 0..2 {
+        let key = format!("slimlytics-checkout-{user}-{nonce}-{price}");
+        session = stripe_post(
+            &state,
+            &stripe,
+            "/v1/checkout/sessions",
+            &params,
+            Some(&key),
+        )
+        .await?;
+        nonce += 1;
+        if !session["id"]
+            .as_str()
+            .is_some_and(|id| expired.iter().any(|e| e == id))
+        {
+            break;
+        }
+    }
     let url = session["url"].as_str().ok_or(ApiError::Internal)?;
+    sqlx::query("UPDATE account_billing SET checkout_nonce=$2 WHERE user_id=$1")
+        .bind(user)
+        .bind(nonce)
+        .execute(&mut *lock)
+        .await?;
     lock.commit().await?;
     Ok(Json(json!({"url": url, "portal": false})))
 }

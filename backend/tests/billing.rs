@@ -208,7 +208,13 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
             customer.2.as_deref(),
             Some(format!("slimlytics-customer-{user}").as_str())
         );
-        let session = &fake.requests.iter().find(|r| r.0 == "checkout").unwrap().1;
+        let checkout_request = fake.requests.iter().find(|r| r.0 == "checkout").unwrap();
+        assert_eq!(
+            checkout_request.2.as_deref(),
+            Some(format!("slimlytics-checkout-{user}-0-price_for_slimlytics_pro_annual").as_str()),
+            "retries after an ambiguous failure reuse the same session"
+        );
+        let session = &checkout_request.1;
         assert_eq!(session["mode"], "subscription");
         assert_eq!(session["customer"], "cus_test_1");
         assert_eq!(
