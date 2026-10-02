@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod app;
 pub mod auth;
+pub mod billing;
 pub mod briefs;
 pub mod enrichment;
 pub mod error;

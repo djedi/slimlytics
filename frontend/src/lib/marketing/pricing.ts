@@ -13,8 +13,8 @@ export interface PricingPlan {
 }
 
 /**
- * Draft commercial tiers — marketing only; no billing is enforced yet.
- * Limits are daily page views (like Clicky's) so the plans compare directly, and every
+ * Hosted tiers. The enforced limits and prices live in the backend plan config
+ * (config/plans.example.json, docs/BILLING.md); keep the two in sync. Limits are daily page views (like Clicky's) so the plans compare directly, and every
  * feature is included on every plan: tiers differ only in sites, volume, and support.
  */
 export const pricingPlans: PricingPlan[] = [
@@ -58,7 +58,7 @@ export const pricingPlans: PricingPlan[] = [
     priceNote: 'per month',
     annualNote: 'or $56 / year — save 33%',
     highlighted: true,
-    ctaLabel: 'Create account',
+    ctaLabel: 'Start Pro',
     ctaHref: '/register?plan=pro',
     features: [
       '10 websites',
@@ -75,7 +75,7 @@ export const pricingPlans: PricingPlan[] = [
     price: '$15',
     priceNote: 'per month',
     annualNote: 'or $120 / year — save 33%',
-    ctaLabel: 'Create account',
+    ctaLabel: 'Start Business',
     ctaHref: '/register?plan=business',
     features: [
       '30 websites',
@@ -116,9 +116,9 @@ export const pricingFaqs = [
       'Clicky is mature and has extras Slimlytics does not offer yet, such as heatmaps and uptime monitoring. Slimlytics is open source and self-hostable, built in Rust, includes an MCP server so AI agents can install and query it, and costs less at every tier with no features held back.'
   },
   {
-    question: 'Is billing live today?',
+    question: 'What happens if I go over my daily page views?',
     answer:
-      'Pricing describes our planned hosted plans. Create an account to get started — checkout is not required yet. Self-hosted remains free forever on your own infrastructure.'
+      'Nothing is dropped. Slimlytics keeps collecting and the dashboard asks you to upgrade. Upgrades, downgrades, and cancellation are self-serve, billed monthly or annually through Stripe.'
   },
   {
     question: 'What is included when I self-host?',

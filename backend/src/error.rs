@@ -13,6 +13,9 @@ pub enum ApiError {
     BadRequest(String),
     #[error("rate limit exceeded")]
     RateLimited,
+    /// The account's plan does not allow this (e.g. no more sites); upgrading resolves it.
+    #[error("{0}")]
+    PlanLimit(String),
     #[error("database unavailable")]
     Database(#[from] sqlx::Error),
     #[error("internal error")]
@@ -37,6 +40,7 @@ impl IntoResponse for ApiError {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+            Self::PlanLimit(_) => (StatusCode::PAYMENT_REQUIRED, "plan_limit"),
             Self::Database(_) | Self::Internal => {
                 tracing::error!(error = %self, "request failed");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")

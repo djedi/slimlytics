@@ -117,6 +117,41 @@ async fn main() -> Result<()> {
         }
     }
     let optional_env = |name| env::var(name).ok().filter(|value| !value.trim().is_empty());
+    if optional_env("BILLING_ENABLED").is_some_and(|value| value == "true") {
+        let stripe = match (
+            optional_env("STRIPE_SECRET_KEY"),
+            optional_env("STRIPE_WEBHOOK_SECRET"),
+        ) {
+            (Some(secret_key), Some(webhook_secret)) => {
+                Some(slimlytics_backend::billing::StripeConfig {
+                    secret_key,
+                    webhook_secret,
+                    api_base: optional_env("STRIPE_API_BASE")
+                        .unwrap_or_else(|| "https://api.stripe.com".into()),
+                })
+            }
+            (None, None) => None,
+            _ => anyhow::bail!("set both STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, or neither"),
+        };
+        let config = match optional_env("BILLING_PLANS_FILE") {
+            Some(path) => {
+                let json = std::fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read BILLING_PLANS_FILE {path}"))?;
+                slimlytics_backend::billing::BillingConfig::from_json(&json, stripe)
+            }
+            None => slimlytics_backend::billing::BillingConfig::new(
+                slimlytics_backend::billing::default_plans(),
+                stripe,
+            ),
+        }
+        .map_err(|error| anyhow::anyhow!(error))?;
+        tracing::info!(
+            plans = config.plans.len(),
+            payments = config.stripe.is_some(),
+            "billing enabled"
+        );
+        state = state.with_billing(config);
+    }
     let google_client_id = optional_env("GOOGLE_CLIENT_ID");
     let google_client_secret = optional_env("GOOGLE_CLIENT_SECRET");
     let google_redirect_uri = optional_env("GOOGLE_REDIRECT_URI");

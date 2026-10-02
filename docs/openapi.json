@@ -22,6 +22,10 @@
   ],
   "tags": [
     {
+      "name": "Billing",
+      "description": "Hosted plans, Stripe Checkout and Customer Portal, and the Stripe webhook. Disabled unless BILLING_ENABLED=true."
+    },
+    {
       "name": "System",
       "description": "Health, readiness, and machine-readable documentation."
     },
@@ -4111,6 +4115,388 @@
           "404": {"$ref": "#/components/responses/NotFound"},
           "500": {"$ref": "#/components/responses/InternalError"}
         }
+      }
+    },
+    "/api/billing/plans": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "List hosted plans",
+        "operationId": "listBillingPlans",
+        "description": "Public. Returns enabled=false and no plans when billing is off (self-hosted default).",
+        "responses": {
+          "200": {
+            "description": "Plans",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "enabled",
+                    "plans"
+                  ],
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "checkoutAvailable": {
+                      "type": "boolean"
+                    },
+                    "plans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "sites": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ],
+                            "description": "Maximum owned sites; null is unlimited"
+                          },
+                          "dailyPageViews": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ],
+                            "description": "Soft daily limit across the account's sites; null is unlimited"
+                          },
+                          "monthlyPriceCents": {
+                            "type": "integer"
+                          },
+                          "annualPriceCents": {
+                            "type": "integer"
+                          },
+                          "currency": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/billing": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Get the account's plan and usage",
+        "operationId": "getBilling",
+        "description": "Session login only; API and agent tokens are refused (403).",
+        "responses": {
+          "200": {
+            "description": "Plan, subscription, and usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "enabled"
+                  ],
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "plan": {
+                      "type": "object",
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "sites": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "description": "Maximum owned sites; null is unlimited"
+                        },
+                        "dailyPageViews": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "description": "Soft daily limit across the account's sites; null is unlimited"
+                        },
+                        "monthlyPriceCents": {
+                          "type": "integer"
+                        },
+                        "annualPriceCents": {
+                          "type": "integer"
+                        },
+                        "currency": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "planSource": {
+                      "type": "string",
+                      "enum": [
+                        "default",
+                        "stripe",
+                        "admin"
+                      ]
+                    },
+                    "subscriptionStatus": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "interval": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "month",
+                        "year",
+                        null
+                      ]
+                    },
+                    "currentPeriodEnd": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "format": "date-time"
+                    },
+                    "usage": {
+                      "type": "object",
+                      "properties": {
+                        "sites": {
+                          "type": "integer"
+                        },
+                        "pageViewsToday": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "plans": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "sites": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ],
+                            "description": "Maximum owned sites; null is unlimited"
+                          },
+                          "dailyPageViews": {
+                            "type": [
+                              "integer",
+                              "null"
+                            ],
+                            "description": "Soft daily limit across the account's sites; null is unlimited"
+                          },
+                          "monthlyPriceCents": {
+                            "type": "integer"
+                          },
+                          "annualPriceCents": {
+                            "type": "integer"
+                          },
+                          "currency": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "checkoutAvailable": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/billing/checkout": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Start a Stripe Checkout subscription",
+        "operationId": "createBillingCheckout",
+        "description": "Session login only. Existing subscribers receive a Customer Portal URL instead, so plans change without a second subscription.",
+        "responses": {
+          "200": {
+            "description": "Checkout or portal URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "url"
+                  ],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "portal": {
+                      "type": "boolean",
+                      "description": "True when an existing subscriber is sent to the Customer Portal instead"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "plan"
+                ],
+                "properties": {
+                  "plan": {
+                    "type": "string"
+                  },
+                  "interval": {
+                    "type": "string",
+                    "enum": [
+                      "month",
+                      "year"
+                    ],
+                    "default": "month"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/portal": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Open the Stripe Customer Portal",
+        "operationId": "createBillingPortal",
+        "description": "Session login only. Manage payment methods, change plans, or cancel.",
+        "responses": {
+          "200": {
+            "description": "Portal URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "url"
+                  ],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "portal": {
+                      "type": "boolean",
+                      "description": "True when an existing subscriber is sent to the Customer Portal instead"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/billing/webhook": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Stripe webhook",
+        "operationId": "stripeWebhook",
+        "description": "Called by Stripe. Requires a valid Stripe-Signature header; each event is applied once and re-syncs the customer's subscription.",
+        "responses": {
+          "200": {
+            "description": "Event received",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "received": {
+                      "type": "boolean"
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid signature or payload"
+          }
+        },
+        "security": []
       }
     },
     "/api/ingest": {

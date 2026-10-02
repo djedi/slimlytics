@@ -1,3 +1,5 @@
+#[path = "billing_routes.rs"]
+mod billing_routes;
 #[path = "mcp_oauth.rs"]
 mod mcp_oauth;
 #[path = "tracking_setup.rs"]
@@ -85,6 +87,8 @@ pub struct AppState {
     trust_proxy: bool,
     geoip: Option<Arc<GeoIp>>,
     search_console: Option<Arc<SearchConsoleConfig>>,
+    /// Hosted-plan billing; `None` (the default) means no plans or limits.
+    billing: Option<Arc<crate::billing::BillingConfig>>,
     http: reqwest::Client,
 }
 impl AppState {
@@ -103,6 +107,7 @@ impl AppState {
             trust_proxy: false,
             geoip: None,
             search_console: None,
+            billing: None,
             http: reqwest::Client::new(),
         }
     }
@@ -143,6 +148,10 @@ impl AppState {
     }
     pub fn with_search_console(mut self, config: SearchConsoleConfig) -> Self {
         self.search_console = Some(Arc::new(config));
+        self
+    }
+    pub fn with_billing(mut self, config: crate::billing::BillingConfig) -> Self {
+        self.billing = Some(Arc::new(config));
         self
     }
 }
@@ -271,6 +280,7 @@ impl FromRequestParts<AppState> for AgentUser {
 pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(mcp_oauth::routes())
+        .merge(billing_routes::routes())
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api/openapi.json", get(openapi_document))
@@ -646,6 +656,7 @@ async fn create_site(
 ) -> Result<impl IntoResponse, ApiError> {
     validate_site(&input)?;
     input.domain = canonical_domain(&input.domain)?;
+    billing_routes::ensure_site_allowance(&state, user).await?;
     let mut tx = state.pool.begin().await?;
     let site: Site = sqlx::query_as("INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at")
         .bind(input.name)
@@ -684,6 +695,9 @@ async fn ensure_site(
     .fetch_optional(&mut *tx)
     .await?;
     let (created, site) = if let Some(site) = inserted {
+        // Reusing an existing site is always allowed; only a new one counts against the plan.
+        // Returning here drops the transaction, rolling back the inserted site.
+        billing_routes::ensure_site_allowance(&state, user).await?;
         sqlx::query("INSERT INTO site_memberships(site_id,user_id,role) VALUES($1,$2,'owner')")
             .bind(site.id)
             .bind(user)

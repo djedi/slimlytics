@@ -21,8 +21,33 @@
 
   onMount(() => {
     const token = localStorage.getItem('slimlytics_token') ?? '';
-    if (token || demo) void goto('/app');
+    if (demo) void goto('/app');
+    else if (token) {
+      api.setToken(token);
+      void continueAfterAuth();
+    }
   });
+
+  // Pricing links carry ?plan=pro[&interval=year]. After signing in, a paid plan continues
+  // straight to Stripe Checkout when this server has billing; otherwise go to the dashboard.
+  async function continueAfterAuth() {
+    const params = new URLSearchParams(location.search);
+    const plan = params.get('plan');
+    const interval = params.get('interval') === 'year' ? 'year' : 'month';
+    if (plan && /^[a-z0-9_-]{1,64}$/i.test(plan) && !['free', 'self-hosted'].includes(plan)) {
+      try {
+        const billing = await api.billing();
+        if (billing.enabled && billing.checkoutAvailable && billing.plans?.some((option) => option.id === plan)) {
+          const { url } = await api.billingCheckout(plan, interval);
+          location.assign(url);
+          return;
+        }
+      } catch {
+        /* fall through to the dashboard, where upgrades are available */
+      }
+    }
+    await goto('/app');
+  }
 
   async function authenticate() {
     authBusy = true;
@@ -36,7 +61,7 @@
       if (!token) throw new Error('The server did not return an access token.');
       localStorage.setItem('slimlytics_token', token);
       api.setToken(token);
-      await goto('/app');
+      await continueAfterAuth();
     } catch (reason) {
       authError = reason instanceof Error ? reason.message : 'Could not sign in.';
     } finally {

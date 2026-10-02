@@ -2,6 +2,19 @@ export interface TrendPoint { date: string; visitors: number; pageViews: number 
 export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
 export type AntiAdblockServer = 'caddy' | 'nginx' | 'apache';
 export interface AntiAdblockSettings { serverType: AntiAdblockServer; jsPath: string; beaconPath: string }
+export interface BillingPlan { id: string; name: string; sites: number | null; dailyPageViews: number | null; monthlyPriceCents: number; annualPriceCents: number; currency: string }
+export interface BillingStatus {
+  enabled: boolean;
+  plan?: BillingPlan;
+  planSource?: 'default' | 'stripe' | 'admin';
+  subscriptionStatus?: string | null;
+  interval?: 'month' | 'year' | null;
+  currentPeriodEnd?: string | null;
+  hasBillingAccount?: boolean;
+  usage?: { sites: number; pageViewsToday: number };
+  plans?: BillingPlan[];
+  checkoutAvailable?: boolean;
+}
 export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; proxyKey?: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; overview?: Overview }
 export interface User { id: string; email: string; name?: string }
 export interface AuthResponse { token?: string; accessToken?: string; user: User }
@@ -136,6 +149,9 @@ export class ApiClient {
       return structuredClone(fallback());
     }
   }
+  billing() { return this.request<BillingStatus>('/billing', {}, () => ({ enabled: false })); }
+  billingCheckout(plan: string, interval: 'month' | 'year' = 'month') { return this.request<{ url: string; portal: boolean }>('/billing/checkout', { method: 'POST', body: JSON.stringify({ plan, interval }) }); }
+  billingPortal() { return this.request<{ url: string }>('/billing/portal', { method: 'POST' }); }
   register(email: string, password: string, name = '') { return this.request<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }); }
   login(email: string, password: string) { return this.request<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, () => ({ accessToken: 'demo', user: { id: 'demo', email } })); }
   me() { return this.request<User>('/auth/me'); }

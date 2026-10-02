@@ -198,6 +198,7 @@ See `SECURITY.md` for reporting and deployment guidance.
 - `docs/CLI.md`
 - `docs/MIGRATION.md`
 - `docs/OPERATIONS.md`
+- `docs/BILLING.md`
 
 ## Project status
 

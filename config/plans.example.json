@@ -1,0 +1,33 @@
+[
+  {
+    "id": "free",
+    "name": "Free",
+    "sites": 1,
+    "dailyPageViews": 3000,
+    "monthlyPriceCents": 0,
+    "annualPriceCents": 0,
+    "currency": "usd"
+  },
+  {
+    "id": "pro",
+    "name": "Pro",
+    "sites": 10,
+    "dailyPageViews": 30000,
+    "monthlyPriceCents": 700,
+    "annualPriceCents": 5600,
+    "currency": "usd",
+    "stripeMonthlyLookupKey": "slimlytics_pro_monthly",
+    "stripeAnnualLookupKey": "slimlytics_pro_annual"
+  },
+  {
+    "id": "business",
+    "name": "Business",
+    "sites": 30,
+    "dailyPageViews": 100000,
+    "monthlyPriceCents": 1500,
+    "annualPriceCents": 12000,
+    "currency": "usd",
+    "stripeMonthlyLookupKey": "slimlytics_business_monthly",
+    "stripeAnnualLookupKey": "slimlytics_business_annual"
+  }
+]

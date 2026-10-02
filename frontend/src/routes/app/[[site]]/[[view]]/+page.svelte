@@ -56,6 +56,7 @@
     type ReportRow,
     type ReportSubscription,
     type SearchConsoleStatus,
+    type BillingStatus,
     type Site,
     type Visitor
   } from '$lib/api';
@@ -63,6 +64,7 @@
   import { appHref, parseDays, parseView, type SiteView } from '$lib/app-routes';
   import ChangeBadge from '$lib/components/rollup/ChangeBadge.svelte';
   import SiteCard from '$lib/components/rollup/SiteCard.svelte';
+  import PlanCard from '$lib/components/billing/PlanCard.svelte';
   import AntiAdblockSettingsPanel from '$lib/components/AntiAdblockSettings.svelte';
   import ReportTable from '$lib/components/ReportTable.svelte';
   import TrafficChart from '$lib/components/TrafficChart.svelte';
@@ -241,9 +243,56 @@
     source?.close();
     void goto('/');
   }
+  // Hosted-plan billing; stays { enabled: false } on self-hosted installs.
+  let billingStatus = $state<BillingStatus>({ enabled: false });
+  let billingBusy = $state(false);
+  let billingNotice = $state('');
+  async function loadBilling() {
+    try {
+      billingStatus = await api.billing();
+    } catch {
+      billingStatus = { enabled: false };
+    }
+  }
+  async function startCheckout(plan: string, interval: 'month' | 'year') {
+    billingBusy = true;
+    try {
+      const { url } = await api.billingCheckout(plan, interval);
+      location.assign(url);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not start checkout.';
+      billingBusy = false;
+    }
+  }
+  async function openBillingPortal() {
+    billingBusy = true;
+    try {
+      location.assign((await api.billingPortal()).url);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not open billing.';
+      billingBusy = false;
+    }
+  }
+  // Returning from Stripe Checkout: the webhook updates the plan asynchronously, so re-check
+  // briefly until it lands.
+  async function confirmCheckout() {
+    billingNotice = 'Thanks! Your subscription is being activated…';
+    const before = billingStatus.plan?.id;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await loadBilling();
+      if (billingStatus.plan?.id && billingStatus.plan.id !== before) break;
+    }
+    billingNotice = `You’re on the ${billingStatus.plan?.name ?? 'new'} plan.`;
+    history.replaceState(history.state, '', appHref(null, null, days));
+  }
+
   async function loadSites() {
     loading = true;
     error = '';
+    void loadBilling().then(() => {
+      if (page.url.searchParams.get('billing') === 'success') void confirmCheckout();
+    });
     try {
       await refreshSitesQuietly();
     } catch (reason) {
@@ -648,6 +697,10 @@
           <button class="primary" onclick={() => (newSite = true)}><Plus size={16} /> Add site</button>
         </section>
         {#if sites.length}
+          {#if billingNotice}<p class="success-message billing-notice" role="status">{billingNotice}</p>{/if}
+          {#if billingStatus.enabled && billingStatus.plan}
+            <PlanCard status={billingStatus} busy={billingBusy} onCheckout={startCheckout} onPortal={openBillingPortal} />
+          {/if}
           <section class="portfolio-summary" aria-label="Workspace totals">
             <div>
               <span class="label"><Users size={15} aria-hidden="true" /> Visitors</span>
