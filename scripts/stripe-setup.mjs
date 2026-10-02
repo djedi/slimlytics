@@ -44,7 +44,12 @@ for (const plan of plans) {
   for (const [interval, lookupKey, amount] of variants) {
     const existing = (await stripe('GET', '/v1/prices', { 'lookup_keys[]': lookupKey, active: 'true', limit: '1' })).data[0];
     if (existing && existing.unit_amount === amount && existing.currency === (plan.currency || 'usd')) {
-      console.log(`- ${lookupKey}: ok (${existing.id})`);
+      if (existing.metadata?.slimlytics_plan === plan.id) {
+        console.log(`- ${lookupKey}: ok (${existing.id})`);
+      } else {
+        console.log(`- ${lookupKey}: ok (${existing.id}); will tag metadata slimlytics_plan=${plan.id}`);
+        if (apply) await stripe('POST', `/v1/prices/${existing.id}`, { 'metadata[slimlytics_plan]': plan.id });
+      }
       continue;
     }
     console.log(`- ${lookupKey}: ${existing ? `amount changed ${existing.unit_amount} → ${amount}` : 'missing'}; will create ${amount} ${plan.currency || 'usd'}/${interval}`);
@@ -60,6 +65,8 @@ for (const plan of plans) {
       'recurring[interval]': interval,
       lookup_key: lookupKey,
       transfer_lookup_key: 'true',
+      // Old prices lose the lookup key when amounts change; this keeps their subscribers mapped.
+      'metadata[slimlytics_plan]': plan.id,
       nickname: `${plan.name} ${interval === 'month' ? 'monthly' : 'annual'}`
     });
     console.log(`  created price ${price.id}`);

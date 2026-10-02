@@ -696,11 +696,12 @@
           </div>
           <button class="primary" onclick={() => (newSite = true)}><Plus size={16} /> Add site</button>
         </section>
+        <!-- Account-level billing shows even with no sites, so subscribers can always manage it. -->
+        {#if billingNotice}<p class="success-message billing-notice" role="status">{billingNotice}</p>{/if}
+        {#if billingStatus.enabled && billingStatus.plan}
+          <PlanCard status={billingStatus} busy={billingBusy} onCheckout={startCheckout} onPortal={openBillingPortal} />
+        {/if}
         {#if sites.length}
-          {#if billingNotice}<p class="success-message billing-notice" role="status">{billingNotice}</p>{/if}
-          {#if billingStatus.enabled && billingStatus.plan}
-            <PlanCard status={billingStatus} busy={billingBusy} onCheckout={startCheckout} onPortal={openBillingPortal} />
-          {/if}
           <section class="portfolio-summary" aria-label="Workspace totals">
             <div>
               <span class="label"><Users size={15} aria-hidden="true" /> Visitors</span>

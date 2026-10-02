@@ -73,36 +73,58 @@ async fn account(pool: &PgPool, user: Uuid) -> Result<Option<Account>, ApiError>
     .await?)
 }
 
-/// The plan currently governing this account (default when there is no billing row).
-async fn current_plan(
-    state: &AppState,
-    config: &BillingConfig,
-    user: Uuid,
-) -> Result<Plan, ApiError> {
-    let plan = account(&state.pool, user)
-        .await?
-        .map(|a| a.plan)
-        .unwrap_or_else(|| config.default_plan.clone());
-    Ok(config.plan(&plan))
+/// The plan governing an account. Admin grants apply as stored; a Stripe-managed plan only
+/// applies while its subscription is in good standing (e.g. after an admin grant is released
+/// from an account that never subscribed), otherwise the default plan does.
+fn effective_plan(config: &BillingConfig, account: Option<&Account>) -> Plan {
+    let id = match account {
+        Some(a) if a.plan_source == "admin" => a.plan.as_str(),
+        Some(a)
+            if matches!(
+                a.subscription_status.as_deref(),
+                Some("active" | "trialing" | "past_due")
+            ) =>
+        {
+            a.plan.as_str()
+        }
+        _ => config.default_plan.as_str(),
+    };
+    config.plan(id)
 }
 
-async fn owned_sites(pool: &PgPool, user: Uuid) -> Result<i64, ApiError> {
+/// Serializes work per key for the life of the transaction (site creation per account,
+/// checkout per account, subscription sync per customer).
+async fn advisory_lock(conn: &mut sqlx::PgConnection, key: &str) -> Result<(), ApiError> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(key)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+async fn owned_sites<'e>(executor: impl sqlx::PgExecutor<'e>, user: Uuid) -> Result<i64, ApiError> {
     Ok(sqlx::query_scalar(
         "SELECT count(*) FROM site_memberships WHERE user_id=$1 AND role='owner'",
     )
     .bind(user)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?)
 }
 
-/// Rejects creating another site when billing is on and the account's plan is full.
-pub(super) async fn ensure_site_allowance(state: &AppState, user: Uuid) -> Result<(), ApiError> {
+/// Rejects creating another site when billing is on and the account's plan is full. Runs in
+/// the creating transaction and locks the account, so concurrent creations can't both pass.
+pub(super) async fn ensure_site_allowance(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    user: Uuid,
+) -> Result<(), ApiError> {
     let Some(config) = state.billing.as_ref() else {
         return Ok(());
     };
-    let plan = current_plan(state, config, user).await?;
+    advisory_lock(tx, &format!("slimlytics-sites:{user}")).await?;
+    let plan = effective_plan(config, account(&state.pool, user).await?.as_ref());
     if let Some(limit) = plan.sites {
-        if owned_sites(&state.pool, user).await? >= i64::from(limit) {
+        if owned_sites(&mut *tx, user).await? >= i64::from(limit) {
             return Err(ApiError::PlanLimit(format!(
                 "the {} plan includes {limit} {}; upgrade to add more",
                 plan.name,
@@ -130,12 +152,7 @@ async fn status(
         return Ok(Json(json!({"enabled": false})));
     };
     let account = account(&state.pool, user).await?;
-    let plan = config.plan(
-        account
-            .as_ref()
-            .map(|a| a.plan.as_str())
-            .unwrap_or(&config.default_plan),
-    );
+    let plan = effective_plan(config, account.as_ref());
     let sites = owned_sites(&state.pool, user).await?;
     // Human page views since UTC midnight across the account's own sites.
     let page_views_today: i64 = sqlx::query_scalar(
@@ -185,6 +202,9 @@ async fn checkout(
     let lookup_key = plan.lookup_key(input.interval).ok_or_else(|| {
         ApiError::BadRequest("this plan cannot be purchased with that interval".into())
     })?;
+    // One checkout at a time per account, held until the new session exists.
+    let mut lock = state.pool.begin().await?;
+    advisory_lock(&mut lock, &format!("slimlytics-checkout:{user}")).await?;
     let existing = account(&state.pool, user).await?;
     if existing.as_ref().is_some_and(|a| a.plan_source == "admin") {
         return Err(ApiError::BadRequest(
@@ -192,6 +212,9 @@ async fn checkout(
         ));
     }
     let customer = ensure_customer(&state, &stripe, user, existing.as_ref()).await?;
+    // Reconcile with Stripe first: a subscription may exist that no webhook has delivered yet.
+    sync_customer(&state, &stripe, &customer).await?;
+    let existing = account(&state.pool, user).await?;
     // Plan changes for existing subscribers go through the Customer Portal (proration,
     // cancellation), never a second subscription.
     if existing
@@ -221,6 +244,30 @@ async fn checkout(
             ))
         })?
         .to_owned();
+    // Expire earlier unpaid sessions so only one payable checkout exists per account.
+    let open = stripe_get(
+        &state,
+        &stripe,
+        "/v1/checkout/sessions",
+        &[
+            ("customer", customer.as_str()),
+            ("status", "open"),
+            ("limit", "100"),
+        ],
+    )
+    .await?;
+    for session in open["data"].as_array().into_iter().flatten() {
+        if let Some(id) = session["id"].as_str() {
+            stripe_post(
+                &state,
+                &stripe,
+                &format!("/v1/checkout/sessions/{id}/expire"),
+                &[],
+                None,
+            )
+            .await?;
+        }
+    }
     let base = state.public_url.trim_end_matches('/');
     let user_id = user.to_string();
     let session = stripe_post(
@@ -245,6 +292,7 @@ async fn checkout(
     )
     .await?;
     let url = session["url"].as_str().ok_or(ApiError::Internal)?;
+    lock.commit().await?;
     Ok(Json(json!({"url": url, "portal": false})))
 }
 
@@ -398,6 +446,10 @@ async fn sync_customer(
     customer: &str,
 ) -> Result<(), ApiError> {
     let config = config(state)?;
+    // Hold a per-customer lock across the fetch and the write, so a slower handler can't
+    // overwrite a newer snapshot with an older one.
+    let mut tx = state.pool.begin().await?;
+    advisory_lock(&mut tx, &format!("slimlytics-stripe:{customer}")).await?;
     let subscriptions = stripe_get(
         state,
         stripe,
@@ -450,8 +502,9 @@ async fn sync_customer(
     .bind(status)
     .bind(interval)
     .bind(period_end)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 

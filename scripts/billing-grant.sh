@@ -26,7 +26,7 @@ SELECT id AS user_id FROM users WHERE lower(email) = lower(:'email') \gset
 SELECT (:'plan' = '--release') AS release \gset
 \if :release
   UPDATE account_billing SET plan_source = 'stripe', updated_at = now() WHERE user_id = :'user_id';
-  \echo 'Released: the plan now follows the Stripe subscription (or the default plan) on the next sync.'
+  \echo 'Released: the plan now follows the Stripe subscription, or the default plan when there is none.'
 \else
   INSERT INTO account_billing(user_id, plan, plan_source) VALUES (:'user_id', :'plan', 'admin')
   ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan, plan_source = 'admin', updated_at = now();

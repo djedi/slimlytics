@@ -182,15 +182,27 @@ impl BillingConfig {
             .cloned()
             .unwrap_or_default();
         for item in items {
-            let Some(key) = item["price"]["lookup_key"].as_str() else {
-                continue;
-            };
-            for plan in &self.plans {
-                if plan.stripe_monthly_lookup_key.as_deref() == Some(key) {
-                    return (plan.id.clone(), Some(Interval::Month));
+            let price = &item["price"];
+            if let Some(key) = price["lookup_key"].as_str() {
+                for plan in &self.plans {
+                    if plan.stripe_monthly_lookup_key.as_deref() == Some(key) {
+                        return (plan.id.clone(), Some(Interval::Month));
+                    }
+                    if plan.stripe_annual_lookup_key.as_deref() == Some(key) {
+                        return (plan.id.clone(), Some(Interval::Year));
+                    }
                 }
-                if plan.stripe_annual_lookup_key.as_deref() == Some(key) {
-                    return (plan.id.clone(), Some(Interval::Year));
+            }
+            // A superseded price loses its lookup key to the new one, but existing subscribers
+            // stay on it; the `slimlytics_plan` metadata set by scripts/stripe-setup.mjs keeps
+            // them on their plan.
+            if let Some(id) = price["metadata"]["slimlytics_plan"].as_str() {
+                if self.plans.iter().any(|plan| plan.id == id) {
+                    let interval = match price["recurring"]["interval"].as_str() {
+                        Some("year") => Some(Interval::Year),
+                        _ => Some(Interval::Month),
+                    };
+                    return (id.to_owned(), interval);
                 }
             }
         }
@@ -340,6 +352,21 @@ mod tests {
             BillingConfig::from_json(include_str!("../../config/plans.example.json"), None)
                 .unwrap();
         assert_eq!(example.plans, default_plans());
+    }
+
+    #[test]
+    fn superseded_prices_keep_their_plan_through_metadata() {
+        let config = BillingConfig::new(default_plans(), None).unwrap();
+        let subscription = json!({"status": "active", "items": {"data": [{"price": {
+            "lookup_key": null, "metadata": {"slimlytics_plan": "business"},
+            "recurring": {"interval": "year"}
+        }}]}});
+        assert_eq!(
+            config.plan_for_subscription(&subscription),
+            ("business".into(), Some(Interval::Year))
+        );
+        let unknown = json!({"status": "active", "items": {"data": [{"price": {"metadata": {"slimlytics_plan": "gone"}}}]}});
+        assert_eq!(config.plan_for_subscription(&unknown).0, "free");
     }
 
     #[test]

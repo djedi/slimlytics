@@ -48,7 +48,14 @@ async fn fake_stripe() -> (String, Shared) {
     };
     let router = Router::new()
         .route("/v1/customers", post(record("customers")))
-        .route("/v1/checkout/sessions", post(record("checkout")))
+        .route(
+            "/v1/checkout/sessions",
+            post(record("checkout")).get(|| async { Json(json!({"data": [{"id": "cs_stale"}]})) }),
+        )
+        .route(
+            "/v1/checkout/sessions/cs_stale/expire",
+            post(record("expire")),
+        )
         .route("/v1/billing_portal/sessions", post(record("portal")))
         .route(
             "/v1/prices",
@@ -207,6 +214,10 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
             "dynamic payment methods"
         );
         assert!(session.contains_key("integration_identifier"));
+        assert!(
+            fake.requests.iter().any(|r| r.0 == "expire"),
+            "earlier open sessions are expired so only one is payable"
+        );
     }
 
     // Webhook: bad signatures are rejected; a valid event syncs the plan from Stripe once.
@@ -277,6 +288,15 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
             .status(),
         StatusCode::CREATED
     );
+
+    // Releasing a grant without a live subscription falls back to the default plan at once.
+    sqlx::query("UPDATE account_billing SET plan_source='stripe' WHERE user_id=$1")
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let status = body(call(&router, "GET", "/api/billing", Some(&token), Value::Null).await).await;
+    assert_eq!(status["plan"]["id"], "free");
 }
 
 fn sign(payload: &str) -> String {
