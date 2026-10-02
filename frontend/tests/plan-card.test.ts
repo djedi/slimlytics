@@ -46,6 +46,15 @@ describe('plan card', () => {
     expect(screen.getByRole('button', { name: /Upgrade to Pro/ })).toHaveTextContent('$56/yr');
   });
 
+  it('offers plans that only raise the site allowance', () => {
+    const sitesOnly = [
+      { ...plans[0], dailyPageViews: null },
+      { ...plans[1], dailyPageViews: null }
+    ];
+    render(PlanCard, { props: { status: status({ plans: sitesOnly, plan: sitesOnly[0] }), onCheckout: vi.fn(), onPortal: vi.fn() } });
+    expect(screen.getByRole('button', { name: /Upgrade to Pro/ })).toBeInTheDocument();
+  });
+
   it('prices upgrades in the plan currency', () => {
     const euro = plans.map((plan) => ({ ...plan, currency: 'eur' }));
     render(PlanCard, { props: { status: status({ plans: euro, plan: euro[0] }), onCheckout: vi.fn(), onPortal: vi.fn() } });

@@ -19,7 +19,7 @@
   const usage = $derived(status.usage ?? { sites: 0, pageViewsToday: 0 });
   const comped = $derived(status.planSource === 'admin');
   const plans = $derived(status.plans ?? []);
-  // Only plans above the current one, by daily volume, are offered as upgrades.
+  // Plans that raise either allowance (sites or daily volume) are offered as upgrades.
   const upgrades = $derived(
     comped || !status.checkoutAvailable
       ? []
@@ -27,7 +27,8 @@
           (option) =>
             (option.intervals?.length ?? 0) > 0 &&
             option.id !== plan.id &&
-            (option.dailyPageViews ?? Infinity) > (plan.dailyPageViews ?? Infinity)
+            ((option.sites ?? Infinity) > (plan.sites ?? Infinity) ||
+              (option.dailyPageViews ?? Infinity) > (plan.dailyPageViews ?? Infinity))
         )
   );
   const ratio = (used: number, limit: number | null) => (limit ? used / limit : 0);

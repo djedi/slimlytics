@@ -388,36 +388,52 @@ async fn checkout(
             .bind(user)
             .fetch_one(&mut *lock)
             .await?;
-    let mut session = Value::Null;
-    for _ in 0..2 {
-        let key = format!("slimlytics-checkout-{user}-{nonce}-{price}");
-        session = stripe_post(
-            &state,
-            &stripe,
-            "/v1/checkout/sessions",
-            &params,
-            Some(&key),
-        )
-        .await?;
-        nonce += 1;
-        let id = session["id"].as_str().ok_or(ApiError::Internal)?;
-        // Replays return the original response, so check the session's current status.
-        let current =
-            stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[]).await?;
-        if current["status"].as_str() == Some("open") {
-            break;
+    let start = nonce;
+    // Any attempt that got a response from Stripe is settled: its session is now either returned
+    // or retired (an open leftover gets expired by the next checkout). So the advanced nonce is
+    // saved whatever happens next, and later retries can't get stuck replaying dead sessions.
+    let result: Result<String, ApiError> = async {
+        for _ in 0..3 {
+            let key = format!("slimlytics-checkout-{user}-{nonce}-{price}");
+            let session = stripe_post(
+                &state,
+                &stripe,
+                "/v1/checkout/sessions",
+                &params,
+                Some(&key),
+            )
+            .await?;
+            nonce += 1;
+            let id = session["id"].as_str().ok_or(ApiError::Internal)?;
+            // Replays return the original response, so check the session's current status.
+            let current =
+                stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[]).await?;
+            if current["status"].as_str() == Some("open") {
+                return session["url"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .ok_or(ApiError::Internal);
+            }
         }
-        session = Value::Null;
+        Err(ApiError::BadRequest(
+            "could not start checkout; try again in a moment".into(),
+        ))
     }
-    let url = session["url"].as_str().ok_or_else(|| {
-        ApiError::BadRequest("could not start checkout; try again in a moment".into())
-    })?;
+    .await;
+    if nonce == start {
+        // Stripe never answered: keep the nonce so a retry replays this same attempt.
+        let url = result?;
+        lock.commit().await?;
+        return Ok(Json(json!({"url": url, "portal": false})));
+    }
     sqlx::query("UPDATE account_billing SET checkout_nonce=$2 WHERE user_id=$1")
         .bind(user)
         .bind(nonce)
         .execute(&mut *lock)
         .await?;
+    // Commit even when this request fails, so the progress is kept.
     lock.commit().await?;
+    let url = result?;
     Ok(Json(json!({"url": url, "portal": false})))
 }
 
