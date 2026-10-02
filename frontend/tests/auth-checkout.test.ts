@@ -40,6 +40,14 @@ describe('auth form plan continuation', () => {
     expect(JSON.parse(checkout.body!)).toEqual({ plan: 'pro', interval: 'year' });
   });
 
+  it('keeps the chosen plan when switching to sign in', async () => {
+    values.delete('slimlytics_token');
+    at('?plan=pro&interval=year');
+    const { container } = render(AuthForm, { mode: 'register' });
+    await waitFor(() => expect(container.querySelector('a[href="/login?plan=pro&interval=year"]')).not.toBeNull());
+    values.set('slimlytics_token', 'session-token');
+  });
+
   it('goes to the dashboard without a paid plan', async () => {
     at('?plan=free');
     render(AuthForm, { mode: 'register' });

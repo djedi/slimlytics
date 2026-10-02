@@ -28,6 +28,18 @@
     }
   });
 
+  // Keeps a validated ?plan / ?interval when switching between sign-in and registration.
+  let switchHref = $state('');
+  $effect(() => {
+    const params = new URLSearchParams(location.search);
+    const keep = new URLSearchParams();
+    const plan = params.get('plan');
+    if (plan && /^[a-z0-9_-]{1,64}$/i.test(plan)) keep.set('plan', plan);
+    if (params.get('interval') === 'year') keep.set('interval', 'year');
+    const query = keep.toString();
+    switchHref = (mode === 'login' ? '/register' : '/login') + (query ? `?${query}` : '');
+  });
+
   // Pricing links carry ?plan=pro[&interval=year]. After signing in, a paid plan continues
   // straight to Stripe Checkout when this server has billing; otherwise go to the dashboard.
   async function continueAfterAuth() {
@@ -179,7 +191,7 @@
       </form>
       <p class="auth-switch">
         {mode === 'login' ? 'New to Slimlytics?' : 'Already have an account?'}
-        <a href={mode === 'login' ? '/register' : '/login'}>
+        <a href={switchHref || (mode === 'login' ? '/register' : '/login')}>
           {mode === 'login' ? 'Create an account' : 'Sign in'}
         </a>
       </p>
