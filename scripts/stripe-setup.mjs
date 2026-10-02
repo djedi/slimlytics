@@ -54,6 +54,11 @@ for (const plan of plans) {
     }
     console.log(`- ${lookupKey}: ${existing ? `amount changed ${existing.unit_amount} → ${amount}` : 'missing'}; will create ${amount} ${plan.currency || 'usd'}/${interval}`);
     if (!apply) continue;
+    // Tag the superseded price first: once its lookup key moves, this metadata is the only way
+    // to map its existing subscribers to the plan.
+    if (existing && existing.metadata?.slimlytics_plan !== plan.id) {
+      await stripe('POST', `/v1/prices/${existing.id}`, { 'metadata[slimlytics_plan]': plan.id });
+    }
     if (!product) {
       product = await stripe('POST', '/v1/products', { name: `Slimlytics ${plan.name}`, 'metadata[slimlytics_plan]': plan.id });
       console.log(`  created product ${product.id}`);

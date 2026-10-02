@@ -684,6 +684,9 @@ async fn ensure_site(
     validate_site(&input)?;
     input.domain = canonical_domain(&input.domain)?;
     let mut tx = state.pool.begin().await?;
+    if state.billing.is_some() {
+        billing_routes::lock_account_sites(&mut tx, user).await?;
+    }
     let inserted: Option<Site> = sqlx::query_as(
         "INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT (lower(domain)) DO NOTHING RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at",
     )

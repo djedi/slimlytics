@@ -119,6 +119,15 @@ async fn owned_sites<'e>(executor: impl sqlx::PgExecutor<'e>, user: Uuid) -> Res
     .await?)
 }
 
+/// Serializes site creation for an account. Both creation paths take it before inserting, so
+/// locks are always acquired in the same order. Re-taking it in the same transaction is a no-op.
+pub(super) async fn lock_account_sites(
+    tx: &mut sqlx::PgConnection,
+    user: Uuid,
+) -> Result<(), ApiError> {
+    advisory_lock(tx, &format!("slimlytics-sites:{user}")).await
+}
+
 /// Rejects creating another site when billing is on and the account's plan is full. Runs in
 /// the creating transaction and locks the account, so concurrent creations can't both pass.
 pub(super) async fn ensure_site_allowance(
@@ -129,7 +138,7 @@ pub(super) async fn ensure_site_allowance(
     let Some(config) = state.billing.as_ref() else {
         return Ok(());
     };
-    advisory_lock(tx, &format!("slimlytics-sites:{user}")).await?;
+    lock_account_sites(tx, user).await?;
     let plan = effective_plan(config, account(&mut *tx, user).await?.as_ref());
     if let Some(limit) = plan.sites {
         if owned_sites(&mut *tx, user).await? >= i64::from(limit) {
@@ -431,6 +440,8 @@ async fn ensure_customer(
         .as_str()
         .ok_or(ApiError::Internal)?
         .to_owned();
+    // Same order as webhook recovery: the customer lock before writing the account row.
+    advisory_lock(conn, &format!("slimlytics-stripe:{id}")).await?;
     let default_plan = config(state)?.default_plan.clone();
     let stored: String = sqlx::query_scalar(
         "INSERT INTO account_billing(user_id,plan,stripe_customer_id) VALUES($1,$2,$3)
