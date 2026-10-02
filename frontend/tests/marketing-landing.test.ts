@@ -50,4 +50,16 @@ describe('marketing landing page', () => {
       '/pricing'
     );
   });
+
+  it('embeds the 30-second tour without downloading it until played', () => {
+    render(Page);
+    expect(screen.getByRole('heading', { name: 'Slimlytics in 30 seconds' })).toBeInTheDocument();
+    const video = document.querySelector('video[data-tour-video]') as HTMLVideoElement;
+    expect(video).toHaveAttribute('preload', 'none');
+    expect(video).toHaveAttribute('poster', '/video/slimlytics-promo-poster.jpg');
+    expect(video.querySelector('source')).toHaveAttribute('src', '/video/slimlytics-promo.mp4');
+    expect(video).toHaveAccessibleDescription(/open source, run it your way/i);
+    expect(screen.getByRole('button', { name: 'Play the 30-second tour' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /watch the 30-second tour/i })).toHaveAttribute('href', '#tour');
+  });
 });

@@ -10,6 +10,7 @@
     FileText,
     Globe2,
     Goal,
+    Play,
     Radio,
     Server,
     Shield,
@@ -59,6 +60,9 @@
             <a class="secondary" href="/login">Explore demo</a>
           {/if}
         </div>
+        <a class="mkt-tour-link" href="#tour"
+          ><span class="mkt-tour-icon" aria-hidden="true"><Play size={14} /></span>Watch the 30-second tour</a
+        >
         <ul class="mkt-hero-pills" aria-label="Key benefits">
           <li><CircleDot size={16} aria-hidden="true" /> Cookieless by default</li>
           <li><Zap size={16} aria-hidden="true" /> Real-time Spy</li>
@@ -122,6 +126,42 @@
       <li><strong>MCP</strong><span>agent-native setup</span></li>
       <li><strong>$0</strong><span>to run it yourself</span></li>
     </ul>
+  </section>
+
+  <section id="tour" class="mkt-section mkt-video-section" aria-labelledby="tour-title">
+    <div class="mkt-section-head center">
+      <p class="eyebrow">See it in action</p>
+      <h2 id="tour-title">Slimlytics in 30 seconds</h2>
+      <p>Privacy-first analytics, a live visitor stream, and setup your AI agent can do for you.</p>
+    </div>
+    <figure class="mkt-video">
+      <video
+        controls
+        playsinline
+        preload="none"
+        width="1920"
+        height="1080"
+        poster="/video/slimlytics-promo-poster.jpg"
+        aria-describedby="tour-transcript"
+        data-tour-video
+      >
+        <source src="/video/slimlytics-promo.mp4" type="video/mp4" />
+        <a href="/video/slimlytics-promo.mp4">Download the 30-second tour (MP4)</a>
+      </video>
+      <button class="mkt-video-play" type="button" data-tour-play aria-label="Play the 30-second tour">
+        <Play size={34} aria-hidden="true" />
+      </button>
+      <figcaption id="tour-transcript" class="sr-only">
+        A 30-second tour set to music. Slimlytics: know what works, skip the noise. All the insight, none
+        of the creepy: no cookies, no fingerprinting, no session replay, and Do Not Track and Global
+        Privacy Control are respected. Real-time Spy: watch visitors arrive live, with every page
+        view and goal streaming in as it happens. Every number that matters, nothing that doesn’t:
+        visitors, page views, bounce rate, and visit length over time. Just ask your AI agent to
+        install it: Claude Code, Codex, Hermes, or any MCP client adds tracking and verifies it.
+        Open source, run it your way: self-host with Docker Compose, or let Slimlytics Cloud run it.
+        Analytics you’ll actually love. Start free at slimlytics.com.
+      </figcaption>
+    </figure>
   </section>
 
   <section id="features" class="mkt-section">

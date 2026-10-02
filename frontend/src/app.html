@@ -34,6 +34,8 @@
           try { store && store.setItem('slimlytics_theme', t.value); } catch (e) {}
         });
         d.addEventListener('DOMContentLoaded', function () {
+          // The overlay button starts the tour; show native controls once it is playing.
+          d.querySelectorAll('[data-tour-video]').forEach(function (video) { video.controls = false; });
           var current = root.dataset.theme || 'system';
           d.querySelectorAll('input[name="mkt-theme"]').forEach(function (r) { r.checked = r.value === current; });
           d.querySelectorAll('[data-auth]').forEach(function (el) {
@@ -41,8 +43,14 @@
           });
         });
         d.addEventListener('click', function (event) {
-          var t = event.target.closest && event.target.closest('[data-mkt-menu],[data-mkt-scrim],[data-mkt-nav] a,[data-copy]');
+          var t = event.target.closest && event.target.closest('[data-mkt-menu],[data-mkt-scrim],[data-mkt-nav] a,[data-copy],[data-tour-play]');
           if (!t) return;
+          if (t.hasAttribute('data-tour-play')) {
+            var video = t.parentElement.querySelector('video');
+            t.hidden = true;
+            if (video) { video.play().catch(function () {}); video.focus(); }
+            return;
+          }
           if (t.hasAttribute('data-mkt-menu')) return setMenu(t.getAttribute('aria-expanded') !== 'true');
           if (!t.hasAttribute('data-copy')) return setMenu(false);
           var figure = t.closest('figure'), code = figure && figure.querySelector('pre');
@@ -57,6 +65,12 @@
           });
         });
         d.addEventListener('keydown', function (event) { if (event.key === 'Escape') setMenu(false); });
+        // Hide the tour's play overlay however playback starts (overlay or native controls).
+        d.addEventListener('play', function (event) {
+          var overlay = event.target.parentElement && event.target.parentElement.querySelector('[data-tour-play]');
+          if (overlay) overlay.hidden = true;
+          if (event.target.hasAttribute && event.target.hasAttribute('data-tour-video')) event.target.controls = true;
+        }, true);
       })();
     </script>
     %sveltekit.head%

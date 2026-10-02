@@ -1,0 +1,27 @@
+{
+  "name": "slimlytics-promo-video",
+  "private": true,
+  "version": "1.0.0",
+  "description": "30-second Slimlytics promo video, rendered with Remotion.",
+  "type": "module",
+  "scripts": {
+    "audio": "node scripts/compose-audio.mjs",
+    "studio": "npm run audio && remotion studio src/index.ts",
+    "render": "npm run audio && remotion render src/index.ts Promo out/slimlytics-promo.mp4 --codec h264 --crf 20 --x264-preset slow",
+    "poster": "remotion still src/index.ts Poster out/slimlytics-promo-poster.jpg --image-format jpeg --jpeg-quality 80",
+    "check": "tsc --noEmit",
+    "publish": "npm run render && npm run poster && ffmpeg -v error -y -i out/slimlytics-promo.mp4 -c:v libx264 -preset slow -crf 23 -pix_fmt yuv420p -profile:v high -af loudnorm=I=-16:TP=-1.5:LRA=11 -c:a aac -b:a 128k -ar 48000 -t 30 -movflags +faststart ../frontend/static/video/slimlytics-promo.mp4 && ffmpeg -v error -y -i out/slimlytics-promo-poster.jpg -vf scale=1280:-1 -q:v 5 ../frontend/static/video/slimlytics-promo-poster.jpg"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.532",
+    "@remotion/google-fonts": "^4.0.532",
+    "@remotion/transitions": "^4.0.532",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.532"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}
