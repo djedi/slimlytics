@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowDown, ArrowRight, ArrowUp, Minus } from '@lucide/svelte';
+  import { ArrowDown, ArrowRight, ArrowUp, ExternalLink, Minus } from '@lucide/svelte';
   import type { ReportRow } from '../api';
   import { formatChange } from '../ui';
 
@@ -7,9 +7,18 @@
     title,
     rows,
     moreHref,
+    pageOrigin,
     emptyText = 'No report data for this period.',
     emptyHint = 'Try a wider date range.'
-  }: { title: string; rows: ReportRow[]; moreHref?: string; emptyText?: string; emptyHint?: string } =
+  }: {
+    title: string;
+    rows: ReportRow[];
+    moreHref?: string;
+    /** Site origin (e.g. https://example.com); rows whose label is a path get an open-in-new-tab link. */
+    pageOrigin?: string;
+    emptyText?: string;
+    emptyHint?: string;
+  } =
     $props();
 
   // Only show columns the data actually has.
@@ -17,6 +26,18 @@
   const hasShare = $derived(!hasVisitors && rows.some((row) => row.secondary));
   const hasChange = $derived(rows.some((row) => row.change !== undefined && row.change !== 0));
   const max = $derived(Math.max(1, ...rows.map((row) => row.value)));
+
+  // Only real paths on the site's own origin get a link; "//other.host" or labels like
+  // "(not set)" don't.
+  function pageUrl(label: string): string | null {
+    if (!pageOrigin || !label.startsWith('/')) return null;
+    try {
+      const url = new URL(label, pageOrigin);
+      return url.origin === new URL(pageOrigin).origin ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
 </script>
 
 <section class="panel report">
@@ -42,8 +63,18 @@
         </thead>
         <tbody>
           {#each rows as row}
+            {@const href = pageUrl(row.label)}
             <tr style={`--share:${row.value / max}`}>
-              <th scope="row"><span class="report-label" title={row.label}>{row.label}</span></th>
+              <th scope="row">
+                <span class="report-cell">
+                  <span class="report-label" title={row.label}>{row.label}</span>
+                  {#if href}
+                    <a class="report-open" {href} target="_blank" rel="noopener noreferrer" aria-label={`Open ${row.label} in a new tab`} title="Open in a new tab"
+                      ><ExternalLink size={13} aria-hidden="true" /></a
+                    >
+                  {/if}
+                </span>
+              </th>
               {#if hasVisitors}<td class="numeric muted">{(row.visitors ?? 0).toLocaleString()}</td>{/if}
               {#if hasShare}<td class="numeric muted">{row.secondary ?? '—'}</td>{/if}
               <td class="numeric"><strong>{row.value.toLocaleString()}</strong></td>
@@ -105,8 +136,36 @@
     border-radius: 6px;
     background: color-mix(in srgb, var(--accent) 13%, transparent);
   }
+  .report-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .report-open {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    color: var(--muted);
+    opacity: 0.55;
+    transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+  }
+  tr:hover .report-open,
+  .report-open:focus-visible {
+    opacity: 1;
+  }
+  .report-open:hover,
+  .report-open:focus-visible {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    outline: none;
+  }
   .report-label {
     display: block;
+    min-width: 0;
     padding-left: 8px;
     overflow: hidden;
     text-overflow: ellipsis;

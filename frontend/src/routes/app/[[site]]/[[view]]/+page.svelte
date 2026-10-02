@@ -534,6 +534,8 @@
     }
   }
   let siteSort = $state<'visitors' | 'change' | 'name'>('visitors');
+  // Where the measured site lives, for "open page in a new tab" links on path reports.
+  const siteOrigin = $derived(site ? (site.allowedOrigins?.[0] ?? `https://${site.domain}`) : undefined);
   const totals = $derived(portfolioTotals(sites.map((item) => item.overview)));
   const activeSites = $derived(sites.filter((item) => (item.overview?.visitors ?? 0) > 0).length);
   const unavailableSites = $derived(sites.filter((item) => !item.overview).length);
@@ -786,7 +788,12 @@
           <TrafficChart trend={overview.trend} />
         </section>
         <div class="two-col">
-          <ReportTable title="Top pages" rows={topPages} moreHref={appHref(site.id, 'pages', days)} />
+          <ReportTable
+            title="Top pages"
+            rows={topPages}
+            moreHref={appHref(site.id, 'pages', days)}
+            pageOrigin={siteOrigin}
+          />
           <ReportTable
             title="Top referrers"
             rows={topReferrers}
@@ -815,6 +822,7 @@
           {content}
           {aiReferrers}
           {aiCrawlers}
+          pageOrigin={siteOrigin}
           failed={insightFailures}
           retry={() => void loadView()}
         />
@@ -843,6 +851,7 @@
         <ReportTable
           title={`${nav.find((item) => item.id === view)?.label} report`}
           rows={report}
+          pageOrigin={view === 'pages' ? siteOrigin : undefined}
         />
       {:else if view === 'visitors'}
         <section class="panel">
