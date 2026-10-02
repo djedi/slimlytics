@@ -112,6 +112,16 @@ async fn login_pkce_single_use_scopes_and_site_setup() {
         .await
         .unwrap();
     assert_eq!(page.status(), 200);
+    // The form's redirect to the agent callback must be allowed, or browsers block it silently.
+    let csp = page.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        csp.contains("form-action 'self' http://127.0.0.1:9988;"),
+        "{csp}"
+    );
+    assert!(!csp.contains("unsafe-inline"));
     let cookie = page.headers()["set-cookie"]
         .to_str()
         .unwrap()
@@ -138,6 +148,42 @@ async fn login_pkce_single_use_scopes_and_site_setup() {
         .await
         .unwrap();
     assert_eq!(denied.status(), 403);
+    let denied_page = to_bytes(denied.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&denied_page).contains("already used"),
+        "CSRF failure renders the page"
+    );
+    let wrong_password = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs([
+            ("email", email.as_str()),
+            ("password", "not-the-password"),
+            ("csrf", csrf),
+        ])
+        .finish();
+    let retry = router
+        .clone()
+        .oneshot(
+            Request::post(&path)
+                .header("cookie", cookie.clone())
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(wrong_password))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(retry.status(), 401);
+    assert!(retry.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .starts_with("slyt_oauth_csrf=slyt_"));
+    let retry_page =
+        String::from_utf8_lossy(&to_bytes(retry.into_body(), usize::MAX).await.unwrap())
+            .into_owned();
+    assert!(retry_page.contains("Email or password is incorrect."));
+    assert!(
+        retry_page.contains(&format!("value=\"{email}\"")),
+        "keeps the typed email"
+    );
     let approval = router
         .clone()
         .oneshot(
