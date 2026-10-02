@@ -27,6 +27,7 @@
     content,
     aiReferrers,
     aiCrawlers,
+    pageOrigin,
     failed,
     retry
   }: {
@@ -40,6 +41,7 @@
     content: ReportRow[];
     aiReferrers: ReportRow[];
     aiCrawlers: ReportRow[];
+    pageOrigin?: string;
     failed: Set<Section>;
     retry: () => void;
   } = $props();
@@ -280,8 +282,8 @@
 {:else}
   <h3 class="insight-group">Entry &amp; exit</h3>
   <div class="two-col">
-    <ReportTable title="Landing pages" rows={landingPages.slice(0, 10)} />
-    <ReportTable title="Exit pages" rows={exitPages.slice(0, 10)} />
+    <ReportTable title="Landing pages" rows={landingPages.slice(0, 10)} {pageOrigin} />
+    <ReportTable title="Exit pages" rows={exitPages.slice(0, 10)} {pageOrigin} />
   </div>
   <h3 class="insight-group">Acquisition &amp; content</h3>
   <div class="two-col">
