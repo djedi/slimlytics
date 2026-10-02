@@ -15,6 +15,7 @@
         <strong>{plan.price}</strong>
         <span>{plan.priceNote}</span>
       </p>
+      {#if plan.annualNote}<p class="pricing-annual">{plan.annualNote}</p>{/if}
       <ul>
         {#each plan.features as feature}
           <li><Check size={15} aria-hidden="true" />{feature}</li>
@@ -28,7 +29,8 @@
 </div>
 {#if !compact}
   <p class="pricing-disclaimer muted">
-    Hosted plan limits are draft marketing defaults. Checkout is not required to create an account
-    today — self-hosted always includes the full product.
+    Hosted plan limits are draft defaults; page views are counted across all of an account’s
+    sites. Checkout is not required to create an account today — self-hosted always includes the
+    full product.
   </p>
 {/if}

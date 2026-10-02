@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Check, Minus } from '@lucide/svelte';
+  import { Bot, Check, GitFork, Minus, Zap } from '@lucide/svelte';
   import PricingCards from '$lib/components/marketing/PricingCards.svelte';
   import { pricingComparison, pricingFaqs } from '$lib/marketing/pricing';
 </script>
@@ -8,17 +8,18 @@
   <title>Pricing · Slimlytics</title>
   <meta
     name="description"
-    content="Slimlytics pricing: free self-hosted analytics, plus draft hosted Starter and Pro plans."
+    content="Slimlytics pricing: open-source analytics, free to self-host. Hosted plans from $0, with every feature on every plan and an MCP server for AI agents."
   />
 </svelte:head>
 
 <main id="main" class="mkt-page">
   <header class="mkt-page-head">
     <p class="eyebrow">Pricing</p>
-    <h1>Plans for every stage</h1>
+    <h1>Every feature. Every plan.</h1>
     <p class="mkt-lead">
-      Self-host the full product for free, or use hosted Starter and Pro when you want managed
-      infrastructure. Creating an account never requires a card today.
+      Self-host the open-source product for free, or let us run it for you. Plans differ only in
+      sites, page views, and support — nothing is held back. Creating an account never requires a
+      card today.
     </p>
   </header>
 
@@ -27,10 +28,34 @@
     <PricingCards />
   </section>
 
+  <section class="mkt-section" aria-labelledby="why-title">
+    <div class="mkt-section-head">
+      <p class="eyebrow">Why Slimlytics</p>
+      <h2 id="why-title">Open, fast, and built for AI agents</h2>
+    </div>
+    <div class="why-grid">
+      <article class="feature-card">
+        <span class="feature-icon"><GitFork size={22} aria-hidden="true" /></span>
+        <h3>Open source</h3>
+        <p>Read every line, run it on your own servers, and never get locked in. Move between hosted and self-hosted whenever you like.</p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon"><Zap size={22} aria-hidden="true" /></span>
+        <h3>Built in Rust</h3>
+        <p>A small, fast API on PostgreSQL that runs comfortably on modest hardware — which is how we keep prices low.</p>
+      </article>
+      <article class="feature-card">
+        <span class="feature-icon"><Bot size={22} aria-hidden="true" /></span>
+        <h3>MCP server for AI agents</h3>
+        <p>Claude Code, Codex, and Hermes can install tracking, configure sites, and answer analytics questions for you.</p>
+      </article>
+    </div>
+  </section>
+
   <section class="mkt-section" aria-labelledby="compare-title">
     <div class="mkt-section-head">
       <p class="eyebrow">Compare</p>
-      <h2 id="compare-title">What every plan includes</h2>
+      <h2 id="compare-title">Compare plans</h2>
     </div>
     <div class="compare-wrap">
       <table class="compare-table">
@@ -38,23 +63,24 @@
           <tr>
             <th scope="col">Capability</th>
             <th scope="col">Self-hosted</th>
-            <th scope="col">Starter</th>
+            <th scope="col">Free</th>
             <th scope="col">Pro</th>
+            <th scope="col">Business</th>
           </tr>
         </thead>
         <tbody>
           {#each pricingComparison as row}
             <tr>
               <th scope="row">{row.feature}</th>
-              <td
-                >{#if row.selfHosted}<Check size={18} aria-label="Included" role="img" />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
-              >
-              <td
-                >{#if row.starter}<Check size={18} aria-label="Included" role="img" />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
-              >
-              <td
-                >{#if row.pro}<Check size={18} aria-label="Included" role="img" />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
-              >
+              {#each [row.selfHosted, row.free, row.pro, row.business] as cell}
+                <td class:text-cell={typeof cell === 'string'}
+                  >{#if typeof cell === 'string'}{cell}{:else if cell}<Check
+                      size={18}
+                      aria-label="Included"
+                      role="img"
+                    />{:else}<Minus size={18} aria-label="Not included" role="img" />{/if}</td
+                >
+              {/each}
             </tr>
           {/each}
         </tbody>

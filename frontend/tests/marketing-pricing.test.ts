@@ -40,6 +40,18 @@ describe('marketing pricing page', () => {
   it('shows a feature comparison table', () => {
     render(Page);
     expect(screen.getByRole('table')).toBeInTheDocument();
-    expect(screen.getByText(/cookieless tracking/i)).toBeInTheDocument();
+    expect(screen.getByText(/cookieless, privacy-first tracking/i)).toBeInTheDocument();
+  });
+
+  it('undercuts Clicky with daily limits and every feature on every plan', () => {
+    render(Page);
+    const prices = Object.fromEntries(pricingPlans.map((plan) => [plan.id, plan.price]));
+    expect(prices).toEqual({ 'self-hosted': '$0', free: '$0', pro: '$7', business: '$15' });
+    expect(screen.getAllByText('3,000 page views / day').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Every feature included').length).toBe(pricingPlans.length);
+    expect(screen.getByText('or $56 / year — save 33%')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Built in Rust' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'MCP server for AI agents' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Business' })).toBeInTheDocument();
   });
 });
