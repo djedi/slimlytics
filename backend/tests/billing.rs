@@ -24,6 +24,7 @@ const WEBHOOK_SECRET: &str = "whsec_billing_test";
 struct FakeStripe {
     requests: Vec<(String, HashMap<String, String>, Option<String>)>,
     subscription: Value,
+    customer_user: String,
 }
 type Shared = Arc<Mutex<FakeStripe>>;
 
@@ -48,6 +49,12 @@ async fn fake_stripe() -> (String, Shared) {
     };
     let router = Router::new()
         .route("/v1/customers", post(record("customers")))
+        .route(
+            "/v1/customers/cus_test_1",
+            get(|State(s): State<Shared>| async move {
+                Json(json!({"id": "cus_test_1", "metadata": {"slimlytics_user_id": s.lock().unwrap().customer_user.clone()}}))
+            }),
+        )
         .route(
             "/v1/checkout/sessions",
             post(record("checkout")).get(|| async { Json(json!({"data": [{"id": "cs_stale"}]})) }),
@@ -114,6 +121,7 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
         .fetch_one(&pool)
         .await
         .unwrap();
+    stripe.lock().unwrap().customer_user = user.to_string();
     let site = |name: &str| json!({"name": name, "domain": format!("{}-{}.example.com", name, uuid::Uuid::new_v4()), "timezone": "UTC"});
 
     // Free allows one site; the second is refused with 402 through both creation paths.
@@ -248,6 +256,25 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
         StatusCode::CREATED,
         "Pro allows more sites"
     );
+
+    // A lost local link (e.g. checkout rolled back after Stripe made the session) is recovered
+    // from the customer's metadata.
+    sqlx::query("DELETE FROM account_billing WHERE user_id=$1")
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let orphan = json!({"id": "evt_orphan", "type": "invoice.paid", "data": {"object": {"customer": "cus_test_1"}}}).to_string();
+    assert_eq!(
+        webhook(&router, &orphan, &sign(&orphan)).await.status(),
+        StatusCode::OK
+    );
+    let recovered: String = sqlx::query_scalar("SELECT plan FROM account_billing WHERE user_id=$1")
+        .bind(user)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(recovered, "pro");
 
     // A redelivered event is ignored; cancellation drops back to Free.
     stripe.lock().unwrap().subscription =

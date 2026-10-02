@@ -569,7 +569,7 @@ async fn sync_customer(
         })
         .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0));
     let interval = interval.map(|i| if i == Interval::Year { "year" } else { "month" });
-    sqlx::query(
+    let updated = sqlx::query(
         "UPDATE account_billing SET
            plan=$2,
            stripe_subscription_id=$3, subscription_status=$4, billing_interval=$5,
@@ -577,13 +577,45 @@ async fn sync_customer(
          WHERE stripe_customer_id=$1",
     )
     .bind(customer)
-    .bind(plan)
+    .bind(&plan)
     .bind(subscription_id)
     .bind(status)
     .bind(interval)
     .bind(period_end)
     .execute(&mut *tx)
     .await?;
+    if updated.rows_affected() == 0 {
+        // No local link to this customer, e.g. checkout's transaction rolled back after Stripe
+        // created a payable session. Recover the account from the customer's metadata (set at
+        // creation) so a paid subscription is never orphaned.
+        let found = stripe_get(state, stripe, &format!("/v1/customers/{customer}"), &[]).await?;
+        let user = found["metadata"]["slimlytics_user_id"]
+            .as_str()
+            .and_then(|id| id.parse::<Uuid>().ok());
+        if let Some(user) = user {
+            sqlx::query(
+                "INSERT INTO account_billing(user_id,plan,stripe_customer_id,stripe_subscription_id,
+                   subscription_status,billing_interval,current_period_end)
+                 SELECT $1,$2,$3,$4,$5,$6,$7 WHERE EXISTS (SELECT 1 FROM users WHERE id=$1)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                   plan=EXCLUDED.plan, stripe_customer_id=EXCLUDED.stripe_customer_id,
+                   stripe_subscription_id=EXCLUDED.stripe_subscription_id,
+                   subscription_status=EXCLUDED.subscription_status,
+                   billing_interval=EXCLUDED.billing_interval,
+                   current_period_end=EXCLUDED.current_period_end, updated_at=now()
+                 WHERE account_billing.stripe_customer_id IS NULL",
+            )
+            .bind(user)
+            .bind(&plan)
+            .bind(customer)
+            .bind(subscription_id)
+            .bind(status)
+            .bind(interval)
+            .bind(period_end)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
     tx.commit().await?;
     Ok(())
 }

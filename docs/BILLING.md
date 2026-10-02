@@ -43,10 +43,12 @@ The id `unlimited` is reserved for admin grants.
 
 ## Restricted key permissions
 
+The runtime key also reads Customers, to recover an account link from the customer's metadata.
+
 - Customers: write
 - Checkout Sessions: write
 - Customer portal: write
-- Subscriptions: read
+- Subscriptions: write (checkout cancels a pending, incomplete subscription before starting a new one)
 - Prices: read
 - Products and Prices: write (only for the setup script; it can use a separate key)
 
