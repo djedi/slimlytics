@@ -224,6 +224,9 @@ cd "$app"
 compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
 "${compose[@]}" config -q
 "${compose[@]}" up -d --build --remove-orphans --wait --wait-timeout 240
+# rsync replaces docker/Caddyfile with a new inode, but the single-file bind mount keeps the old
+# one and admin is off (no reload), so recreate Caddy to pick up routing changes.
+"${compose[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 60 caddy
 curl --retry 10 --retry-delay 2 --retry-all-errors --fail --silent http://127.0.0.1:8540/health >/dev/null
 curl --retry 10 --retry-delay 2 --retry-all-errors --fail --silent http://127.0.0.1:8540/ready >/dev/null
 REMOTE
@@ -263,6 +266,9 @@ printf '%s\n' "$revision" > .deploy-revision
 compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
 "${compose[@]}" config -q
 "${compose[@]}" up -d --build --remove-orphans --wait --wait-timeout 240
+# rsync replaces docker/Caddyfile with a new inode, but the single-file bind mount keeps the old
+# one and admin is off (no reload), so recreate Caddy to pick up routing changes.
+"${compose[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 60 caddy
 curl --retry 10 --retry-delay 2 --retry-all-errors --fail --silent http://127.0.0.1:8540/health >/dev/null
 curl --retry 10 --retry-delay 2 --retry-all-errors --fail --silent http://127.0.0.1:8540/ready >/dev/null
 "${compose[@]}" ps
@@ -305,6 +311,14 @@ except urllib.error.HTTPError as error:
     require(urllib.parse.urljoin(base, location) == base + '/docs/api', f'Unexpected redirect: {location}')
 else:
     raise RuntimeError('/api/docs did not return a redirect')
+
+for endpoint in ('/.well-known/oauth-authorization-server', '/.well-known/oauth-protected-resource/api/mcp'):
+    with urllib.request.urlopen(base + endpoint, timeout=30) as response:
+        require(response.status == 200, f'{endpoint} returned {response.status}')
+        require(
+            response.headers.get_content_type() == 'application/json',
+            f'{endpoint} is not routed to the backend (got {response.headers.get_content_type()})',
+        )
 
 with urllib.request.urlopen(base + '/api/openapi.json', timeout=30) as response:
     deployed_contract = json.load(response)
