@@ -66,7 +66,7 @@ async fn fake_stripe() -> (String, Shared) {
             }),
         )
         .route(
-            "/v1/checkout/sessions/cs_stale/expire",
+            "/v1/checkout/sessions/{id}/expire",
             post(record("expire")),
         )
         .route("/v1/billing_portal/sessions", post(record("portal")))
@@ -218,7 +218,7 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
         let checkout_request = fake.requests.iter().find(|r| r.0 == "checkout").unwrap();
         assert_eq!(
             checkout_request.2.as_deref(),
-            Some(format!("slimlytics-checkout-{user}-0-price_for_slimlytics_pro_annual").as_str()),
+            Some(format!("slimlytics-checkout-{user}-0").as_str()),
             "retries after an ambiguous failure reuse the same session"
         );
         let session = &checkout_request.1;
@@ -240,6 +240,52 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
             "earlier open sessions are expired so only one is payable"
         );
     }
+
+    // An attempt for another price that never got an answer is replayed with that price and
+    // retired before the new checkout, which then uses the next key.
+    sqlx::query("UPDATE account_billing SET checkout_pending_price='price_old' WHERE user_id=$1")
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+    stripe.lock().unwrap().requests.clear();
+    call(
+        &router,
+        "POST",
+        "/api/billing/checkout",
+        Some(&token),
+        json!({"plan":"pro","interval":"year"}),
+    )
+    .await;
+    {
+        let fake = stripe.lock().unwrap();
+        let attempts: Vec<_> = fake
+            .requests
+            .iter()
+            .filter(|r| r.0 == "checkout")
+            .map(|r| (r.1["line_items[0][price]"].clone(), r.2.clone().unwrap()))
+            .collect();
+        assert_eq!(
+            attempts,
+            vec![
+                (
+                    "price_old".to_owned(),
+                    format!("slimlytics-checkout-{user}-1")
+                ),
+                (
+                    "price_for_slimlytics_pro_annual".to_owned(),
+                    format!("slimlytics-checkout-{user}-2")
+                ),
+            ]
+        );
+    }
+    let pending: Option<String> =
+        sqlx::query_scalar("SELECT checkout_pending_price FROM account_billing WHERE user_id=$1")
+            .bind(user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(pending, None);
 
     // Webhook: bad signatures are rejected; a valid event syncs the plan from Stripe once.
     stripe.lock().unwrap().subscription = json!({

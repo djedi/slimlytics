@@ -365,47 +365,81 @@ async fn checkout(
         .to_owned();
     let base = state.public_url.trim_end_matches('/');
     let user_id = user.to_string();
-    let params = [
-        ("mode", "subscription"),
-        ("customer", customer.as_str()),
-        ("client_reference_id", user_id.as_str()),
-        ("line_items[0][price]", price.as_str()),
-        ("line_items[0][quantity]", "1"),
-        (
-            "subscription_data[metadata][slimlytics_user_id]",
-            user_id.as_str(),
-        ),
-        ("success_url", &format!("{base}/app?billing=success")),
-        ("cancel_url", &format!("{base}/pricing")),
-        ("integration_identifier", INTEGRATION_IDENTIFIER),
-    ];
-    // The idempotency key only advances after a successful response. A retry after an
-    // ambiguous failure (e.g. a timeout once Stripe had accepted the request) therefore gets
-    // the same session back rather than a second payable one. A replayed session that is no
-    // longer open (expired above or earlier) settles that attempt, and a fresh key is used.
-    let mut nonce: i64 =
-        sqlx::query_scalar("SELECT checkout_nonce FROM account_billing WHERE user_id=$1")
-            .bind(user)
-            .fetch_one(&mut *lock)
-            .await?;
-    let start = nonce;
-    // Any attempt that got a response from Stripe is settled: its session is now either returned
-    // or retired (an open leftover gets expired by the next checkout). So the advanced nonce is
-    // saved whatever happens next, and later retries can't get stuck replaying dead sessions.
+    let success_url = format!("{base}/app?billing=success");
+    let cancel_url = format!("{base}/pricing");
+    let params = |price: &str| -> Vec<(&str, String)> {
+        vec![
+            ("mode", "subscription".into()),
+            ("customer", customer.clone()),
+            ("client_reference_id", user_id.clone()),
+            ("line_items[0][price]", price.to_owned()),
+            ("line_items[0][quantity]", "1".into()),
+            (
+                "subscription_data[metadata][slimlytics_user_id]",
+                user_id.clone(),
+            ),
+            ("success_url", success_url.clone()),
+            ("cancel_url", cancel_url.clone()),
+            ("integration_identifier", INTEGRATION_IDENTIFIER.into()),
+        ]
+    };
+    // Each attempt has an idempotency key from `checkout_nonce`, which only advances once
+    // Stripe gives a definitive answer (success or error, both cached against the key). An
+    // attempt without one (e.g. a timeout once Stripe had accepted the request) is recorded
+    // with its price in `checkout_pending_price`, and is replayed with that same price, so
+    // Stripe returns the same session rather than a second payable one.
+    let (mut nonce, mut pending): (i64, Option<String>) = sqlx::query_as(
+        "SELECT checkout_nonce,checkout_pending_price FROM account_billing WHERE user_id=$1",
+    )
+    .bind(user)
+    .fetch_one(&mut *lock)
+    .await?;
+    let start = (nonce, pending.clone());
+    let send_attempt = |nonce: i64, price: String| {
+        let request = state
+            .http
+            .post(format!("{}/v1/checkout/sessions", stripe.api_base))
+            .form(&params(&price))
+            .header(
+                "Idempotency-Key",
+                format!("slimlytics-checkout-{user}-{nonce}"),
+            );
+        send_answered(request, &stripe)
+    };
     // Ok((url, portal)).
     let result: Result<(String, bool), ApiError> = async {
-        for _ in 0..3 {
-            let key = format!("slimlytics-checkout-{user}-{nonce}-{price}");
-            let request = state
-                .http
-                .post(format!("{}/v1/checkout/sessions", stripe.api_base))
-                .form(&params)
-                .header("Idempotency-Key", &key);
-            // No definitive answer: return with the nonce unchanged so a retry replays the key.
-            let answer = send_answered(request, &stripe).await?;
-            // A definitive answer, success or error, is cached by Stripe for this key, so the
-            // attempt is retired either way. A session it may have made is expired next time.
+        // Settle an unresolved attempt for a different price first: replay it exactly, then
+        // retire it (expiring its session, if it made one) before checking out the new price.
+        if let Some(earlier) = pending.clone().filter(|earlier| *earlier != price) {
+            let answer = send_attempt(nonce, earlier).await?;
             nonce += 1;
+            pending = None;
+            if let Ok(session) = answer {
+                let id = session["id"].as_str().ok_or(ApiError::Internal)?;
+                let current =
+                    stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[])
+                        .await?;
+                match current["status"].as_str() {
+                    Some("open") => {
+                        let path = format!("/v1/checkout/sessions/{id}/expire");
+                        stripe_post(&state, &stripe, &path, &[], None).await?;
+                    }
+                    Some("complete") => {
+                        sync_customer(&state, &mut lock, &stripe, &customer).await?;
+                        return Ok((portal_session(&state, &stripe, &customer).await?, true));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for _ in 0..3 {
+            pending = Some(price.clone());
+            // No definitive answer: return with the attempt recorded so a retry replays it.
+            let answer = send_attempt(nonce, price.clone()).await?;
+            // A definitive answer is cached by Stripe for this key, so the attempt is retired
+            // either way. A session it may have made is expired by the next checkout.
+            nonce += 1;
+            pending = None;
             let session = answer?;
             let id = session["id"].as_str().ok_or(ApiError::Internal)?;
             // Replays return the original response, so check the session's current status.
@@ -432,20 +466,18 @@ async fn checkout(
         ))
     }
     .await;
-    if nonce == start {
-        // Stripe never answered: keep the nonce so a retry replays this same attempt, but still
-        // commit, so the customer link made above survives and retries and webhooks keep
-        // reconciling the same Stripe customer.
-        lock.commit().await?;
-        let (url, portal) = result?;
-        return Ok(Json(json!({"url": url, "portal": portal})));
-    }
-    sqlx::query("UPDATE account_billing SET checkout_nonce=$2 WHERE user_id=$1")
+    if (nonce, pending.clone()) != start {
+        sqlx::query(
+            "UPDATE account_billing SET checkout_nonce=$2, checkout_pending_price=$3 WHERE user_id=$1",
+        )
         .bind(user)
         .bind(nonce)
+        .bind(&pending)
         .execute(&mut *lock)
         .await?;
-    // Commit even when this request fails, so the progress is kept.
+    }
+    // Commit even when this request fails, so attempt progress and the customer link made
+    // above survive, and retries and webhooks keep reconciling the same Stripe customer.
     lock.commit().await?;
     let (url, portal) = result?;
     Ok(Json(json!({"url": url, "portal": portal})))
