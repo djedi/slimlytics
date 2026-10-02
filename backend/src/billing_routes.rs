@@ -278,12 +278,43 @@ async fn checkout(
     if existing
         .as_ref()
         .and_then(|a| a.subscription_status.as_deref())
-        .is_some_and(|status| matches!(status, "active" | "trialing" | "past_due"))
+        .is_some_and(|status| {
+            matches!(
+                status,
+                "active" | "trialing" | "past_due" | "unpaid" | "paused"
+            )
+        })
     {
         let url = portal_session(&state, &stripe, &customer).await?;
         // Keep the reconciliation (and any new customer row) made above.
         lock.commit().await?;
         return Ok(Json(json!({"url": url, "portal": true})));
+    }
+    // A subscription whose first payment is still pending (e.g. awaiting authentication) would
+    // otherwise sit beside the new one; cancel it, failing closed if Stripe refuses.
+    let pending = stripe_get(
+        &state,
+        &stripe,
+        "/v1/subscriptions",
+        &[
+            ("customer", customer.as_str()),
+            ("status", "incomplete"),
+            ("limit", "100"),
+        ],
+    )
+    .await?;
+    for subscription in pending["data"].as_array().into_iter().flatten() {
+        if let Some(id) = subscription["id"].as_str() {
+            let request = state
+                .http
+                .delete(format!("{}/v1/subscriptions/{id}", stripe.api_base));
+            if send(request, &stripe).await.is_err() {
+                return Err(ApiError::BadRequest(
+                    "a previous subscription payment is still pending; try again in a moment"
+                        .into(),
+                ));
+            }
+        }
     }
     let prices = stripe_get(
         &state,

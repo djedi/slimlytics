@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { env } from '$env/dynamic/public';
   import {
@@ -248,11 +248,14 @@
   }
   // Hosted-plan billing; stays { enabled: false } on self-hosted installs.
   let billingStatus = $state<BillingStatus>({ enabled: false });
+  // True once the server has answered; until then a failed load is retried on refresh.
+  let billingKnown = false;
   let billingBusy = $state(false);
   let billingNotice = $state('');
   async function loadBilling() {
     try {
       billingStatus = await api.billing();
+      billingKnown = true;
     } catch {
       billingStatus = { enabled: false };
     }
@@ -260,9 +263,10 @@
   // Keeps usage meters and limit warnings current (and rolls over at UTC midnight) without
   // hiding the card on a transient error.
   async function refreshBillingQuietly() {
-    if (!billingStatus.enabled) return;
+    if (billingKnown && !billingStatus.enabled) return;
     try {
       billingStatus = await api.billing();
+      billingKnown = true;
     } catch {
       /* keep the last known status */
     }
@@ -297,7 +301,10 @@
       if (billingStatus.plan?.id && billingStatus.plan.id !== before) break;
     }
     billingNotice = `You’re on the ${billingStatus.plan?.name ?? 'new'} plan.`;
-    history.replaceState(history.state, '', appHref(null, null, days));
+    // Drop ?billing=success only if the user is still on the page they returned to.
+    if (page.url.searchParams.get('billing') === 'success' && !site) {
+      replaceState(appHref(null, null, days), page.state);
+    }
   }
 
   async function loadSites() {
