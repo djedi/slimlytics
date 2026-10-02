@@ -397,41 +397,51 @@ async fn checkout(
     // Ok((url, portal)).
     let result: Result<(String, bool), ApiError> = async {
         if let Some(earlier) = pending {
-            match send_attempt(nonce, earlier.clone()).await {
-                // Still no definitive answer. Keep it unresolved, unless it is old enough that
-                // whatever it did has finished: the sweep above has then already expired any
-                // session it created, and the listing would have shown a paid one.
-                Err(error) => {
-                    let stale =
-                        since.is_none_or(|t| Utc::now() - t > chrono::Duration::minutes(10));
-                    if !stale {
-                        return Err(error);
-                    }
-                }
-                Ok(Err(_)) => {}
-                Ok(Ok(session)) => {
-                    let id = session["id"].as_str().ok_or(ApiError::Internal)?;
-                    let current =
-                        stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[])
-                            .await?;
-                    match current["status"].as_str() {
-                        Some("open") if earlier == price => {
-                            save_attempt(&mut lock, user, nonce + 1, None).await?;
-                            return session["url"]
-                                .as_str()
-                                .map(|url| (url.to_owned(), false))
-                                .ok_or(ApiError::Internal);
+            // An attempt last sent over ten minutes ago has settled: the sweep and listing above
+            // already saw any session or subscription it made. Retire it without sending again,
+            // since a replay could itself create a session after that sweep.
+            let stale = since.is_none_or(|t| Utc::now() - t > chrono::Duration::minutes(10));
+            if !stale {
+                // Replaying counts as sending again, so it restarts the clock.
+                save_attempt(&mut lock, user, nonce, Some(&earlier)).await?;
+                match send_attempt(nonce, earlier.clone()).await {
+                    // Still no definitive answer: keep it unresolved.
+                    Err(_) => return Err(ApiError::BadRequest(
+                        "a previous checkout is still being processed; try again in a few minutes"
+                            .into(),
+                    )),
+                    Ok(Err(_)) => {}
+                    Ok(Ok(session)) => {
+                        let id = session["id"].as_str().ok_or(ApiError::Internal)?;
+                        let current = stripe_get(
+                            &state,
+                            &stripe,
+                            &format!("/v1/checkout/sessions/{id}"),
+                            &[],
+                        )
+                        .await?;
+                        match current["status"].as_str() {
+                            Some("open") if earlier == price => {
+                                save_attempt(&mut lock, user, nonce + 1, None).await?;
+                                return session["url"]
+                                    .as_str()
+                                    .map(|url| (url.to_owned(), false))
+                                    .ok_or(ApiError::Internal);
+                            }
+                            Some("open") => {
+                                let path = format!("/v1/checkout/sessions/{id}/expire");
+                                stripe_post(&state, &stripe, &path, &[], None).await?;
+                            }
+                            Some("complete") => {
+                                save_attempt(&mut lock, user, nonce + 1, None).await?;
+                                sync_customer(&state, &mut lock, &stripe, &customer).await?;
+                                return Ok((
+                                    portal_session(&state, &stripe, &customer).await?,
+                                    true,
+                                ));
+                            }
+                            _ => {}
                         }
-                        Some("open") => {
-                            let path = format!("/v1/checkout/sessions/{id}/expire");
-                            stripe_post(&state, &stripe, &path, &[], None).await?;
-                        }
-                        Some("complete") => {
-                            save_attempt(&mut lock, user, nonce + 1, None).await?;
-                            sync_customer(&state, &mut lock, &stripe, &customer).await?;
-                            return Ok((portal_session(&state, &stripe, &customer).await?, true));
-                        }
-                        _ => {}
                     }
                 }
             }

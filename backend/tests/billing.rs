@@ -243,7 +243,7 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
 
     // An attempt for another price that never got an answer is replayed with that price and
     // retired before the new checkout, which then uses the next key.
-    sqlx::query("UPDATE account_billing SET checkout_pending_price='price_old' WHERE user_id=$1")
+    sqlx::query("UPDATE account_billing SET checkout_pending_price='price_old', checkout_pending_since=now() WHERE user_id=$1")
         .bind(user)
         .execute(&pool)
         .await
