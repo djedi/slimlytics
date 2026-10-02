@@ -20,6 +20,8 @@ pub struct Site {
     pub retention_days: i32,
     pub write_key: Uuid,
     pub server_write_key: Uuid,
+    /// Sent by the site's first-party proxy to vouch for the visitor IP it forwards.
+    pub proxy_key: Uuid,
     pub anti_adblock_server: String,
     pub anti_adblock_js_path: String,
     pub anti_adblock_beacon_path: String,

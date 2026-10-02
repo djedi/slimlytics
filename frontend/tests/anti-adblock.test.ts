@@ -94,3 +94,22 @@ it('rejects unsafe bootstrap parameters instead of emitting executable input', (
   expect(() => trackerBootstrapSource('', 'not-a-uuid', '/0d31360a3101')).toThrow();
   expect(() => trackerBootstrapSource('', site.writeKey, '/bad\";alert(1)//')).toThrow();
 });
+
+it('forwards the visitor IP with the proxy key on the beacon route only', () => {
+  const proxyKey = '6f1f6c2e-1d5e-4a3b-9f0e-2b7d6c5a4f31';
+  const keyed = { ...site, proxyKey };
+  const expected = {
+    caddy: 'header_up X-Slimlytics-Client-IP {client_ip}',
+    nginx: 'proxy_set_header X-Slimlytics-Client-IP $remote_addr;',
+    apache: 'RequestHeader set X-Slimlytics-Client-IP "expr=%{REMOTE_ADDR}"'
+  } as const;
+  for (const serverType of ['caddy', 'nginx', 'apache'] as const) {
+    const output = proxyConfig({ ...config, serverType }, keyed, 'https://slimlytics.com');
+    expect(output).toContain(expected[serverType]);
+    expect(output.split(proxyKey)).toHaveLength(2);
+    expect(output.indexOf(proxyKey)).toBeGreaterThan(output.indexOf('# BEACON'));
+  }
+  // Older API responses without a proxy key keep generating valid configs without the headers.
+  expect(proxyConfig(config, site, 'https://slimlytics.com')).not.toContain('X-Slimlytics-Client-IP');
+  expect(() => proxyConfig(config, { ...site, proxyKey: 'nope"; evil' }, 'https://slimlytics.com')).toThrow();
+});

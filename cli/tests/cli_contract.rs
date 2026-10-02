@@ -14,6 +14,7 @@ fn site() -> Site {
         retention_days: 365,
         write_key: Uuid::parse_str("d8f6f152-7a9e-4eb9-a8a1-468db4c0ea33").unwrap(),
         server_write_key: Uuid::parse_str("7e55bd93-2601-46fc-881a-e847209f25f1").unwrap(),
+        proxy_key: None,
         anti_adblock_server: "caddy".into(),
         anti_adblock_js_path: "/456bbb63bb86.js".into(),
         anti_adblock_beacon_path: "/0d31360a3101".into(),
@@ -78,6 +79,46 @@ fn tracking_setup_is_complete_and_ai_friendly() {
     let mut unsafe_site = site();
     unsafe_site.anti_adblock_js_path = "/valid.js\nheader injected".into();
     assert!(tracking_setup(&unsafe_site, "https://slimlytics.com").is_err());
+}
+
+#[test]
+fn beacon_route_forwards_the_visitor_ip_with_the_proxy_key() {
+    let key = Uuid::parse_str("6f1f6c2e-1d5e-4a3b-9f0e-2b7d6c5a4f31").unwrap();
+    for (server, header) in [
+        ("caddy", "header_up X-Slimlytics-Client-IP {client_ip}"),
+        (
+            "nginx",
+            "proxy_set_header X-Slimlytics-Client-IP $remote_addr;",
+        ),
+        (
+            "apache",
+            "RequestHeader set X-Slimlytics-Client-IP \"expr=%{REMOTE_ADDR}\"",
+        ),
+    ] {
+        let mut keyed = site();
+        keyed.proxy_key = Some(key);
+        keyed.anti_adblock_server = server.into();
+        let setup = tracking_setup(&keyed, "https://slimlytics.com").unwrap();
+        assert!(setup.server_config.contains(header), "{server}");
+        assert_eq!(
+            setup.server_config.matches(&key.to_string()).count(),
+            1,
+            "{server}"
+        );
+        assert!(
+            setup.server_config.find(&key.to_string()).unwrap()
+                > setup.server_config.find("/api/collect/").unwrap(),
+            "{server}: headers belong to the collection route"
+        );
+        // Without a key (older servers) the config is unchanged.
+        let mut unkeyed = site();
+        unkeyed.anti_adblock_server = server.into();
+        let plain = tracking_setup(&unkeyed, "https://slimlytics.com").unwrap();
+        assert!(
+            !plain.server_config.contains("X-Slimlytics-Client-IP"),
+            "{server}"
+        );
+    }
 }
 
 #[test]
