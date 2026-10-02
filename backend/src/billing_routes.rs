@@ -433,9 +433,11 @@ async fn checkout(
     }
     .await;
     if nonce == start {
-        // Stripe never answered: keep the nonce so a retry replays this same attempt.
-        let (url, portal) = result?;
+        // Stripe never answered: keep the nonce so a retry replays this same attempt, but still
+        // commit, so the customer link made above survives and retries and webhooks keep
+        // reconciling the same Stripe customer.
         lock.commit().await?;
+        let (url, portal) = result?;
         return Ok(Json(json!({"url": url, "portal": portal})));
     }
     sqlx::query("UPDATE account_billing SET checkout_nonce=$2 WHERE user_id=$1")
