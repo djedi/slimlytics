@@ -141,7 +141,9 @@ Verification:
 
 ## OAuth and operations
 
-The native OAuth flow uses authorization codes, required S256 PKCE, exact registered redirect URIs, resource binding, CSRF protection on browser approval, and single-use five-minute codes. Public clients register automatically; HTTPS callbacks and HTTP loopback callbacks are accepted. No client secret is required.
+Slimlytics is an OAuth 2.1 authorization server for its MCP resource. The flow uses authorization codes, required S256 PKCE, exact registered redirect URIs, resource indicators (RFC 8707), issuer identification on every callback (RFC 9207 `iss`), CSRF protection on browser approval, and single-use five-minute codes. Public clients register automatically through dynamic client registration (RFC 7591); HTTPS callbacks and HTTP loopback callbacks are accepted. No client secret is required. Registration is rate limited per client IP.
+
+Once the client and callback are verified, authorization problems redirect back to the agent with a standard `error` (`invalid_request`, `unsupported_response_type`, `invalid_scope`, `invalid_target`, or `access_denied` when the account owner chooses Cancel). An unknown client or unregistered callback never redirects. Token errors use the RFC 6749 JSON shape. Discovery, registration, and token endpoints allow cross-origin requests for browser-based clients; the consent page does not.
 
 Discovery:
 
@@ -151,14 +153,14 @@ Discovery:
 - `GET|POST /api/oauth/authorize`
 - `POST /api/oauth/token` (form-encoded)
 
-Authorization and token requests must include `resource` equal to the configured MCP URL. The default scopes are `sites:read sites:write analytics:read`. Optional `integrations:read` enables Search Console reports. Scope checks and site membership checks apply independently. Read-only clients should request `sites:read analytics:read`; they cannot set up sites.
+Authorization requests must include `resource` equal to the configured MCP URL; token requests may include it and are rejected with `invalid_target` if it differs. The default scopes are `sites:read sites:write analytics:read`. Optional `integrations:read` enables Search Console reports. Scope checks and site membership checks apply independently. Read-only clients should request `sites:read analytics:read`; they cannot set up sites.
 
-Access tokens are stored only as hashes, restricted to `/api/mcp`, and expire after 30 days. Refresh tokens are not issued: reconnect using browser login after expiry (`/mcp` in Claude Code, `codex mcp login slimlytics`, or `hermes mcp login slimlytics`). Revoke a connection immediately from the account's API token settings; OAuth connections appear as **MCP OAuth agent**. Agent calls use the existing audit log. Never put bearer tokens, passwords, or server ingestion keys in website code or committed MCP configuration. Collection keys in generated proxy configuration are public ingestion credentials, not account credentials.
+Access tokens are stored only as hashes, restricted to `/api/mcp`, and expire after one hour. Each token response also carries a refresh token. Refresh tokens rotate on every use (`grant_type=refresh_token`), are bound to the client that received them, and may narrow but never widen scopes. Presenting a refresh token that was already used revokes the whole connection, because it means another party holds a copy. A connection stays active until it is revoked or goes 90 days without a refresh; after that, reconnect using browser login (`/mcp` in Claude Code, `codex mcp login slimlytics`, or `hermes mcp login slimlytics`). Revoke a connection immediately from the account's API token settings, which also ends its refresh token; OAuth connections appear as **MCP OAuth agent**. Expired codes, ended connections' refresh tokens, and registrations that never completed a login are pruned hourly. Agent calls use the existing audit log. Never put bearer tokens, passwords, or server ingestion keys in website code or committed MCP configuration. Collection keys in generated proxy configuration are public ingestion credentials, not account credentials.
 
 The transport is stateless Streamable HTTP with JSON responses. It negotiates revisions `2025-03-26`, `2025-06-18`, and `2025-11-25`; initialization notifications return HTTP 202. GET returns 405 because this server does not offer a server-to-client SSE stream. An unauthenticated POST returns HTTP 401 with OAuth discovery in `WWW-Authenticate`.
 
 To run the OAuth/database integration test against a disposable PostgreSQL database:
 
 ```sh
-TEST_DATABASE_URL=postgres://... cargo test --manifest-path backend/Cargo.toml --test mcp_oauth -- --ignored
+TEST_DATABASE_URL=postgres://... cargo test --manifest-path backend/Cargo.toml --test mcp_oauth -- --ignored --test-threads=1
 ```

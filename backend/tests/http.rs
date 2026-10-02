@@ -317,6 +317,172 @@ async fn mcp_discovers_oauth_without_database() {
         .contains("resource_metadata"));
 }
 
+async fn body_json(response: axum::response::Response) -> serde_json::Value {
+    serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap()).unwrap()
+}
+
+fn form_post(path: &str, pairs: &[(&str, &str)]) -> Request<Body> {
+    let form = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish();
+    Request::post(path)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(form))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn oauth_metadata_advertises_refresh_tokens_and_issuer_identification() {
+    let response = app(state())
+        .oneshot(
+            Request::get("/.well-known/oauth-authorization-server")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body = body_json(response).await;
+    assert_eq!(
+        body["grant_types_supported"],
+        serde_json::json!(["authorization_code", "refresh_token"])
+    );
+    assert_eq!(body["authorization_response_iss_parameter_supported"], true);
+}
+
+#[tokio::test]
+async fn oauth_discovery_and_token_endpoints_allow_browser_clients() {
+    for path in [
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-protected-resource/api/mcp",
+        "/api/oauth/register",
+        "/api/oauth/token",
+    ] {
+        let preflight = app(state())
+            .oneshot(
+                Request::options(path)
+                    .header("origin", "https://inspector.example")
+                    .header("access-control-request-method", "POST")
+                    .header("access-control-request-headers", "content-type")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            preflight.status().is_success(),
+            "{path}: {}",
+            preflight.status()
+        );
+        assert_eq!(
+            preflight.headers()["access-control-allow-origin"],
+            "*",
+            "{path}"
+        );
+    }
+    let metadata = app(state())
+        .oneshot(
+            Request::get("/.well-known/oauth-authorization-server")
+                .header("origin", "https://inspector.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metadata.headers()["access-control-allow-origin"], "*");
+    // The consent page carries a CSRF cookie and must never be readable cross-origin.
+    let authorize = app(state())
+        .oneshot(
+            Request::options("/api/oauth/authorize")
+                .header("origin", "https://inspector.example")
+                .header("access-control-request-method", "POST")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(authorize
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+}
+
+#[tokio::test]
+async fn oauth_token_endpoint_returns_rfc6749_errors() {
+    let unsupported = app(state())
+        .oneshot(form_post(
+            "/api/oauth/token",
+            &[("grant_type", "client_credentials")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unsupported.status(), 400);
+    assert_eq!(unsupported.headers()["cache-control"], "no-store");
+    assert_eq!(
+        body_json(unsupported).await["error"],
+        "unsupported_grant_type"
+    );
+    let missing = app(state())
+        .oneshot(form_post(
+            "/api/oauth/token",
+            &[("grant_type", "refresh_token")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), 400);
+    assert_eq!(body_json(missing).await["error"], "invalid_request");
+    let wrong_resource = app(state())
+        .oneshot(form_post(
+            "/api/oauth/token",
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", "slyt_whatever"),
+                ("client_id", "00000000-0000-0000-0000-000000000000"),
+                ("resource", "https://elsewhere.example/api/mcp"),
+            ],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(body_json(wrong_resource).await["error"], "invalid_target");
+}
+
+#[tokio::test]
+async fn oauth_registration_rejects_unsupported_metadata_with_rfc7591_errors() {
+    let mut request = Request::post("/api/oauth/register")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"redirect_uris":["https://agent.example/cb"],"grant_types":["client_credentials"]}"#,
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [203, 0, 113, 7],
+            40000,
+        ))));
+    let response = app(state()).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 400);
+    assert_eq!(
+        body_json(response).await["error"],
+        "invalid_client_metadata"
+    );
+    let mut request = Request::post("/api/oauth/register")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"redirect_uris":["http://evil.example/cb"]}"#,
+        ))
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [203, 0, 113, 7],
+            40000,
+        ))));
+    let response = app(state()).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), 400);
+    assert_eq!(body_json(response).await["error"], "invalid_redirect_uri");
+}
+
 #[tokio::test]
 async fn mcp_negotiates_client_revision_and_accepts_notifications() {
     let token = slimlytics_backend::auth::issue_token(

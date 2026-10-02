@@ -308,9 +308,10 @@ Report any deployment step that still needs operator access.`}
         </p>
         <p>
           OAuth connections appear as <strong>MCP OAuth agent</strong> in your account’s API token
-          settings. Revoke one there to disconnect it immediately. Access tokens expire after 30 days;
-          reconnect with <code>/mcp</code> in Claude Code, <code>codex mcp login slimlytics</code>, or
-          <code>hermes mcp login slimlytics</code>. Refresh tokens are not issued.
+          settings. Revoke one there to disconnect it immediately. Access tokens last one hour and
+          refresh automatically, so a connection stays active until you revoke it or after 90 days
+          without use. Then reconnect with <code>/mcp</code> in Claude Code,
+          <code>codex mcp login slimlytics</code>, or <code>hermes mcp login slimlytics</code>.
         </p>
         <p>
           Clients that support only static bearer tokens can use scoped personal API tokens. Keep
