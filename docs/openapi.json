@@ -4595,6 +4595,7 @@
           "retentionDays",
           "writeKey",
           "serverWriteKey",
+          "proxyKey",
           "antiAdblockServer",
           "antiAdblockJsPath",
           "antiAdblockBeaconPath",
@@ -4633,6 +4634,11 @@
             "type": "string",
             "format": "uuid",
             "description": "Rotatable collection-only secret for trusted server request batches"
+          },
+          "proxyKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Sent by the site's first-party proxy as X-Slimlytics-Proxy-Key with X-Slimlytics-Client-IP so locations and visitor IDs use the real visitor IP; grants no other access"
           },
           "antiAdblockServer": {
             "type": "string",

@@ -9,6 +9,8 @@ export interface AntiAdblockConfig {
 interface ProxySite {
   domain: string;
   writeKey: string;
+  /** Vouches for the visitor IP the beacon route forwards; omitted by older API versions. */
+  proxyKey?: string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -48,6 +50,20 @@ export function proxyConfig(config: AntiAdblockConfig, site: ProxySite, analytic
   const bootstrap = `/p/${site.writeKey}/${config.beaconPath.slice(1)}`;
   const collect = `/api/collect/${site.writeKey}`;
 
+  // The beacon route forwards the visitor's IP, vouched for by the site's proxy key, so
+  // locations and visitor IDs reflect the visitor rather than this web server.
+  const key = site.proxyKey;
+  if (key !== undefined && !UUID.test(key)) throw new Error('Invalid proxy key');
+  const caddyClientIp = key
+    ? `\n\t\theader_up X-Slimlytics-Client-IP {client_ip}\n\t\theader_up X-Slimlytics-Proxy-Key ${key}`
+    : '';
+  const nginxClientIp = key
+    ? `\n    proxy_set_header X-Slimlytics-Client-IP $remote_addr;\n    proxy_set_header X-Slimlytics-Proxy-Key ${key};`
+    : '';
+  const apacheClientIp = key
+    ? `\n<LocationMatch "^${regexEscape(config.beaconPath)}$">\n    RequestHeader set X-Slimlytics-Client-IP "expr=%{REMOTE_ADDR}"\n    RequestHeader set X-Slimlytics-Proxy-Key "${key}"\n</LocationMatch>`
+    : '';
+
   if (config.serverType === 'caddy') {
     return `### SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics-next/blob/main/docs/FIRST_PARTY_PROXY.md
 ### COPY INTO YOUR WEBSITE'S CADDYFILE
@@ -69,7 +85,7 @@ handle ${config.beaconPath} {
 \treverse_proxy ${analytics.origin} {
 \t\theader_up Host {upstream_hostport}
 \t\theader_up -Cookie
-\t\theader_up -Authorization
+\t\theader_up -Authorization${caddyClientIp}
 \t\theader_down -Set-Cookie
 \t}
 }
@@ -98,7 +114,7 @@ location = ${config.beaconPath} {
     proxy_set_header Host ${analytics.host};
     proxy_set_header Cookie "";
     proxy_set_header Authorization "";
-    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-For $remote_addr;${nginxClientIp}
     proxy_hide_header Set-Cookie;
     proxy_ssl_server_name on;
     proxy_ssl_name ${analytics.hostname};
@@ -122,7 +138,7 @@ ProxyPassMatch "^${regexEscape(config.beaconPath)}$" "${analytics.origin}${colle
     RequestHeader unset Authorization
     RequestHeader unset X-Forwarded-For
     Header always unset Set-Cookie
-</LocationMatch>`;
+</LocationMatch>${apacheClientIp}`;
 }
 
 export function proxyTestLinks(domain: string, config: AntiAdblockConfig): { script: string; beacon: string } {

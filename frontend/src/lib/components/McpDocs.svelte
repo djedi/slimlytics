@@ -228,7 +228,11 @@ hermes mcp test slimlytics`;
           For framework or edge hosting, have your agent implement the equivalent two exact server
           routes. Forward to the fixed Slimlytics origin, preserve the method, body, content type,
           Origin, Referer, and User-Agent, strip Cookie and Authorization, and remove upstream
-          Set-Cookie. Avoid caching collection responses or accepting arbitrary upstream URLs.
+          Set-Cookie. On the collection route, send the visitor’s IP as
+          <code>X-Slimlytics-Client-IP</code> and the setup’s <code>proxyKey</code> as
+          <code>X-Slimlytics-Proxy-Key</code>, or locations and visitor counts will reflect your web
+          server instead of your visitors. Avoid caching collection responses or accepting arbitrary
+          upstream URLs.
         </p>
         <h3 id="prompts">Prompt library</h3>
         <p>These work the same in Claude Code, Codex, and Hermes once the server is connected.</p>

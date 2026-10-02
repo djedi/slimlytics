@@ -49,8 +49,15 @@ The generated Caddy, Nginx, and Apache configurations:
 - Preserve the request method, body, content type, origin, and user agent.
 - Configure the upstream host and HTTPS SNI.
 - Avoid trusting a browser-supplied `X-Forwarded-For` value.
+- On the collection route only, send the visitor's IP as `X-Slimlytics-Client-IP` together with the site's `proxyKey` as `X-Slimlytics-Proxy-Key`.
 
-Caddy replaces `X-Forwarded-For` by default unless global `trusted_proxies` behavior changes that policy. Review Caddy's trusted-proxy configuration if another proxy sits in front of the measured site.
+## Visitor IPs through the proxy
+
+The proxy connects to Slimlytics from the website's own server, so without help every visitor would appear to come from that server: locations would be unknown (or the server's datacenter), visitors with the same browser would merge into one, and rate limiting would be shared. The generated configurations therefore forward the visitor IP on the collection route (Caddy `{client_ip}`, Nginx `$remote_addr`, Apache `expr=%{REMOTE_ADDR}`), vouched for by the site's proxy key. Slimlytics uses that IP for location, visitor IDs, and rate limiting **only when the key matches the site**; otherwise it falls back to the connecting address, so the header cannot be used to spoof.
+
+The proxy key is returned as `proxyKey` on the site and in the tracking setup. It authorizes nothing except vouching for the forwarded IP, so it is safe in committed server configuration. Existing installations keep working but report the server's location until their proxy configuration is regenerated and reloaded.
+
+If the measured site itself sits behind a CDN or load balancer, configure the web server to see real client addresses first (Caddy `trusted_proxies`, Nginx `real_ip`, Apache `mod_remoteip`); otherwise it forwards the CDN's address. Caddy replaces `X-Forwarded-For` by default unless global `trusted_proxies` behavior changes that policy.
 
 ## Server requirements
 

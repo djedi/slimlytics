@@ -633,7 +633,7 @@ async fn list_sites(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<Site>>, ApiError> {
-    Ok(Json(sqlx::query_as("SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.created_at").bind(user).fetch_all(&state.pool).await?))
+    Ok(Json(sqlx::query_as("SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.created_at").bind(user).fetch_all(&state.pool).await?))
 }
 async fn create_site(
     State(state): State<AppState>,
@@ -643,7 +643,7 @@ async fn create_site(
     validate_site(&input)?;
     input.domain = canonical_domain(&input.domain)?;
     let mut tx = state.pool.begin().await?;
-    let site: Site = sqlx::query_as("INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at")
+    let site: Site = sqlx::query_as("INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at")
         .bind(input.name)
         .bind(input.domain)
         .bind(input.timezone)
@@ -670,7 +670,7 @@ async fn ensure_site(
     input.domain = canonical_domain(&input.domain)?;
     let mut tx = state.pool.begin().await?;
     let inserted: Option<Site> = sqlx::query_as(
-        "INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT (lower(domain)) DO NOTHING RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at",
+        "INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT (lower(domain)) DO NOTHING RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at",
     )
     .bind(&input.name)
     .bind(&input.domain)
@@ -688,7 +688,7 @@ async fn ensure_site(
         (true, site)
     } else {
         let site = sqlx::query_as(
-            "SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 AND lower(s.domain)=lower($2)",
+            "SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 AND lower(s.domain)=lower($2)",
         )
         .bind(user)
         .bind(&input.domain)
@@ -754,7 +754,7 @@ async fn get_site(
     Ok(Json(fetch_site(&state.pool, site).await?))
 }
 async fn fetch_site(pool: &PgPool, id: Uuid) -> Result<Site, ApiError> {
-    sqlx::query_as("SELECT id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at FROM sites WHERE id=$1").bind(id).fetch_optional(pool).await?.ok_or(ApiError::NotFound)
+    sqlx::query_as("SELECT id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at FROM sites WHERE id=$1").bind(id).fetch_optional(pool).await?.ok_or(ApiError::NotFound)
 }
 async fn update_site(
     State(state): State<AppState>,
@@ -858,6 +858,36 @@ async fn rotate_server_key(
     Ok(Json(json!({"serverWriteKey":key})))
 }
 
+/// The visitor IP for a collected event. A site's first-party proxy connects from the
+/// website's own server, so it forwards the visitor IP in `x-slimlytics-client-ip`, vouched for
+/// by the site's proxy key. Without a matching key the header is ignored.
+fn collection_ip(headers: &HeaderMap, peer: IpAddr, trust_proxy: bool, proxy_key: Uuid) -> IpAddr {
+    let vouched = headers
+        .get("x-slimlytics-proxy-key")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| Uuid::parse_str(value.trim()).ok())
+        .is_some_and(|key| constant_time_eq(key.as_bytes(), proxy_key.as_bytes()));
+    if vouched {
+        if let Some(ip) = headers
+            .get("x-slimlytics-client-ip")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse().ok())
+        {
+            return ip;
+        }
+    }
+    client_ip(headers, peer, trust_proxy)
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
+}
+
 fn client_ip(headers: &HeaderMap, peer: IpAddr, trust_proxy: bool) -> IpAddr {
     if trust_proxy {
         headers
@@ -910,19 +940,19 @@ async fn collect(
     headers: HeaderMap,
     Json(input): Json<CollectInput>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let site: Option<(Uuid, Vec<String>)> =
-        sqlx::query_as("SELECT id,allowed_origins FROM sites WHERE write_key=$1")
+    let site: Option<(Uuid, Vec<String>, Uuid)> =
+        sqlx::query_as("SELECT id,allowed_origins,proxy_key FROM sites WHERE write_key=$1")
             .bind(key)
             .fetch_optional(&state.pool)
             .await?;
-    let (site, allowed) = site.ok_or(ApiError::NotFound)?;
+    let (site, allowed, proxy_key) = site.ok_or(ApiError::NotFound)?;
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
     let referer = headers.get(header::REFERER).and_then(|v| v.to_str().ok());
     if !collection_origin_allowed(origin, referer, &allowed) {
         record_collection_rejection(&state.pool, site, "origin").await;
         return Err(ApiError::Forbidden);
     }
-    let ip = client_ip(&headers, peer.ip(), state.trust_proxy);
+    let ip = collection_ip(&headers, peer.ip(), state.trust_proxy, proxy_key);
     if !state.limiter.check(&format!("{site}:{ip}")) {
         record_collection_rejection(&state.pool, site, "rate_limited").await;
         return Err(ApiError::RateLimited);
@@ -3389,6 +3419,45 @@ mod tests {
         assert_eq!(
             client_ip(&headers, peer, true),
             "198.51.100.9".parse::<IpAddr>().unwrap()
+        );
+    }
+
+    /// First-party proxies forward the visitor's IP with the site's proxy key; anything
+    /// unauthenticated keeps today's behaviour so the header can't be used to spoof.
+    #[test]
+    fn site_proxy_forwards_the_visitor_ip_only_with_its_key() {
+        let key: Uuid = "6f1f6c2e-1d5e-4a3b-9f0e-2b7d6c5a4f31".parse().unwrap();
+        let peer: IpAddr = "172.18.0.5".parse().unwrap();
+        let visitor: IpAddr = "81.2.69.160".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-slimlytics-client-ip", "81.2.69.160".parse().unwrap());
+        headers.insert("x-slimlytics-proxy-key", key.to_string().parse().unwrap());
+        assert_eq!(collection_ip(&headers, peer, false, key), visitor);
+        assert_eq!(collection_ip(&headers, peer, true, key), visitor);
+
+        headers.insert(
+            "x-slimlytics-proxy-key",
+            Uuid::nil().to_string().parse().unwrap(),
+        );
+        assert_eq!(
+            collection_ip(&headers, peer, false, key),
+            peer,
+            "wrong key is ignored"
+        );
+
+        headers.remove("x-slimlytics-proxy-key");
+        assert_eq!(
+            collection_ip(&headers, peer, false, key),
+            peer,
+            "missing key is ignored"
+        );
+
+        headers.insert("x-slimlytics-proxy-key", key.to_string().parse().unwrap());
+        headers.insert("x-slimlytics-client-ip", "not-an-ip".parse().unwrap());
+        assert_eq!(
+            collection_ip(&headers, peer, false, key),
+            peer,
+            "malformed IP is ignored"
         );
     }
 

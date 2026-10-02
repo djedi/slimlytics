@@ -2,7 +2,7 @@ export interface TrendPoint { date: string; visitors: number; pageViews: number 
 export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
 export type AntiAdblockServer = 'caddy' | 'nginx' | 'apache';
 export interface AntiAdblockSettings { serverType: AntiAdblockServer; jsPath: string; beaconPath: string }
-export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; overview?: Overview }
+export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; proxyKey?: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; overview?: Overview }
 export interface User { id: string; email: string; name?: string }
 export interface AuthResponse { token?: string; accessToken?: string; user: User }
 export interface ReportRow { label: string; value: number; visitors?: number; secondary?: string; change?: number }

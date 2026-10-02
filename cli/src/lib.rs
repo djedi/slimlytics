@@ -28,6 +28,9 @@ pub struct Site {
     pub retention_days: i32,
     pub write_key: Uuid,
     pub server_write_key: Uuid,
+    /// Vouches for the visitor IP the beacon route forwards. Absent on older servers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_key: Option<Uuid>,
     pub anti_adblock_server: String,
     pub anti_adblock_js_path: String,
     pub anti_adblock_beacon_path: String,
@@ -102,6 +105,8 @@ pub struct TrackingSetup {
     pub script_test_url: String,
     pub beacon_test_url: String,
     pub server_ingest_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_key: Option<Uuid>,
     pub next_steps: Vec<String>,
 }
 
@@ -448,12 +453,25 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
         site.write_key,
         site.anti_adblock_beacon_path.trim_start_matches('/')
     );
+    // The beacon route forwards the visitor's IP, vouched for by the site's proxy key, so
+    // locations and visitor IDs reflect the visitor rather than the website's server.
+    let (caddy_client_ip, nginx_client_ip, apache_client_ip) = match site.proxy_key {
+        Some(key) => (
+            format!("\n\t\theader_up X-Slimlytics-Client-IP {{client_ip}}\n\t\theader_up X-Slimlytics-Proxy-Key {key}"),
+            format!("\n    proxy_set_header X-Slimlytics-Client-IP $remote_addr;\n    proxy_set_header X-Slimlytics-Proxy-Key {key};"),
+            format!(
+                "\n<LocationMatch \"^{}$\">\n    RequestHeader set X-Slimlytics-Client-IP \"expr=%{{REMOTE_ADDR}}\"\n    RequestHeader set X-Slimlytics-Proxy-Key \"{key}\"\n</LocationMatch>",
+                regex_escape(&site.anti_adblock_beacon_path)
+            ),
+        ),
+        None => Default::default(),
+    };
     let collect_path = format!("/api/collect/{}", site.write_key);
     let bootstrap = format!("{analytics}{bootstrap_path}");
     let collect = format!("{analytics}{collect_path}");
     let server_config = match site.anti_adblock_server.as_str() {
         "caddy" => format!(
-            "# Slimlytics first-party tracking\nhandle {} {{\n\trewrite {} {}\n\treverse_proxy {} {{\n\t\theader_up Host {{upstream_hostport}}\n\t\theader_up -Cookie\n\t\theader_up -Authorization\n\t\theader_down -Set-Cookie\n\t}}\n}}\n\nhandle {} {{\n\trewrite {} {}\n\treverse_proxy {} {{\n\t\theader_up Host {{upstream_hostport}}\n\t\theader_up -Cookie\n\t\theader_up -Authorization\n\t\theader_down -Set-Cookie\n\t}}\n}}",
+            "# Slimlytics first-party tracking\nhandle {} {{\n\trewrite {} {}\n\treverse_proxy {} {{\n\t\theader_up Host {{upstream_hostport}}\n\t\theader_up -Cookie\n\t\theader_up -Authorization\n\t\theader_down -Set-Cookie\n\t}}\n}}\n\nhandle {} {{\n\trewrite {} {}\n\treverse_proxy {} {{\n\t\theader_up Host {{upstream_hostport}}\n\t\theader_up -Cookie\n\t\theader_up -Authorization{}\n\t\theader_down -Set-Cookie\n\t}}\n}}",
             site.anti_adblock_js_path,
             site.anti_adblock_js_path,
             bootstrap_path,
@@ -461,10 +479,11 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
             site.anti_adblock_beacon_path,
             site.anti_adblock_beacon_path,
             collect_path,
-            analytics
+            analytics,
+            caddy_client_ip
         ),
         "nginx" => format!(
-            "# Slimlytics first-party tracking\nlocation = {} {{\n    proxy_pass {};\n    proxy_set_header Host {};\n    proxy_set_header Cookie \"\";\n    proxy_set_header Authorization \"\";\n    proxy_set_header X-Forwarded-For $remote_addr;\n    proxy_hide_header Set-Cookie;\n    proxy_ssl_server_name on;\n    proxy_ssl_name {};\n}}\n\nlocation = {} {{\n    proxy_pass {};\n    proxy_set_header Host {};\n    proxy_set_header Cookie \"\";\n    proxy_set_header Authorization \"\";\n    proxy_set_header X-Forwarded-For $remote_addr;\n    proxy_hide_header Set-Cookie;\n    proxy_ssl_server_name on;\n    proxy_ssl_name {};\n}}",
+            "# Slimlytics first-party tracking\nlocation = {} {{\n    proxy_pass {};\n    proxy_set_header Host {};\n    proxy_set_header Cookie \"\";\n    proxy_set_header Authorization \"\";\n    proxy_set_header X-Forwarded-For $remote_addr;\n    proxy_hide_header Set-Cookie;\n    proxy_ssl_server_name on;\n    proxy_ssl_name {};\n}}\n\nlocation = {} {{\n    proxy_pass {};\n    proxy_set_header Host {};\n    proxy_set_header Cookie \"\";\n    proxy_set_header Authorization \"\";\n    proxy_set_header X-Forwarded-For $remote_addr;{}\n    proxy_hide_header Set-Cookie;\n    proxy_ssl_server_name on;\n    proxy_ssl_name {};\n}}",
             site.anti_adblock_js_path,
             bootstrap,
             Url::parse(&analytics)?.host_str().unwrap(),
@@ -472,16 +491,18 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
             site.anti_adblock_beacon_path,
             collect,
             Url::parse(&analytics)?.host_str().unwrap(),
+            nginx_client_ip,
             Url::parse(&analytics)?.host_str().unwrap()
         ),
         "apache" => format!(
-            "# Slimlytics first-party tracking\n# Requires mod_proxy, mod_proxy_http, mod_ssl, and mod_headers.\nSSLProxyEngine On\nProxyPassMatch \"^{}$\" \"{}\"\nProxyPassMatch \"^{}$\" \"{}\"\n<LocationMatch \"^(?:{}|{})$\">\n    RequestHeader unset Cookie\n    RequestHeader unset Authorization\n    RequestHeader unset X-Forwarded-For\n    Header always unset Set-Cookie\n</LocationMatch>",
+            "# Slimlytics first-party tracking\n# Requires mod_proxy, mod_proxy_http, mod_ssl, and mod_headers.\nSSLProxyEngine On\nProxyPassMatch \"^{}$\" \"{}\"\nProxyPassMatch \"^{}$\" \"{}\"\n<LocationMatch \"^(?:{}|{})$\">\n    RequestHeader unset Cookie\n    RequestHeader unset Authorization\n    RequestHeader unset X-Forwarded-For\n    Header always unset Set-Cookie\n</LocationMatch>{}",
             regex_escape(&site.anti_adblock_js_path),
             bootstrap,
             regex_escape(&site.anti_adblock_beacon_path),
             collect,
             regex_escape(&site.anti_adblock_js_path),
-            regex_escape(&site.anti_adblock_beacon_path)
+            regex_escape(&site.anti_adblock_beacon_path),
+            apache_client_ip
         ),
         other => bail!("unsupported server type: {other}"),
     };
@@ -496,6 +517,7 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
         script_test_url: format!("{website}{}", site.anti_adblock_js_path),
         beacon_test_url: format!("{website}{}", site.anti_adblock_beacon_path),
         server_ingest_url: format!("{analytics}/api/ingest"),
+        proxy_key: site.proxy_key,
         next_steps: vec![
             "Install serverConfig in the website's Caddy, Nginx, or Apache configuration and reload the server.".into(),
             "Add snippet to every page before the closing </body> tag.".into(),
