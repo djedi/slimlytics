@@ -49,6 +49,7 @@ The runtime key also reads Customers, to recover an account link from the custom
 - Checkout Sessions: write
 - Customer portal: write
 - Subscriptions: read
+- Invoices: read (checkout links a pending subscription to its hosted invoice)
 - Prices: read
 - Products and Prices: write (only for the setup script; it can use a separate key)
 
