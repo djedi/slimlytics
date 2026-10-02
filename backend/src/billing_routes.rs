@@ -253,7 +253,21 @@ async fn checkout(
     for session in open["data"].as_array().into_iter().flatten() {
         if let Some(id) = session["id"].as_str() {
             let path = format!("/v1/checkout/sessions/{id}/expire");
-            let _ = stripe_post(&state, &stripe, &path, &[], None).await;
+            if stripe_post(&state, &stripe, &path, &[], None)
+                .await
+                .is_err()
+            {
+                // Fine if it already completed or expired; otherwise it may still be payable,
+                // so fail closed rather than open a second checkout.
+                let current =
+                    stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[])
+                        .await?;
+                if !matches!(current["status"].as_str(), Some("complete" | "expired")) {
+                    return Err(ApiError::BadRequest(
+                        "a previous checkout is still open; try again in a moment".into(),
+                    ));
+                }
+            }
         }
     }
     // Reconcile with Stripe: a subscription may exist that no webhook has delivered yet.
@@ -267,6 +281,8 @@ async fn checkout(
         .is_some_and(|status| matches!(status, "active" | "trialing" | "past_due"))
     {
         let url = portal_session(&state, &stripe, &customer).await?;
+        // Keep the reconciliation (and any new customer row) made above.
+        lock.commit().await?;
         return Ok(Json(json!({"url": url, "portal": true})));
     }
     let prices = stripe_get(

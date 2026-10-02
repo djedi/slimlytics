@@ -253,12 +253,15 @@ pub fn verify_webhook_signature(
 }
 
 fn hex_decode(value: &str) -> Option<Vec<u8>> {
-    if !value.len().is_multiple_of(2) {
+    // Works on bytes, so non-ASCII input is rejected instead of slicing mid-character.
+    let digit = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
+    let bytes = value.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
-    (0..value.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&value[i..i + 2], 16).ok())
+    bytes
+        .chunks(2)
+        .map(|pair| Some(digit(pair[0])? << 4 | digit(pair[1])?))
         .collect()
 }
 
@@ -352,6 +355,19 @@ mod tests {
             BillingConfig::from_json(include_str!("../../config/plans.example.json"), None)
                 .unwrap();
         assert_eq!(example.plans, default_plans());
+    }
+
+    #[test]
+    fn non_ascii_signatures_are_rejected_without_panicking() {
+        assert_eq!(hex_decode("a€"), None);
+        assert_eq!(hex_decode("0aff"), Some(vec![0x0a, 0xff]));
+        assert!(!verify_webhook_signature(
+            b"{}",
+            "t=1000,v1=a€",
+            "whsec",
+            1000,
+            300
+        ));
     }
 
     #[test]
