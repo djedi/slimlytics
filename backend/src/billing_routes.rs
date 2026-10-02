@@ -396,15 +396,17 @@ async fn checkout(
     let result: Result<(String, bool), ApiError> = async {
         for _ in 0..3 {
             let key = format!("slimlytics-checkout-{user}-{nonce}-{price}");
-            let session = stripe_post(
-                &state,
-                &stripe,
-                "/v1/checkout/sessions",
-                &params,
-                Some(&key),
-            )
-            .await?;
+            let request = state
+                .http
+                .post(format!("{}/v1/checkout/sessions", stripe.api_base))
+                .form(&params)
+                .header("Idempotency-Key", &key);
+            // No definitive answer: return with the nonce unchanged so a retry replays the key.
+            let answer = send_answered(request, &stripe).await?;
+            // A definitive answer, success or error, is cached by Stripe for this key, so the
+            // attempt is retired either way. A session it may have made is expired next time.
             nonce += 1;
+            let session = answer?;
             let id = session["id"].as_str().ok_or(ApiError::Internal)?;
             // Replays return the original response, so check the session's current status.
             let current =
@@ -733,6 +735,16 @@ async fn stripe_post(
 }
 
 async fn send(request: reqwest::RequestBuilder, stripe: &StripeConfig) -> Result<Value, ApiError> {
+    send_answered(request, stripe).await?
+}
+
+/// Like `send`, but separates "Stripe gave a definitive answer" (inner result; Stripe caches
+/// it against any idempotency key) from "no definitive answer" (outer error: transport failure,
+/// timeout, a concurrent request with the same key, or rate limiting), which is safe to replay.
+async fn send_answered(
+    request: reqwest::RequestBuilder,
+    stripe: &StripeConfig,
+) -> Result<Result<Value, ApiError>, ApiError> {
     let response = request
         .bearer_auth(&stripe.secret_key)
         .header("Stripe-Version", STRIPE_API_VERSION)
@@ -748,7 +760,10 @@ async fn send(request: reqwest::RequestBuilder, stripe: &StripeConfig) -> Result
     if !status.is_success() {
         // Stripe error messages are safe to log; they never contain the key.
         tracing::error!(%status, message = body["error"]["message"].as_str().unwrap_or(""), "Stripe API error");
-        return Err(ApiError::Internal);
+        if matches!(status.as_u16(), 409 | 429) {
+            return Err(ApiError::Internal);
+        }
+        return Ok(Err(ApiError::Internal));
     }
-    Ok(body)
+    Ok(Ok(body))
 }
