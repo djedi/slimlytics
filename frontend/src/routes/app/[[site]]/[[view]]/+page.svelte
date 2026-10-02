@@ -295,12 +295,16 @@
   // briefly until it lands.
   async function confirmCheckout() {
     billingNotice = 'Thanks! Your subscription is being activated…';
-    const before = billingStatus.plan?.id;
-    let activated = false;
+    // Activated means a subscription in good standing, whether the webhook landed before the
+    // page's first billing fetch or during the polling below.
+    const isActive = () =>
+      billingStatus.planSource === 'stripe' &&
+      ['active', 'trialing'].includes(billingStatus.subscriptionStatus ?? '');
+    let activated = isActive();
     for (let attempt = 0; attempt < 8 && !activated; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       await loadBilling();
-      activated = Boolean(billingStatus.plan?.id && billingStatus.plan.id !== before);
+      activated = isActive();
     }
     if (!activated) {
       // Keep ?billing=success so a reload checks again; the regular refresh also picks it up.

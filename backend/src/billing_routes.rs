@@ -300,19 +300,21 @@ async fn checkout(
     }
     // Reconcile with Stripe: a subscription may exist that no webhook has delivered yet.
     sync_customer(&state, &mut lock, &stripe, &customer).await?;
-    let existing = account(&mut *lock, user).await?;
+    // Decide from one fresh, complete listing taken after the sync: any non-terminal
+    // subscription blocks a new checkout. A pending one that completes while we look shows up
+    // as either incomplete or active, and both outcomes block, so nothing can slip between two
+    // separate status checks.
+    let subscriptions = list_subscriptions(&state, &stripe, &customer, true).await?;
+    let with_status = |statuses: &[&str]| {
+        subscriptions.iter().find(|s| {
+            s["status"]
+                .as_str()
+                .is_some_and(|st| statuses.contains(&st))
+        })
+    };
     // Plan changes for existing subscribers go through the Customer Portal (proration,
     // cancellation), never a second subscription.
-    if existing
-        .as_ref()
-        .and_then(|a| a.subscription_status.as_deref())
-        .is_some_and(|status| {
-            matches!(
-                status,
-                "active" | "trialing" | "past_due" | "unpaid" | "paused"
-            )
-        })
-    {
+    if with_status(&["active", "trialing", "past_due", "unpaid", "paused"]).is_some() {
         let url = portal_session(&state, &stripe, &customer).await?;
         // Keep the reconciliation (and any new customer row) made above.
         lock.commit().await?;
@@ -321,28 +323,14 @@ async fn checkout(
     // A subscription whose first payment is still pending (e.g. awaiting authentication) is
     // never cancelled here, since it could complete at any moment. Send the user to finish that
     // payment instead of opening a second subscription; Stripe expires it after about a day.
-    let pending = stripe_get(
-        &state,
-        &stripe,
-        "/v1/subscriptions",
-        &[
-            ("customer", customer.as_str()),
-            ("status", "incomplete"),
-            ("limit", "1"),
-            ("expand[]", "data.latest_invoice"),
-        ],
-    )
-    .await?;
-    if let Some(subscription) = pending["data"].as_array().and_then(|d| d.first()) {
-        if subscription.is_object() {
-            lock.commit().await?;
-            return match subscription["latest_invoice"]["hosted_invoice_url"].as_str() {
-                Some(url) => Ok(Json(json!({"url": url, "portal": false, "pending": true}))),
-                None => Err(ApiError::BadRequest(
-                    "a previous subscription payment is still pending; try again shortly".into(),
-                )),
-            };
-        }
+    if let Some(subscription) = with_status(&["incomplete"]) {
+        lock.commit().await?;
+        return match subscription["latest_invoice"]["hosted_invoice_url"].as_str() {
+            Some(url) => Ok(Json(json!({"url": url, "portal": false, "pending": true}))),
+            None => Err(ApiError::BadRequest(
+                "a previous subscription payment is still pending; try again shortly".into(),
+            )),
+        };
     }
     let prices = stripe_get(
         &state,
@@ -645,24 +633,7 @@ async fn sync_customer(
     let mut tx = conn.begin().await?;
     advisory_lock(&mut tx, &format!("slimlytics-stripe:{customer}")).await?;
     // Every subscription, following pagination: a live one may be older than many canceled ones.
-    let mut list: Vec<Value> = Vec::new();
-    loop {
-        let mut query = vec![("customer", customer), ("status", "all"), ("limit", "100")];
-        let after = list
-            .last()
-            .and_then(|s| s["id"].as_str())
-            .map(str::to_owned);
-        if let Some(after) = after.as_deref() {
-            query.push(("starting_after", after));
-        }
-        let page = stripe_get(state, stripe, "/v1/subscriptions", &query).await?;
-        let data = page["data"].as_array().cloned().unwrap_or_default();
-        let done = data.is_empty() || !page["has_more"].as_bool().unwrap_or(false);
-        list.extend(data);
-        if done {
-            break;
-        }
-    }
+    let list = list_subscriptions(state, stripe, customer, false).await?;
     // Prefer a subscription in good standing, then any other non-terminal one (unpaid, paused,
     // incomplete; still resumable), and only then the most recent ended one.
     let rank = |s: &Value| match s["status"].as_str() {
@@ -736,6 +707,37 @@ async fn sync_customer(
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// Every subscription of a customer, following pagination: a live one may be older than many
+/// ended ones. `with_invoice` expands each latest invoice (for its hosted payment page).
+async fn list_subscriptions(
+    state: &AppState,
+    stripe: &StripeConfig,
+    customer: &str,
+    with_invoice: bool,
+) -> Result<Vec<Value>, ApiError> {
+    let mut list: Vec<Value> = Vec::new();
+    loop {
+        let mut query = vec![("customer", customer), ("status", "all"), ("limit", "100")];
+        if with_invoice {
+            query.push(("expand[]", "data.latest_invoice"));
+        }
+        let after = list
+            .last()
+            .and_then(|s| s["id"].as_str())
+            .map(str::to_owned);
+        if let Some(after) = after.as_deref() {
+            query.push(("starting_after", after));
+        }
+        let page = stripe_get(state, stripe, "/v1/subscriptions", &query).await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let done = data.is_empty() || !page["has_more"].as_bool().unwrap_or(false);
+        list.extend(data);
+        if done {
+            return Ok(list);
+        }
+    }
 }
 
 async fn stripe_get(
