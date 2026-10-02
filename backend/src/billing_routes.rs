@@ -152,10 +152,29 @@ pub(super) async fn ensure_site_allowance(
     Ok(())
 }
 
+/// Plans as shown to clients: lookup keys stay server-side, but which intervals can be bought
+/// is exposed so the UI can offer annual-only (or monthly-only) plans correctly.
+fn public_plans(config: &BillingConfig) -> Vec<Value> {
+    config
+        .plans
+        .iter()
+        .map(|plan| {
+            let mut value = serde_json::to_value(plan).unwrap_or(Value::Null);
+            let intervals: Vec<&str> = [(Interval::Month, "month"), (Interval::Year, "year")]
+                .into_iter()
+                .filter(|(interval, _)| plan.lookup_key(*interval).is_some())
+                .map(|(_, name)| name)
+                .collect();
+            value["intervals"] = json!(intervals);
+            value
+        })
+        .collect()
+}
+
 async fn plans(State(state): State<AppState>) -> Json<Value> {
     match state.billing.as_ref() {
         Some(config) => Json(
-            json!({"enabled": true, "plans": config.plans, "checkoutAvailable": config.stripe.is_some()}),
+            json!({"enabled": true, "plans": public_plans(config), "checkoutAvailable": config.stripe.is_some()}),
         ),
         None => Json(json!({"enabled": false, "plans": []})),
     }
@@ -193,7 +212,7 @@ async fn status(
         "currentPeriodEnd": account.as_ref().and_then(|a| a.current_period_end),
         "hasBillingAccount": account.as_ref().is_some_and(|a| a.stripe_customer_id.is_some()),
         "usage": {"sites": sites, "pageViewsToday": page_views_today},
-        "plans": config.plans,
+        "plans": public_plans(config),
         "checkoutAvailable": config.stripe.is_some(),
     })))
 }
@@ -259,10 +278,8 @@ async fn checkout(
         ],
     )
     .await?;
-    let mut expired = Vec::new();
     for session in open["data"].as_array().into_iter().flatten() {
         if let Some(id) = session["id"].as_str() {
-            expired.push(id.to_owned());
             let path = format!("/v1/checkout/sessions/{id}/expire");
             if stripe_post(&state, &stripe, &path, &[], None)
                 .await
@@ -301,8 +318,9 @@ async fn checkout(
         lock.commit().await?;
         return Ok(Json(json!({"url": url, "portal": true})));
     }
-    // A subscription whose first payment is still pending (e.g. awaiting authentication) would
-    // otherwise sit beside the new one; cancel it, failing closed if Stripe refuses.
+    // A subscription whose first payment is still pending (e.g. awaiting authentication) is
+    // never cancelled here, since it could complete at any moment. Send the user to finish that
+    // payment instead of opening a second subscription; Stripe expires it after about a day.
     let pending = stripe_get(
         &state,
         &stripe,
@@ -310,21 +328,20 @@ async fn checkout(
         &[
             ("customer", customer.as_str()),
             ("status", "incomplete"),
-            ("limit", "100"),
+            ("limit", "1"),
+            ("expand[]", "data.latest_invoice"),
         ],
     )
     .await?;
-    for subscription in pending["data"].as_array().into_iter().flatten() {
-        if let Some(id) = subscription["id"].as_str() {
-            let request = state
-                .http
-                .delete(format!("{}/v1/subscriptions/{id}", stripe.api_base));
-            if send(request, &stripe).await.is_err() {
-                return Err(ApiError::BadRequest(
-                    "a previous subscription payment is still pending; try again in a moment"
-                        .into(),
-                ));
-            }
+    if let Some(subscription) = pending["data"].as_array().and_then(|d| d.first()) {
+        if subscription.is_object() {
+            lock.commit().await?;
+            return match subscription["latest_invoice"]["hosted_invoice_url"].as_str() {
+                Some(url) => Ok(Json(json!({"url": url, "portal": false, "pending": true}))),
+                None => Err(ApiError::BadRequest(
+                    "a previous subscription payment is still pending; try again shortly".into(),
+                )),
+            };
         }
     }
     let prices = stripe_get(
@@ -364,8 +381,8 @@ async fn checkout(
     ];
     // The idempotency key only advances after a successful response. A retry after an
     // ambiguous failure (e.g. a timeout once Stripe had accepted the request) therefore gets
-    // the same session back rather than a second payable one. If that replayed session is one
-    // just expired above, the earlier attempt is settled and a fresh key is used.
+    // the same session back rather than a second payable one. A replayed session that is no
+    // longer open (expired above or earlier) settles that attempt, and a fresh key is used.
     let mut nonce: i64 =
         sqlx::query_scalar("SELECT checkout_nonce FROM account_billing WHERE user_id=$1")
             .bind(user)
@@ -383,14 +400,18 @@ async fn checkout(
         )
         .await?;
         nonce += 1;
-        if !session["id"]
-            .as_str()
-            .is_some_and(|id| expired.iter().any(|e| e == id))
-        {
+        let id = session["id"].as_str().ok_or(ApiError::Internal)?;
+        // Replays return the original response, so check the session's current status.
+        let current =
+            stripe_get(&state, &stripe, &format!("/v1/checkout/sessions/{id}"), &[]).await?;
+        if current["status"].as_str() == Some("open") {
             break;
         }
+        session = Value::Null;
     }
-    let url = session["url"].as_str().ok_or(ApiError::Internal)?;
+    let url = session["url"].as_str().ok_or_else(|| {
+        ApiError::BadRequest("could not start checkout; try again in a moment".into())
+    })?;
     sqlx::query("UPDATE account_billing SET checkout_nonce=$2 WHERE user_id=$1")
         .bind(user)
         .bind(nonce)

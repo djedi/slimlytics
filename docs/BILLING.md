@@ -48,7 +48,7 @@ The runtime key also reads Customers, to recover an account link from the custom
 - Customers: write
 - Checkout Sessions: write
 - Customer portal: write
-- Subscriptions: write (checkout cancels a pending, incomplete subscription before starting a new one)
+- Subscriptions: read
 - Prices: read
 - Products and Prices: write (only for the setup script; it can use a separate key)
 

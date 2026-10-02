@@ -5,8 +5,8 @@ import type { BillingStatus } from '../src/lib/api';
 
 const plans = [
   { id: 'free', name: 'Free', sites: 1, dailyPageViews: 3000, monthlyPriceCents: 0, annualPriceCents: 0, currency: 'usd' },
-  { id: 'pro', name: 'Pro', sites: 10, dailyPageViews: 30000, monthlyPriceCents: 700, annualPriceCents: 5600, currency: 'usd' },
-  { id: 'business', name: 'Business', sites: 30, dailyPageViews: 100000, monthlyPriceCents: 1500, annualPriceCents: 12000, currency: 'usd' }
+  { id: 'pro', name: 'Pro', sites: 10, dailyPageViews: 30000, monthlyPriceCents: 700, annualPriceCents: 5600, currency: 'usd', intervals: ['month', 'year'] as ('month' | 'year')[] },
+  { id: 'business', name: 'Business', sites: 30, dailyPageViews: 100000, monthlyPriceCents: 1500, annualPriceCents: 12000, currency: 'usd', intervals: ['month', 'year'] as ('month' | 'year')[] }
 ];
 const status = (overrides: Partial<BillingStatus>): BillingStatus => ({
   enabled: true,
@@ -36,6 +36,14 @@ describe('plan card', () => {
   it('keeps Manage billing for a comped account that still has a Stripe customer', () => {
     render(PlanCard, { props: { status: status({ planSource: 'admin', hasBillingAccount: true }), onCheckout: vi.fn(), onPortal: vi.fn() } });
     expect(screen.getByRole('button', { name: /Manage billing/ })).toBeInTheDocument();
+  });
+
+  it('offers annual-only plans under the annual toggle', async () => {
+    const annualOnly = [plans[0], { ...plans[1], monthlyPriceCents: 0, intervals: ['year'] as ('month' | 'year')[] }];
+    render(PlanCard, { props: { status: status({ plans: annualOnly }), onCheckout: vi.fn(), onPortal: vi.fn() } });
+    expect(screen.queryByRole('button', { name: /Upgrade to Pro/ })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: /Annual/ }));
+    expect(screen.getByRole('button', { name: /Upgrade to Pro/ })).toHaveTextContent('$56/yr');
   });
 
   it('prices upgrades in the plan currency', () => {

@@ -60,6 +60,12 @@ async fn fake_stripe() -> (String, Shared) {
             post(record("checkout")).get(|| async { Json(json!({"data": [{"id": "cs_stale"}]})) }),
         )
         .route(
+            "/v1/checkout/sessions/{id}",
+            get(|axum::extract::Path(id): axum::extract::Path<String>| async move {
+                Json(json!({"id": id, "status": "open"}))
+            }),
+        )
+        .route(
             "/v1/checkout/sessions/cs_stale/expire",
             post(record("expire")),
         )
@@ -168,6 +174,7 @@ async fn plans_limit_sites_and_stripe_subscriptions_drive_the_plan() {
         status["plans"][1].get("stripeMonthlyLookupKey").is_none(),
         "lookup keys stay server-side"
     );
+    assert_eq!(status["plans"][1]["intervals"], json!(["month", "year"]));
 
     // Agent/API tokens cannot reach billing.
     let api_token = body(call(&router, "POST", "/api/account/tokens", Some(&token), json!({"name":"agent","expiresInDays":1,"scopes":["sites:read","sites:write","analytics:read"]})).await).await["token"]

@@ -2,7 +2,7 @@ export interface TrendPoint { date: string; visitors: number; pageViews: number 
 export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
 export type AntiAdblockServer = 'caddy' | 'nginx' | 'apache';
 export interface AntiAdblockSettings { serverType: AntiAdblockServer; jsPath: string; beaconPath: string }
-export interface BillingPlan { id: string; name: string; sites: number | null; dailyPageViews: number | null; monthlyPriceCents: number; annualPriceCents: number; currency: string }
+export interface BillingPlan { id: string; name: string; sites: number | null; dailyPageViews: number | null; monthlyPriceCents: number; annualPriceCents: number; currency: string; intervals?: ('month' | 'year')[] }
 export interface BillingStatus {
   enabled: boolean;
   plan?: BillingPlan;

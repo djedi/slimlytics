@@ -25,7 +25,7 @@
       ? []
       : plans.filter(
           (option) =>
-            option.monthlyPriceCents > 0 &&
+            (option.intervals?.length ?? 0) > 0 &&
             option.id !== plan.id &&
             (option.dailyPageViews ?? Infinity) > (plan.dailyPageViews ?? Infinity)
         )
@@ -86,7 +86,7 @@
         <button class:active={interval === 'month'} aria-pressed={interval === 'month'} onclick={() => (interval = 'month')}>Monthly</button>
         <button class:active={interval === 'year'} aria-pressed={interval === 'year'} onclick={() => (interval = 'year')}>Annual · save 33%</button>
       </div>
-      {#each upgrades as option}
+      {#each upgrades.filter((option) => option.intervals?.includes(interval)) as option}
         <button class="primary compact" disabled={busy} onclick={() => onCheckout(option.id, interval)}>
           Upgrade to {option.name} · {interval === 'year' ? `${price(option.annualPriceCents, option.currency)}/yr` : `${price(option.monthlyPriceCents, option.currency)}/mo`}
           <ArrowUpRight size={14} aria-hidden="true" />
