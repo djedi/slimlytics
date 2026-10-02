@@ -749,24 +749,37 @@ async fn issue_refresh_token(
         .await?;
     Ok(refresh)
 }
-/// used_at, connection id, granted scopes, and whether the connection is still active.
-type RefreshRow = (Option<DateTime<Utc>>, Uuid, Vec<String>, bool);
 async fn exchange_refresh(s: &AppState, f: &TokenRequest) -> Result<Value, TokenError> {
     let presented = required(&f.refresh_token, "refresh_token is required")?;
     let client = token_client(s, f)?;
-    let invalid = TokenError::OAuth("invalid_grant", "the refresh token is invalid or expired");
+    let invalid = || TokenError::OAuth("invalid_grant", "the refresh token is invalid or expired");
+    let presented_hash = hash_api_token(presented);
     let mut tx = s.pool.begin().await?;
-    let row: Option<RefreshRow> = sqlx::query_as(
-        "SELECT r.used_at,t.id,t.scopes,(t.revoked_at IS NULL AND t.expires_at>now())
-         FROM oauth_refresh_tokens r JOIN api_tokens t ON t.id=r.api_token_id
-         WHERE r.token_hash=$1 AND r.client_id=$2
-         FOR UPDATE OF r,t",
+    // Lock order is always connection, then refresh rows. Rotation and replay revocation
+    // both follow it, so a replay racing a refresh serializes instead of deadlocking.
+    let connection: Option<Uuid> = sqlx::query_scalar(
+        "SELECT api_token_id FROM oauth_refresh_tokens WHERE token_hash=$1 AND client_id=$2",
     )
-    .bind(hash_api_token(presented))
+    .bind(&presented_hash)
     .bind(client)
     .fetch_optional(&mut *tx)
     .await?;
-    let (used_at, connection, granted, active) = row.ok_or(invalid)?;
+    let connection = connection.ok_or_else(invalid)?;
+    let grant: Option<(Vec<String>, bool)> = sqlx::query_as(
+        "SELECT scopes,(revoked_at IS NULL AND expires_at>now()) FROM api_tokens WHERE id=$1 FOR UPDATE",
+    )
+    .bind(connection)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let used_at: Option<Option<DateTime<Utc>>> = sqlx::query_scalar(
+        "SELECT used_at FROM oauth_refresh_tokens WHERE token_hash=$1 AND api_token_id=$2 FOR UPDATE",
+    )
+    .bind(&presented_hash)
+    .bind(connection)
+    .fetch_optional(&mut *tx)
+    .await?;
+    // The row can vanish between the lookup and the lock if a replay revoked the connection.
+    let ((granted, active), used_at) = grant.zip(used_at).ok_or_else(invalid)?;
     if used_at.is_some() {
         // A rotated-out token came back: someone else holds a copy. End the connection.
         sqlx::query("UPDATE api_tokens SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL")
@@ -779,16 +792,10 @@ async fn exchange_refresh(s: &AppState, f: &TokenRequest) -> Result<Value, Token
             .await?;
         tx.commit().await?;
         tracing::warn!(%connection, "MCP OAuth refresh token reused; connection revoked");
-        return Err(TokenError::OAuth(
-            "invalid_grant",
-            "the refresh token is invalid or expired",
-        ));
+        return Err(invalid());
     }
     if !active {
-        return Err(TokenError::OAuth(
-            "invalid_grant",
-            "the refresh token is invalid or expired",
-        ));
+        return Err(invalid());
     }
     let scopes = match f.scope.as_deref() {
         None => granted,
@@ -804,7 +811,7 @@ async fn exchange_refresh(s: &AppState, f: &TokenRequest) -> Result<Value, Token
         }
     };
     sqlx::query("UPDATE oauth_refresh_tokens SET used_at=now() WHERE token_hash=$1")
-        .bind(hash_api_token(presented))
+        .bind(&presented_hash)
         .execute(&mut *tx)
         .await?;
     let access = generate_api_token();

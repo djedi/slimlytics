@@ -73,8 +73,9 @@ pub async fn prune_expired_events(pool: &PgPool, batch_size: i64) -> Result<u64,
 }
 
 /// Remove OAuth state that can no longer be used: expired authorization codes, refresh
-/// tokens of ended connections (and rotated-out ones once reuse detection has lapsed), and
-/// client registrations that never completed an authorization.
+/// tokens of ended connections, and client registrations that never completed an
+/// authorization. Rotated-out refresh tokens of a live connection are kept for its whole
+/// lifetime: replaying any of them must still revoke the connection.
 pub async fn prune_oauth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let codes = sqlx::query("DELETE FROM oauth_codes WHERE expires_at<now()")
         .execute(pool)
@@ -83,7 +84,7 @@ pub async fn prune_oauth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let refresh = sqlx::query(
         "DELETE FROM oauth_refresh_tokens r USING api_tokens t
          WHERE t.id=r.api_token_id
-           AND (t.revoked_at IS NOT NULL OR t.expires_at<now() OR r.used_at<now()-interval '7 days')",
+           AND (t.revoked_at IS NOT NULL OR t.expires_at<now())",
     )
     .execute(pool)
     .await?

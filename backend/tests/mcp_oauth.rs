@@ -651,6 +651,61 @@ async fn cancel_returns_access_denied_to_the_agent() {
 
 #[tokio::test]
 #[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn maintenance_keeps_replay_detection_for_active_connections() {
+    let (pool, router) = setup().await;
+    let (email, _) = register_user(&router).await;
+    let client = register_client(&router).await;
+    let grant = connect(&router, &email, &client).await;
+    let stolen = grant["refresh_token"].as_str().unwrap().to_owned();
+    // An attacker rotates the stolen token and keeps the connection alive for weeks.
+    let rotated = value(refresh(&router, &stolen, &client).await).await;
+    let current_access = rotated["access_token"].as_str().unwrap();
+    sqlx::query(
+        "UPDATE oauth_refresh_tokens SET used_at=now()-interval '30 days' WHERE token_hash=$1",
+    )
+    .bind(slimlytics_backend::auth::hash_api_token(&stolen))
+    .execute(&pool)
+    .await
+    .unwrap();
+    slimlytics_backend::prune_oauth_state(&pool).await.unwrap();
+    // The legitimate client comes back with its old token: that must still revoke the thief.
+    let replay = refresh(&router, &stolen, &client).await;
+    assert_eq!(value(replay).await["error"], "invalid_grant");
+    assert_eq!(ping(&router, current_access).await, 401);
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn concurrent_replay_and_refresh_never_fail_with_a_server_error() {
+    let (_pool, router) = setup().await;
+    let client = register_client(&router).await;
+    for _ in 0..15 {
+        // Fresh account each round: logins are rate limited per email.
+        let (email, _) = register_user(&router).await;
+        let grant = connect(&router, &email, &client).await;
+        let old = grant["refresh_token"].as_str().unwrap().to_owned();
+        let rotated = value(refresh(&router, &old, &client).await).await;
+        let current = rotated["refresh_token"].as_str().unwrap().to_owned();
+        let access = rotated["access_token"].as_str().unwrap().to_owned();
+        let (replay, fresh) = tokio::join!(
+            refresh(&router, &old, &client),
+            refresh(&router, &current, &client)
+        );
+        assert_eq!(replay.status(), 400, "replay is rejected, not a deadlock");
+        assert!(
+            fresh.status() == 200 || fresh.status() == 400,
+            "refresh racing a replay must not error: {}",
+            fresh.status()
+        );
+        let fresh = value(fresh).await;
+        // Whatever the ordering, the replay must leave the connection revoked.
+        let survivor = fresh["access_token"].as_str().unwrap_or(&access).to_owned();
+        assert_eq!(ping(&router, &survivor).await, 401);
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
 async fn maintenance_prunes_abandoned_oauth_state() {
     let (pool, router) = setup().await;
     let (email, _) = register_user(&router).await;

@@ -3,8 +3,8 @@
 -- access_expires_at bounds the current short-lived access token. Personal tokens leave it NULL.
 ALTER TABLE api_tokens ADD COLUMN access_expires_at timestamptz;
 
--- Rotating refresh tokens. A used token is kept briefly so replaying it can be detected,
--- which revokes the whole connection (OAuth 2.1 section 4.3.1).
+-- Rotating refresh tokens. Used tokens are kept for the connection lifetime so replaying one
+-- is always detected, which revokes the whole connection (OAuth 2.1 section 4.3.1).
 CREATE TABLE oauth_refresh_tokens (
   token_hash bytea PRIMARY KEY CHECK (octet_length(token_hash) = 32),
   api_token_id uuid NOT NULL REFERENCES api_tokens(id) ON DELETE CASCADE,
