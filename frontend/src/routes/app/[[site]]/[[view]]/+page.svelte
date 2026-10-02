@@ -296,12 +296,18 @@
   async function confirmCheckout() {
     billingNotice = 'Thanks! Your subscription is being activated…';
     const before = billingStatus.plan?.id;
-    for (let attempt = 0; attempt < 8; attempt++) {
+    let activated = false;
+    for (let attempt = 0; attempt < 8 && !activated; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       await loadBilling();
-      if (billingStatus.plan?.id && billingStatus.plan.id !== before) break;
+      activated = Boolean(billingStatus.plan?.id && billingStatus.plan.id !== before);
     }
-    billingNotice = `You’re on the ${billingStatus.plan?.name ?? 'new'} plan.`;
+    if (!activated) {
+      // Keep ?billing=success so a reload checks again; the regular refresh also picks it up.
+      billingNotice = 'Payment received. Your plan is still activating — this can take a minute; refresh to check.';
+      return;
+    }
+    billingNotice = `You’re on the ${billingStatus.plan?.name} plan.`;
     // Drop ?billing=success only if the user is still on the page they returned to.
     if (page.url.searchParams.get('billing') === 'success' && !site) {
       replaceState(appHref(null, null, days), page.state);
