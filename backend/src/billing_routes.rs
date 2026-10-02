@@ -270,18 +270,30 @@ async fn checkout(
     // Retire earlier unpaid sessions first, so the reconciliation below sees any that completed
     // in the meantime. Expiring one that just completed fails; the sync then finds its
     // subscription and sends the user to the portal instead of a second checkout.
-    let open = stripe_get(
-        &state,
-        &stripe,
-        "/v1/checkout/sessions",
-        &[
+    // Every open session, following pagination.
+    let mut open: Vec<Value> = Vec::new();
+    loop {
+        let after = open
+            .last()
+            .and_then(|s| s["id"].as_str())
+            .map(str::to_owned);
+        let mut query = vec![
             ("customer", customer.as_str()),
             ("status", "open"),
             ("limit", "100"),
-        ],
-    )
-    .await?;
-    for session in open["data"].as_array().into_iter().flatten() {
+        ];
+        if let Some(after) = after.as_deref() {
+            query.push(("starting_after", after));
+        }
+        let page = stripe_get(&state, &stripe, "/v1/checkout/sessions", &query).await?;
+        let data = page["data"].as_array().cloned().unwrap_or_default();
+        let done = data.is_empty() || !page["has_more"].as_bool().unwrap_or(false);
+        open.extend(data);
+        if done {
+            break;
+        }
+    }
+    for session in &open {
         if let Some(id) = session["id"].as_str() {
             let path = format!("/v1/checkout/sessions/{id}/expire");
             if stripe_post(&state, &stripe, &path, &[], None)
@@ -376,9 +388,15 @@ async fn checkout(
     // pending cleared) only on a definitive answer, which Stripe caches against the key. An
     // attempt without one (timeout, 5xx, ...) is replayed with its exact price by the next
     // checkout, so Stripe returns the same session rather than a second payable one.
-    let (mut nonce, pending, since): (i64, Option<String>, Option<DateTime<Utc>>) = sqlx::query_as(
-        "SELECT checkout_nonce,checkout_pending_price,checkout_pending_since
-             FROM account_billing WHERE user_id=$1",
+    #[allow(clippy::type_complexity)]
+    let (mut nonce, pending, since, last_sent): (
+        i64,
+        Option<String>,
+        Option<DateTime<Utc>>,
+        Option<DateTime<Utc>>,
+    ) = sqlx::query_as(
+        "SELECT checkout_nonce,checkout_pending_price,checkout_pending_since,checkout_last_sent
+         FROM account_billing WHERE user_id=$1",
     )
     .bind(user)
     .fetch_one(&mut *lock)
@@ -397,13 +415,20 @@ async fn checkout(
     // Ok((url, portal)).
     let result: Result<(String, bool), ApiError> = async {
         if let Some(earlier) = pending {
-            // An attempt last sent over ten minutes ago has settled: the sweep and listing above
-            // already saw any session or subscription it made. Retire it without sending again,
-            // since a replay could itself create a session after that sweep.
-            let stale = since.is_none_or(|t| Utc::now() - t > chrono::Duration::minutes(10));
+            // An attempt that began over ten minutes ago and hasn't been sent in the last two has
+            // settled: the sweep and listing above already saw any session or subscription it
+            // made. Retire it without sending again, since a replay could itself create a
+            // session after that sweep. Replays don't extend the ten minutes, so a permanently
+            // cached failure can't block checkout forever.
+            let older = |t: Option<DateTime<Utc>>, minutes| {
+                t.is_none_or(|t| Utc::now() - t > chrono::Duration::minutes(minutes))
+            };
+            let stale = older(since, 10) && older(last_sent, 2);
             if !stale {
-                // Replaying counts as sending again, so it restarts the clock.
-                save_attempt(&mut lock, user, nonce, Some(&earlier)).await?;
+                sqlx::query("UPDATE account_billing SET checkout_last_sent=now() WHERE user_id=$1")
+                    .bind(user)
+                    .execute(&mut *lock)
+                    .await?;
                 match send_attempt(nonce, earlier.clone()).await {
                     // Still no definitive answer: keep it unresolved.
                     Err(_) => return Err(ApiError::BadRequest(
@@ -494,7 +519,8 @@ async fn save_attempt(
 ) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE account_billing SET checkout_nonce=$2, checkout_pending_price=$3,
-           checkout_pending_since=CASE WHEN $3::text IS NULL THEN NULL ELSE now() END
+           checkout_pending_since=CASE WHEN $3::text IS NULL THEN NULL ELSE now() END,
+           checkout_last_sent=CASE WHEN $3::text IS NULL THEN NULL ELSE now() END
          WHERE user_id=$1",
     )
     .bind(user)
