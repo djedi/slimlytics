@@ -81,6 +81,8 @@ pub struct AppState {
     identity_secret: Arc<Vec<u8>>,
     limiter: RateLimiter,
     login_limiter: RateLimiter,
+    /// Dynamic client registration, keyed by client IP so one source cannot block everyone.
+    oauth_register_limiter: RateLimiter,
     stream_tx: broadcast::Sender<StreamMessage>,
     internal_ips: Arc<Vec<IpAddr>>,
     access_token_ttl_seconds: i64,
@@ -101,6 +103,7 @@ impl AppState {
             identity_secret: Arc::new(identity_secret),
             limiter: RateLimiter::new(120, Duration::from_secs(60)),
             login_limiter: RateLimiter::new(10, Duration::from_secs(60)),
+            oauth_register_limiter: RateLimiter::new(20, Duration::from_secs(3600)),
             stream_tx,
             internal_ips: Arc::new(Vec::new()),
             access_token_ttl_seconds: 3600,
@@ -246,6 +249,7 @@ impl FromRequestParts<AppState> for AgentUser {
             let row: Option<(Uuid, Uuid, Vec<String>)> = sqlx::query_as(
                 "UPDATE api_tokens SET last_used_at=now()
                  WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() AND (oauth_resource IS NULL OR oauth_resource=$2)
+                   AND (access_expires_at IS NULL OR access_expires_at>now())
                  RETURNING user_id,id,scopes",
             )
             .bind(hash_api_token(value))

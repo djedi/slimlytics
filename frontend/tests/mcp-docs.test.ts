@@ -20,7 +20,9 @@ describe('public MCP documentation', () => {
     expect(document.body).toHaveTextContent('tracking_setup');
     expect(document.body).toHaveTextContent('scriptTestUrl');
     expect(document.body).toHaveTextContent('beaconTestUrl');
-    expect(document.body).toHaveTextContent(/30 days/);
+    expect(document.body).toHaveTextContent(/refresh automatically/);
+    expect(document.body).toHaveTextContent(/90 days without use/);
+    expect(document.body).not.toHaveTextContent(/Refresh tokens are not issued/);
     expect(document.body).toHaveTextContent(/consent, DNT, and GPC/);
     expect(screen.getByRole('link', { name: 'Documentation overview' })).toHaveAttribute('href', '/docs');
   });

@@ -71,3 +71,30 @@ pub async fn prune_expired_events(pool: &PgPool, batch_size: i64) -> Result<u64,
     .await?;
     Ok(result.rows_affected())
 }
+
+/// Remove OAuth state that can no longer be used: expired authorization codes, refresh
+/// tokens of ended connections (and rotated-out ones once reuse detection has lapsed), and
+/// client registrations that never completed an authorization.
+pub async fn prune_oauth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let codes = sqlx::query("DELETE FROM oauth_codes WHERE expires_at<now()")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    let refresh = sqlx::query(
+        "DELETE FROM oauth_refresh_tokens r USING api_tokens t
+         WHERE t.id=r.api_token_id
+           AND (t.revoked_at IS NOT NULL OR t.expires_at<now() OR r.used_at<now()-interval '7 days')",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    let clients = sqlx::query(
+        "DELETE FROM oauth_clients c
+         WHERE c.last_used_at IS NULL AND c.created_at<now()-interval '1 day'
+           AND NOT EXISTS (SELECT 1 FROM oauth_codes o WHERE o.client_id=c.id)",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(codes + refresh + clients)
+}

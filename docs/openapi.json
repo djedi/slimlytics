@@ -150,10 +150,17 @@
             "description": "Registered client metadata including client_id"
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
+            "description": "RFC 7591 error: invalid_redirect_uri or invalid_client_metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
           },
           "429": {
-            "description": "Registration rate limit exceeded"
+            "description": "Registration rate limit exceeded for this client IP"
           }
         },
         "requestBody": {
@@ -184,6 +191,25 @@
                     "enum": [
                       "none"
                     ]
+                  },
+                  "grant_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "authorization_code",
+                        "refresh_token"
+                      ]
+                    }
+                  },
+                  "response_types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "code"
+                      ]
+                    }
                   }
                 }
               }
@@ -213,6 +239,9 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "303": {
+            "description": "Redirect to the registered callback with error, error_description, state, and iss once the client and callback are verified"
           }
         },
         "parameters": [
@@ -303,7 +332,7 @@
         "security": [],
         "responses": {
           "303": {
-            "description": "Redirect to registered callback with one-time code and state"
+            "description": "Redirect to the registered callback with a one-time code (or error=access_denied when cancelled), state, and iss"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -403,8 +432,6 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "email",
-                  "password",
                   "csrf"
                 ],
                 "properties": {
@@ -416,6 +443,14 @@
                   },
                   "csrf": {
                     "type": "string"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "deny"
+                    ],
+                    "description": "deny cancels and returns access_denied to the agent; email and password are then not required"
                   }
                 }
               }
@@ -430,16 +465,23 @@
         "tags": [
           "MCP OAuth"
         ],
-        "summary": "Exchange a one-time code for a scoped MCP access token",
+        "summary": "Exchange a one-time code or a refresh token for a scoped MCP access token",
         "operationId": "exchangeOauthCode",
         "security": [],
         "responses": {
           "200": {
-            "description": "Bearer access token valid for 30 days; no refresh token",
+            "description": "Bearer access token valid for one hour, with a rotating refresh token",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "required": [
+                    "access_token",
+                    "token_type",
+                    "expires_in",
+                    "refresh_token",
+                    "scope"
+                  ],
                   "properties": {
                     "access_token": {
                       "type": "string"
@@ -453,6 +495,10 @@
                     "expires_in": {
                       "type": "integer"
                     },
+                    "refresh_token": {
+                      "type": "string",
+                      "description": "Single use. Rotates on every refresh; replaying a used one revokes the connection."
+                    },
                     "scope": {
                       "type": "string"
                     }
@@ -462,7 +508,14 @@
             }
           },
           "400": {
-            "description": "OAuth invalid_grant error"
+            "description": "RFC 6749 error: invalid_request, invalid_grant, invalid_scope, invalid_target, or unsupported_grant_type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -473,38 +526,47 @@
                 "type": "object",
                 "required": [
                   "grant_type",
-                  "code",
-                  "client_id",
-                  "redirect_uri",
-                  "code_verifier",
-                  "resource"
+                  "client_id"
                 ],
                 "properties": {
                   "grant_type": {
                     "type": "string",
                     "enum": [
-                      "authorization_code"
+                      "authorization_code",
+                      "refresh_token"
                     ]
-                  },
-                  "code": {
-                    "type": "string"
                   },
                   "client_id": {
                     "type": "string",
                     "format": "uuid"
                   },
+                  "code": {
+                    "type": "string",
+                    "description": "Required for authorization_code"
+                  },
                   "redirect_uri": {
                     "type": "string",
-                    "format": "uri"
+                    "format": "uri",
+                    "description": "Required for authorization_code"
                   },
                   "code_verifier": {
                     "type": "string",
                     "minLength": 43,
-                    "maxLength": 128
+                    "maxLength": 128,
+                    "description": "Required for authorization_code"
+                  },
+                  "refresh_token": {
+                    "type": "string",
+                    "description": "Required for refresh_token"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "description": "refresh_token only: keep or narrow the granted scopes"
                   },
                   "resource": {
                     "type": "string",
-                    "format": "uri"
+                    "format": "uri",
+                    "description": "Optional; must equal the MCP URL when present"
                   }
                 }
               }
@@ -4749,6 +4811,20 @@
       }
     },
     "schemas": {
+      "OAuthError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_description": {
+            "type": "string"
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": [
