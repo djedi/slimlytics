@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiClient, type SessionStore } from '../src/lib/api';
+import { afterEach, beforeEach } from 'vitest';
+import { ApiClient, sessionTiming, type SessionStore } from '../src/lib/api';
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -28,6 +29,8 @@ function memoryStore(token: string, refreshToken: string) {
 }
 
 describe('ApiClient sessions', () => {
+  beforeEach(() => { sessionTiming.settleMs = 0; });
+  afterEach(() => { sessionTiming.settleMs = 1500; });
   it('refreshes an expired access token once and retries the request', async () => {
     const fetcher = vi
       .fn()
@@ -268,5 +271,38 @@ describe('ApiClient sessions', () => {
     await expect(api.sites()).resolves.toEqual([]);
     expect(store.state).toEqual({ token: t2, refreshToken: 'slrt_2' });
     expect(fetcher).toHaveBeenCalledWith('/api/auth/refresh', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'slrt_1' }) }));
+  });
+
+  it('adopts the winning refresh from another tab when it lost the race without Web Locks', async () => {
+    sessionTiming.settleMs = 5;
+    const store = memoryStore(jwt('user-a'), 'slrt_0');
+    const winner = jwt('user-a');
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/auth/refresh')) {
+        // The other tab rotated first; its result lands just after this 401.
+        setTimeout(() => Object.assign(store.state, { token: winner, refreshToken: 'slrt_1' }), 1);
+        return json({}, 401);
+      }
+      const auth = (init?.headers as Record<string, string>).authorization;
+      return auth === `Bearer ${winner}` ? json([]) : json({}, 401);
+    });
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    await expect(api.sites()).resolves.toEqual([]);
+    expect(store.cleared).toBe(false);
+    expect(store.state.refreshToken).toBe('slrt_1');
+  });
+
+  it('does not treat a failed passkey ceremony as an expired session', async () => {
+    const fetcher = vi.fn().mockResolvedValue(json({ error: { code: 'unauthorized', message: 'authentication required' } }, 401));
+    const store = memoryStore(jwt('user-a'), 'slrt_a');
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    const unauthorized = vi.fn();
+    api.onUnauthorized = unauthorized;
+    await expect(api.finishStepUp('c1', {})).rejects.toMatchObject({ status: 401 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(unauthorized).not.toHaveBeenCalled();
+    expect(store.cleared).toBe(false);
   });
 });

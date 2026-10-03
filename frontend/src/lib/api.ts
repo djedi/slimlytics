@@ -57,8 +57,11 @@ let localQueue: Promise<unknown> = Promise.resolve();
  * page, so two refreshes never spend the same refresh token and a refresh that is still in
  * flight can never restore a session after sign-out.
  */
+function sessionLocks() {
+  return typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { locks?: LockManager }).locks;
+}
 async function withSessionLock<T>(task: () => Promise<T>): Promise<T> {
-  const locks = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { locks?: LockManager }).locks;
+  const locks = sessionLocks();
   if (locks) return locks.request(SESSION_LOCK, task);
   const run = localQueue.then(task, task);
   localQueue = run.catch(() => undefined);
@@ -78,8 +81,11 @@ export function tokenSubject(token: string): string | undefined {
   }
 }
 
-// Requests that must never trigger a refresh-and-retry.
-const sessionlessPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout', '/auth/passkey/'];
+// Requests that must never trigger a refresh-and-retry. Single-use WebAuthn ceremonies
+// return 401 for a failed or expired assertion, which says nothing about the session.
+const sessionlessPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout', '/auth/passkey/', '/auth/mfa/finish', '/account/passkeys/register/finish'];
+/** How long to wait for another tab's refresh to land when Web Locks are unavailable. */
+export const sessionTiming = { settleMs: 1500 };
 export interface ReportRow { label: string; value: number; visitors?: number; secondary?: string; change?: number }
 export interface Visitor { id: string; country: string; region?: string; city?: string; device?: string; browser?: string; page?: string; lastSeen?: string; sessions?: number }
 export interface LiveEvent { id: string; type: string; page: string; visitorId?: string; country?: string; city?: string; timestamp: string; referrer?: string }
@@ -269,6 +275,18 @@ export class ApiClient {
       body: JSON.stringify({ refreshToken: current.refreshToken })
     });
     if (response.status === 400 || response.status === 401) {
+      // Without Web Locks another tab may have just won this rotation (a benign race the
+      // server refuses without revoking); give its result a moment to land and adopt it.
+      if (!sessionLocks() && sessionTiming.settleMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, sessionTiming.settleMs));
+        const settled = store.load();
+        const subject = tokenSubject(failedToken);
+        if (settled.refreshToken && settled.refreshToken !== current.refreshToken) {
+          if (!subject || subject !== tokenSubject(settled.token)) return false;
+          this.token = settled.token;
+          return true;
+        }
+      }
       if (store.load().refreshToken === current.refreshToken) store.clear();
       return false;
     }

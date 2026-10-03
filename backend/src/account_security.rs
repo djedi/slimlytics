@@ -326,6 +326,17 @@ async fn finish_registration(
         .bind(signed_in.user_id)
         .execute(&mut *tx)
         .await?;
+    // The session may have been revoked (e.g. by a passkey reset) while this ceremony ran.
+    let live: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_sessions
+         WHERE id=$1 AND revoked_at IS NULL AND expires_at>now())",
+    )
+    .bind(signed_in.session_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !live {
+        return Err(ApiError::Unauthorized);
+    }
     let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM user_passkeys WHERE user_id=$1")
         .bind(signed_in.user_id)
         .fetch_one(&mut *tx)

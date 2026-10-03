@@ -24,6 +24,8 @@ SELECT id AS user_id, email AS user_email FROM users WHERE lower(email) = lower(
   \quit
 \endif
 BEGIN;
+-- Lock the account first, as sign-in and enrollment do, so none can slip in mid-reset.
+SELECT 1 FROM users WHERE id = :'user_id' FOR NO KEY UPDATE;
 DELETE FROM user_passkeys WHERE user_id = :'user_id';
 UPDATE user_sessions SET revoked_at = now() WHERE user_id = :'user_id' AND revoked_at IS NULL;
 INSERT INTO admin_audit_log(actor_email, action, target_user_id, target_email)

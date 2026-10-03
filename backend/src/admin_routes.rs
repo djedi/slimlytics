@@ -268,6 +268,12 @@ async fn user_detail(
 /// Ends every way the account can act: browser sessions, API tokens, MCP connections, and
 /// MCP authorization codes that were approved but not yet exchanged.
 async fn revoke_access(tx: &mut Transaction<'_, Postgres>, user: Uuid) -> Result<(), ApiError> {
+    // Account row first, the same order credential issuance uses, so a sign-in or OAuth
+    // exchange racing this either finishes first (and is revoked here) or waits and fails.
+    sqlx::query("SELECT 1 FROM users WHERE id=$1 FOR NO KEY UPDATE")
+        .bind(user)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query(
         "UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL",
     )
