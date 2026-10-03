@@ -220,6 +220,11 @@ impl ApiClient {
             .token)
     }
 
+    /// Ends a password session once it has been exchanged for an API token.
+    pub async fn logout(&self) -> Result<()> {
+        self.request_empty(Method::POST, "/api/auth/logout").await
+    }
+
     pub async fn create_api_token(
         &self,
         session_token: &str,

@@ -5,7 +5,9 @@ use slimlytics_backend::{
     app,
     briefs::process_due_reports,
     enrichment::GeoIp,
-    maintenance::{prune_expired_events, prune_oauth_state, refresh_daily_rollups},
+    maintenance::{
+        prune_auth_state, prune_expired_events, prune_oauth_state, refresh_daily_rollups,
+    },
     AppState,
 };
 use sqlx::postgres::PgPoolOptions;
@@ -78,6 +80,11 @@ async fn main() -> Result<()> {
                 Ok(0) => {}
                 Ok(removed) => tracing::info!(removed, "stale OAuth state pruned"),
                 Err(error) => tracing::error!(%error, "OAuth state pruning failed"),
+            }
+            match prune_auth_state(&maintenance_pool).await {
+                Ok(0) => {}
+                Ok(removed) => tracing::info!(removed, "stale sign-in state pruned"),
+                Err(error) => tracing::error!(%error, "sign-in state pruning failed"),
             }
         }
     });

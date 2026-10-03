@@ -19,6 +19,8 @@ Do not open a public issue containing an exploitable vulnerability or real crede
 - Keep Rust, Node, container base images, and PostgreSQL patched.
 - Review reverse-proxy trusted-header settings before enabling `TRUST_PROXY`.
 - Keep dashboard authentication separate from public collection write keys.
+- Set `SLIMLYTICS_BASE_URL` to the exact public HTTPS origin; passkeys are bound to it.
+- Grant admin access only with `scripts/admin-grant.sh`, and have every admin add a passkey. The admin portal requires a passkey check within the last 12 hours, and every admin action is audited.
 
 ## Secret handling
 

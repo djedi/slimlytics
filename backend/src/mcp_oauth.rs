@@ -551,16 +551,8 @@ async fn approve(
         ));
     }
     let email = f.email.clone();
-    let session = match login(
-        State(s.clone()),
-        Json(Credentials {
-            email: f.email,
-            password: f.password,
-        }),
-    )
-    .await
-    {
-        Ok(Json(session)) => session,
+    let user = match authenticate_password(&s, &f.email, &f.password).await {
+        Ok(user) => user,
         // Show credential problems on the page instead of a bare JSON error.
         Err(error @ (ApiError::Unauthorized | ApiError::RateLimited)) => {
             let (status, message) = match error {
@@ -588,9 +580,6 @@ async fn approve(
         }
         Err(error) => return Err(error),
     };
-    let user = verify_token(&session.token, &s.jwt_secret)
-        .map_err(|_| ApiError::Unauthorized)?
-        .sub;
     let code = generate_api_token();
     sqlx::query("INSERT INTO oauth_codes(code_hash,client_id,user_id,redirect_uri,challenge,scopes) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(hash_api_token(&code))
@@ -702,13 +691,28 @@ async fn exchange_code(s: &AppState, f: &TokenRequest) -> Result<Value, TokenErr
     }
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let mut tx = s.pool.begin().await?;
+    // Lock the account before the code, the same order disabling uses (account row, then
+    // its codes and tokens), so a connection can never be minted after a disable commits.
+    let owner: Option<Uuid> =
+        sqlx::query_scalar("SELECT user_id FROM oauth_codes WHERE code_hash=$1")
+            .bind(hash_api_token(code))
+            .fetch_optional(&mut *tx)
+            .await?;
+    let owner = owner.ok_or(TokenError::OAuth(
+        "invalid_grant",
+        "the authorization code is invalid or expired",
+    ))?;
+    if lock_enabled_user(&mut tx, owner, false).await.is_err() {
+        return Err(invalid);
+    }
     let row: Option<(Uuid, Vec<String>)> = sqlx::query_as(
-        "DELETE FROM oauth_codes WHERE code_hash=$1 AND client_id=$2 AND redirect_uri=$3 AND challenge=$4 AND expires_at>now() RETURNING user_id,scopes",
+        "DELETE FROM oauth_codes WHERE code_hash=$1 AND client_id=$2 AND redirect_uri=$3 AND challenge=$4 AND user_id=$5 AND expires_at>now() RETURNING user_id,scopes",
     )
     .bind(hash_api_token(code))
     .bind(client)
     .bind(redirect_uri)
     .bind(challenge)
+    .bind(owner)
     .fetch_optional(&mut *tx)
     .await?;
     let (user, scopes) = row.ok_or(invalid)?;
@@ -765,8 +769,18 @@ async fn exchange_refresh(s: &AppState, f: &TokenRequest) -> Result<Value, Token
     .fetch_optional(&mut *tx)
     .await?;
     let connection = connection.ok_or_else(invalid)?;
+    // Account row first, as disabling does, so a refresh cannot renew a revoked account.
+    let owner: Option<Uuid> = sqlx::query_scalar("SELECT user_id FROM api_tokens WHERE id=$1")
+        .bind(connection)
+        .fetch_optional(&mut *tx)
+        .await?;
+    match owner {
+        Some(owner) if lock_enabled_user(&mut tx, owner, false).await.is_ok() => {}
+        _ => return Err(invalid()),
+    }
     let grant: Option<(Vec<String>, bool)> = sqlx::query_as(
-        "SELECT scopes,(revoked_at IS NULL AND expires_at>now()) FROM api_tokens WHERE id=$1 FOR UPDATE",
+        "SELECT t.scopes,(t.revoked_at IS NULL AND t.expires_at>now() AND u.disabled_at IS NULL)
+         FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 FOR UPDATE OF t",
     )
     .bind(connection)
     .fetch_optional(&mut *tx)

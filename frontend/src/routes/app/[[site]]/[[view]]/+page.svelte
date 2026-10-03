@@ -20,6 +20,7 @@
     Globe2,
     LayoutDashboard,
     LogOut,
+    KeyRound,
     Menu,
     Monitor,
     Moon,
@@ -31,6 +32,7 @@
     Search,
     Send,
     Settings,
+    ShieldCheck,
     Timer,
     Smartphone,
     MapPin,
@@ -42,6 +44,7 @@
   } from '@lucide/svelte';
   import {
     ApiClient,
+    browserSession,
     demoReport,
     type AntiAdblockSettings,
     type Anomaly,
@@ -77,7 +80,7 @@
   const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, demo);
   // An expired or revoked session must clear the stored token, or /login would bounce straight back here.
   api.onUnauthorized = () => {
-    localStorage.removeItem('slimlytics_token');
+    api.forgetSession();
     source?.close();
     void goto('/login');
   };
@@ -158,18 +161,27 @@
   let siteName = $state('');
   let siteDomain = $state('');
   let siteError = $state('');
-  let token = '';
+  let isAdmin = $state(false);
+  let initials = $state('');
 
   onMount(() => {
-    token = localStorage.getItem('slimlytics_token') ?? '';
     theme = (localStorage.getItem('slimlytics_theme') ?? 'system') as Theme;
-    if (!token && !demo) {
+    api.useSession(browserSession);
+    if (!api.accessToken && !demo) {
       void goto('/login');
       return;
     }
-    api.setToken(token || 'demo');
+    if (demo) api.setToken('demo');
     ready = true;
     void loadSites();
+    if (!demo)
+      void api
+        .me()
+        .then((account) => {
+          isAdmin = account.isAdmin ?? false;
+          initials = account.email.slice(0, 2).toUpperCase();
+        })
+        .catch(() => {});
     // Keep stats fresh while the dashboard stays open (e.g. phone browsing + desktop dashboard).
     const refresh = () => {
       if (document.visibilityState !== 'visible' || loading) return;
@@ -241,9 +253,9 @@
     void goto(appHref(site?.id, site ? (view as SiteView) : null, next), { keepFocus: true });
   }
 
-  function logout() {
-    localStorage.removeItem('slimlytics_token');
+  async function logout() {
     source?.close();
+    await api.logout();
     void goto('/');
   }
   // Hosted-plan billing; stays { enabled: false } on self-hosted installs.
@@ -465,7 +477,8 @@
     }
     source?.close();
     streamState = 'connecting';
-    source = new EventSource(api.streamUrl(site.id, token));
+    const streamToken = api.accessToken;
+    source = new EventSource(api.streamUrl(site.id, streamToken));
     const receive = ({ data }: MessageEvent<string>) => {
       try {
         const item = JSON.parse(data) as LiveEvent;
@@ -482,8 +495,22 @@
     source.addEventListener('event', receive as EventListener);
     // Browsers reconnect EventSource automatically; only tear down when we mean to.
     source.onerror = () => {
-      if (paused || view !== 'spy') source?.close();
-      else streamState = 'reconnecting';
+      if (paused || view !== 'spy') return void source?.close();
+      streamState = 'reconnecting';
+      // An expired access token closes the stream for good: renew it, then reconnect.
+      if (source?.readyState === EventSource.CLOSED)
+        void api
+          .refreshSession(streamToken)
+          .then((renewed) => {
+            if (!renewed) api.onUnauthorized?.();
+            else if (view === 'spy' && !paused) connectSpy();
+          })
+          // A network or server hiccup: try the stream again shortly.
+          .catch(() =>
+            window.setTimeout(() => {
+              if (view === 'spy' && !paused && source?.readyState === EventSource.CLOSED) connectSpy();
+            }, 5000)
+          );
     };
   }
   // Visitors who arrived after the page loaded aren't in `visitors` yet; describe them
@@ -683,7 +710,11 @@
           >{sites.reduce((sum, current) => sum + (current.overview?.currentOnline ?? 0), 0)} online
           now
         </div>
-        <button onclick={logout}><LogOut size={16} />Sign out</button>
+        <a class="sidebar-link" href="/account"><KeyRound size={16} aria-hidden="true" />Account security</a>
+        {#if isAdmin}
+          <a class="sidebar-link" href="/admin"><ShieldCheck size={16} aria-hidden="true" />Admin</a>
+        {/if}
+        <button onclick={() => void logout()}><LogOut size={16} />Sign out</button>
         <a class="geo-credit" href="https://db-ip.com" target="_blank" rel="noopener noreferrer"
           >IP geolocation by DB-IP</a
         >
@@ -709,7 +740,7 @@
               ><option value={90}>Last 90 days</option></select
             ></label
           ><button class="icon-button" aria-label="Notifications"><Bell size={18} /></button
-          ><button class="avatar" aria-label="Account menu">DU</button>
+          ><a class="avatar" href="/account" aria-label="Account security">{initials || 'ME'}</a>
         </div>
       </header>
       {#if error}

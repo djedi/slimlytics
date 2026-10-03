@@ -17,4 +17,4 @@ pub mod traffic;
 pub mod webhooks;
 
 pub use app::{app, AppState};
-pub use maintenance::prune_oauth_state;
+pub use maintenance::{prune_auth_state, prune_oauth_state};

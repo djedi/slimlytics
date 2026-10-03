@@ -7,6 +7,9 @@ pub enum ApiError {
     Unauthorized,
     #[error("forbidden")]
     Forbidden,
+    /// The action needs a session that recently verified a passkey.
+    #[error("verify with a passkey to continue")]
+    MfaRequired,
     #[error("not found")]
     NotFound,
     #[error("invalid request: {0}")]
@@ -37,6 +40,7 @@ impl IntoResponse for ApiError {
         let (status, code) = match self {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            Self::MfaRequired => (StatusCode::FORBIDDEN, "mfa_required"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),

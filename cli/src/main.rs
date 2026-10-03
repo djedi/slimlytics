@@ -206,7 +206,10 @@ async fn auth_command(
             let session = client.login(&args.email, &password).await?;
             let created = client
                 .create_api_token(&session, &args.token_name, args.expires_in_days)
-                .await?;
+                .await;
+            // The browser-style session is only needed to mint the API token; end it either way.
+            let _ = ApiClient::new(&api_url, Some(session))?.logout().await;
+            let created = created?;
             let auth = StoredAuth {
                 api_url: api_url.clone(),
                 token: created.token,

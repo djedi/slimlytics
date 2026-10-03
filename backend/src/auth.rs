@@ -24,6 +24,9 @@ pub struct Claims {
     pub sub: Uuid,
     pub exp: usize,
     pub iat: usize,
+    /// The sign-in session this access token belongs to; revoking it revokes the token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<Uuid>,
 }
 
 pub fn hash_password(password: &str) -> Result<String, AuthError> {
@@ -42,6 +45,25 @@ pub fn verify_password(password: &str, encoded: &str) -> Result<bool, AuthError>
 }
 
 pub fn issue_token(user_id: Uuid, secret: &str, ttl_seconds: i64) -> Result<String, AuthError> {
+    sign(user_id, None, secret, ttl_seconds)
+}
+
+/// A short-lived access token bound to a revocable sign-in session.
+pub fn issue_session_token(
+    user_id: Uuid,
+    session_id: Uuid,
+    secret: &str,
+    ttl_seconds: i64,
+) -> Result<String, AuthError> {
+    sign(user_id, Some(session_id), secret, ttl_seconds)
+}
+
+fn sign(
+    user_id: Uuid,
+    sid: Option<Uuid>,
+    secret: &str,
+    ttl_seconds: i64,
+) -> Result<String, AuthError> {
     let now = Utc::now().timestamp();
     Ok(encode(
         &Header::default(),
@@ -49,6 +71,7 @@ pub fn issue_token(user_id: Uuid, secret: &str, ttl_seconds: i64) -> Result<Stri
             sub: user_id,
             iat: now as usize,
             exp: (now + ttl_seconds) as usize,
+            sid,
         },
         &EncodingKey::from_secret(secret.as_bytes()),
     )?)
@@ -67,6 +90,13 @@ pub fn generate_api_token() -> String {
     let mut bytes = [0_u8; 32];
     TokenRng.fill_bytes(&mut bytes);
     format!("slyt_{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// An opaque refresh token. Only its SHA-256 hash (see [`hash_api_token`]) is stored.
+pub fn generate_refresh_token() -> String {
+    let mut bytes = [0_u8; 32];
+    TokenRng.fill_bytes(&mut bytes);
+    format!("slrt_{}", URL_SAFE_NO_PAD.encode(bytes))
 }
 
 pub fn hash_api_token(token: &str) -> Vec<u8> {

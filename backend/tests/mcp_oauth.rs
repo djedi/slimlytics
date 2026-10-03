@@ -785,3 +785,44 @@ async fn maintenance_prunes_abandoned_oauth_state() {
         "only never-used registrations are pruned"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn disabled_accounts_cannot_exchange_codes_or_refresh() {
+    let (pool, router) = setup().await;
+    let (email, _) = register_user(&router).await;
+    let client = register_client(&router).await;
+    let grant = connect(&router, &email, &client).await;
+    let refresh_token = grant["refresh_token"].as_str().unwrap();
+
+    // Approve a second connection but hold its code until after the account is disabled.
+    let verifier = "d".repeat(43);
+    let path = valid_authorize_path(&client, &verifier);
+    let page = get(&router, &path).await;
+    let cookie = csrf_cookie(&page);
+    let csrf = cookie.strip_prefix("slyt_oauth_csrf=").unwrap().to_owned();
+    let approval = submit(
+        &router,
+        &path,
+        &cookie,
+        &[
+            ("email", &email),
+            ("password", "long-enough-password"),
+            ("csrf", &csrf),
+        ],
+    )
+    .await;
+    let code = param(&location(&approval), "code").unwrap();
+
+    sqlx::query("UPDATE users SET disabled_at=now() WHERE email=$1")
+        .bind(&email)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let exchanged = exchange(&router, &code, &client, &verifier).await;
+    assert_eq!(exchanged.status(), 400);
+    assert_eq!(value(exchanged).await["error"], "invalid_grant");
+    let refreshed = refresh(&router, refresh_token, &client).await;
+    assert_eq!(refreshed.status(), 400);
+    assert_eq!(value(refreshed).await["error"], "invalid_grant");
+}

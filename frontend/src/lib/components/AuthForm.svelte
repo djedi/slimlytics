@@ -2,8 +2,9 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { env } from '$env/dynamic/public';
-  import { BarChart3, CircleDot, Eye, EyeOff, ShieldCheck, TrendingUp, Zap } from '@lucide/svelte';
-  import { ApiClient } from '$lib/api';
+  import { BarChart3, CircleDot, Eye, EyeOff, KeyRound, ShieldCheck, TrendingUp, Zap } from '@lucide/svelte';
+  import { ApiClient, browserSession } from '$lib/api';
+  import { getPasskey, passkeyErrorMessage, passkeysSupported } from '$lib/webauthn';
 
   type AuthMode = 'login' | 'register';
 
@@ -18,14 +19,13 @@
   let passwordVisible = $state(false);
   let authError = $state('');
   let authBusy = $state(false);
+  let canUsePasskey = $state(false);
 
   onMount(() => {
-    const token = localStorage.getItem('slimlytics_token') ?? '';
-    if (demo) void goto('/app');
-    else if (token) {
-      api.setToken(token);
-      void continueAfterAuth();
-    }
+    canUsePasskey = !demo && passkeysSupported();
+    if (demo) return void goto('/app');
+    api.useSession(browserSession);
+    if (api.accessToken) void continueAfterAuth();
   });
 
   // Keeps a validated ?plan / ?interval when switching between sign-in and registration.
@@ -69,13 +69,28 @@
         mode === 'login'
           ? await api.login(email, password)
           : await api.register(email, password, name);
-      const token = response.accessToken ?? response.token ?? '';
-      if (!token) throw new Error('The server did not return an access token.');
-      localStorage.setItem('slimlytics_token', token);
-      api.setToken(token);
+      if (!(response.accessToken ?? response.token)) throw new Error('The server did not return an access token.');
       await continueAfterAuth();
     } catch (reason) {
       authError = reason instanceof Error ? reason.message : 'Could not sign in.';
+    } finally {
+      authBusy = false;
+    }
+  }
+
+  async function passkeySignIn() {
+    authBusy = true;
+    authError = '';
+    try {
+      const { challengeId, options } = await api.startPasskeySignIn();
+      const credential = await getPasskey(options);
+      await api.finishPasskeySignIn(challengeId, credential);
+      await continueAfterAuth();
+    } catch (reason) {
+      authError =
+        reason instanceof Error && 'status' in reason && reason.status === 401
+          ? 'That passkey is not linked to an active Slimlytics account.'
+          : passkeyErrorMessage(reason);
     } finally {
       authBusy = false;
     }
@@ -189,6 +204,12 @@
           {authBusy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
         </button>
       </form>
+      {#if mode === 'login' && canUsePasskey}
+        <div class="divider"><span>or</span></div>
+        <button class="secondary wide" type="button" disabled={authBusy} onclick={() => void passkeySignIn()}>
+          <KeyRound size={17} aria-hidden="true" /> Sign in with a passkey
+        </button>
+      {/if}
       <p class="auth-switch">
         {mode === 'login' ? 'New to Slimlytics?' : 'Already have an account?'}
         <a href={switchHref || (mode === 'login' ? '/register' : '/login')}>

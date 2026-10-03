@@ -106,3 +106,19 @@ pub async fn prune_oauth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
     .rows_affected();
     Ok(codes + refresh + clients)
 }
+
+/// Remove expired WebAuthn challenges and sign-in sessions that ended over 30 days ago.
+pub async fn prune_auth_state(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let challenges = sqlx::query("DELETE FROM webauthn_challenges WHERE expires_at<now()")
+        .execute(pool)
+        .await?
+        .rows_affected();
+    let sessions = sqlx::query(
+        "DELETE FROM user_sessions
+         WHERE coalesce(revoked_at, expires_at) < now()-interval '30 days'",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(challenges + sessions)
+}

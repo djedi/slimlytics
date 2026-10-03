@@ -17,9 +17,32 @@ Account, token, site, goal, and collection request/response objects use camelCas
 
 - `POST /api/auth/register`
 - `POST /api/auth/login`
-- `GET /api/auth/me`
+- `POST /api/auth/refresh` — exchange a refresh token for a new access token and a rotated refresh token
+- `POST /api/auth/logout` — end the session named by the Bearer token and/or `{ "refreshToken": "..." }` (works after the access token expires)
+- `POST /api/auth/passkey/start`, `POST /api/auth/passkey/finish` — usernameless passkey sign-in
+- `POST /api/auth/mfa/start`, `POST /api/auth/mfa/finish` — verify a passkey from an existing session
+- `GET /api/auth/me` — includes `isAdmin`, `passkeyCount`, and `mfaVerified`
 
-Passwords are hashed with Argon2. Access tokens are short-lived JWTs signed with `JWT_SECRET`.
+Passwords are hashed with Argon2. Sign-in returns `{ token, refreshToken, expiresIn }`. The access token is a short-lived JWT signed with `JWT_SECRET` (`ACCESS_TOKEN_TTL_SECONDS`, one hour by default) and bound to a server-side session, so signing out, revoking a device, or disabling the account ends it immediately. Access tokens without a session (issued before sessions existed) are refused. The `slrt_...` refresh token is stored only as a SHA-256 digest and is single use: each refresh returns a new one. A session stays signed in for 30 days after its last refresh and at most 365 days. Every rotated-out refresh token is remembered for the session's lifetime; replaying any of them more than a minute after it was used is treated as theft and ends the session.
+
+Passkeys use WebAuthn with the server's `SLIMLYTICS_BASE_URL` as the relying party, so they only work when the dashboard is opened at that origin. Signing in with a passkey, or verifying one from a password session, marks the session as MFA-verified for 12 hours.
+
+## Account security
+
+- `GET /api/account/sessions`, `DELETE /api/account/sessions/{sessionId}` — signed-in devices
+- `GET /api/account/passkeys`, `DELETE /api/account/passkeys/{passkeyId}`
+- `POST /api/account/passkeys/register/start`, `POST /api/account/passkeys/register/finish`
+
+These accept browser sessions only. The first passkey requires `currentPassword`. Once any passkey exists, adding or removing one requires an MFA-verified session, so a stolen password alone can never replace someone's passkeys. Passkeys are created as discoverable credentials so they work for usernameless sign-in. Someone who loses every passkey signs in with their password and an operator runs `scripts/passkey-reset.sh EMAIL` after confirming their identity.
+
+## Admin
+
+- `GET /api/admin/overview`, `GET /api/admin/users?q=&limit=&offset=`, `GET /api/admin/users/{userId}`
+- `POST /api/admin/users/{userId}/disable`, `/enable`, `/revoke-sessions`
+- `DELETE /api/admin/users/{userId}` with `{ "confirmEmail": "..." }`
+- `GET /api/admin/audit`
+
+Admin routes need an admin account **and** a session that verified a passkey within 12 hours; otherwise they return `403` with error code `mfa_required`. API tokens are always refused. Admin status is granted only out of band with `scripts/admin-grant.sh EMAIL` (or `--revoke`), never through the API. Admins cannot change their own account or other admins from the portal. Disabling an account revokes its sessions, API tokens, MCP connections, and pending MCP authorization codes, and OAuth token exchange refuses disabled accounts. Deleting one also deletes sites it alone owns and is refused while a Stripe subscription is active. Every action is written to the admin audit log.
 
 ## Account API tokens
 

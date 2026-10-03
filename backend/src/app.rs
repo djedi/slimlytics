@@ -1,3 +1,7 @@
+#[path = "account_security.rs"]
+mod account_security;
+#[path = "admin_routes.rs"]
+mod admin_routes;
 #[path = "billing_routes.rs"]
 mod billing_routes;
 #[path = "mcp_oauth.rs"]
@@ -9,8 +13,8 @@ use crate::{
         required_scope, validate_idempotency_key, validate_scopes, ANALYTICS_READ, SITES_READ,
     },
     auth::{
-        generate_api_token, hash_api_token, hash_password, issue_token, verify_password,
-        verify_token,
+        generate_api_token, generate_refresh_token, hash_api_token, hash_password,
+        issue_session_token, verify_password, verify_token,
     },
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
@@ -83,6 +87,8 @@ pub struct AppState {
     login_limiter: RateLimiter,
     /// Dynamic client registration, keyed by client IP so one source cannot block everyone.
     oauth_register_limiter: RateLimiter,
+    /// Unauthenticated passkey sign-in challenges, keyed by client IP.
+    passkey_limiter: RateLimiter,
     stream_tx: broadcast::Sender<StreamMessage>,
     internal_ips: Arc<Vec<IpAddr>>,
     access_token_ttl_seconds: i64,
@@ -104,6 +110,7 @@ impl AppState {
             limiter: RateLimiter::new(120, Duration::from_secs(60)),
             login_limiter: RateLimiter::new(10, Duration::from_secs(60)),
             oauth_register_limiter: RateLimiter::new(20, Duration::from_secs(3600)),
+            passkey_limiter: RateLimiter::new(30, Duration::from_secs(60)),
             stream_tx,
             internal_ips: Arc::new(Vec::new()),
             access_token_ttl_seconds: 3600,
@@ -189,9 +196,61 @@ impl FromRequestParts<AppState> for CurrentUser {
             }
             return Ok(Self(user));
         }
-        verify_token(value, &state.jwt_secret)
-            .map(|claims| Self(claims.sub))
-            .map_err(|_| ApiError::Unauthorized)
+        Ok(Self(authenticate_jwt(state, value).await?.user_id))
+    }
+}
+
+/// A verified browser/CLI sign-in (never an API token).
+#[derive(Clone, Copy)]
+struct SignedIn {
+    user_id: Uuid,
+    /// `None` only for access tokens issued before sessions existed.
+    session_id: Option<Uuid>,
+}
+
+fn bearer(headers: &HeaderMap) -> Result<&str, ApiError> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or(ApiError::Unauthorized)
+}
+
+/// Verifies a session JWT and that its session is live and its account enabled, so signing
+/// out, revoking a device, or disabling an account takes effect immediately. Tokens without a
+/// session (issued before sessions existed) are refused: nothing could revoke them early.
+async fn authenticate_jwt(state: &AppState, value: &str) -> Result<SignedIn, ApiError> {
+    let claims = verify_token(value, &state.jwt_secret).map_err(|_| ApiError::Unauthorized)?;
+    let session = claims.sid.ok_or(ApiError::Unauthorized)?;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_sessions s JOIN users u ON u.id=s.user_id
+         WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now()
+           AND u.disabled_at IS NULL)",
+    )
+    .bind(session)
+    .bind(claims.sub)
+    .fetch_one(&state.pool)
+    .await?;
+    if !active {
+        return Err(ApiError::Unauthorized);
+    }
+    Ok(SignedIn {
+        user_id: claims.sub,
+        session_id: Some(session),
+    })
+}
+
+impl FromRequestParts<AppState> for SignedIn {
+    type Rejection = ApiError;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let value = bearer(&parts.headers)?;
+        if value.starts_with("slyt_") {
+            return Err(ApiError::Forbidden);
+        }
+        authenticate_jwt(state, value).await
     }
 }
 
@@ -203,15 +262,11 @@ impl FromRequestParts<AppState> for SessionUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let value = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or(ApiError::Unauthorized)?;
-        verify_token(value, &state.jwt_secret)
-            .map(|claims| Self(claims.sub))
-            .map_err(|_| ApiError::Unauthorized)
+        Ok(Self(
+            authenticate_jwt(state, bearer(&parts.headers)?)
+                .await?
+                .user_id,
+        ))
     }
 }
 
@@ -263,9 +318,7 @@ impl FromRequestParts<AppState> for AgentUser {
                 scopes,
             });
         }
-        let user_id = verify_token(value, &state.jwt_secret)
-            .map(|claims| claims.sub)
-            .map_err(|_| ApiError::Unauthorized)?;
+        let user_id = authenticate_jwt(state, value).await?.user_id;
         Ok(Self {
             user_id,
             api_token_id: None,
@@ -285,6 +338,8 @@ pub fn app(state: AppState) -> Router {
     Router::new()
         .merge(mcp_oauth::routes())
         .merge(billing_routes::routes())
+        .merge(account_security::routes())
+        .merge(admin_routes::routes())
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/api/openapi.json", get(openapi_document))
@@ -292,6 +347,8 @@ pub fn app(state: AppState) -> Router {
         .route("/api/auth/register", post(register))
         .route("/api/auth/login", post(login))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/refresh", post(refresh_session))
+        .route("/api/auth/logout", post(logout))
         .route(
             "/api/account/tokens",
             get(list_api_tokens).post(create_api_token),
@@ -448,8 +505,119 @@ async fn ready(State(state): State<AppState>) -> Result<impl IntoResponse, ApiEr
     Ok(Json(json!({"status":"ready"})))
 }
 
+/// Idle sign-ins stay valid this long; every refresh extends them.
+const SESSION_IDLE_DAYS: i64 = 30;
+/// Even an active sign-in must re-enter credentials after this long.
+const SESSION_MAX_DAYS: i64 = 365;
+/// A passkey check counts as MFA for this long (admin portal, passkey management).
+const MFA_WINDOW_HOURS: i64 = 12;
+/// A rotated refresh token replayed within this window is a benign race between tabs.
+const REFRESH_REUSE_GRACE_SECONDS: i64 = 60;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionTokens {
+    token: String,
+    refresh_token: String,
+    expires_in: i64,
+}
+
+fn user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.chars().take(255).collect())
+}
+
+/// Starts a revocable sign-in session and returns its access and refresh tokens.
+/// Locks the account row and confirms it is enabled. Taken before issuing any credential so
+/// issuance serializes with disabling (which locks the same row before revoking access):
+/// either the disable waits and then revokes the new credential, or issuance sees it.
+/// `exclusive` is for transactions that go on to update the account row.
+async fn lock_enabled_user(
+    tx: &mut Transaction<'_, Postgres>,
+    user: Uuid,
+    exclusive: bool,
+) -> Result<(), ApiError> {
+    let sql = if exclusive {
+        "SELECT disabled_at IS NULL FROM users WHERE id=$1 FOR NO KEY UPDATE"
+    } else {
+        "SELECT disabled_at IS NULL FROM users WHERE id=$1 FOR SHARE"
+    };
+    let enabled: Option<bool> = sqlx::query_scalar(sql)
+        .bind(user)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if enabled == Some(true) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
+}
+
+async fn create_session(
+    state: &AppState,
+    user: Uuid,
+    method: &str,
+    headers: &HeaderMap,
+) -> Result<SessionTokens, ApiError> {
+    let mut tx = state.pool.begin().await?;
+    let tokens = create_session_in(&mut tx, state, user, method, headers).await?;
+    tx.commit().await?;
+    Ok(tokens)
+}
+
+/// Starts a session inside `tx`, so callers can make it atomic with their own checks.
+async fn create_session_in(
+    tx: &mut Transaction<'_, Postgres>,
+    state: &AppState,
+    user: Uuid,
+    method: &str,
+    headers: &HeaderMap,
+) -> Result<SessionTokens, ApiError> {
+    lock_enabled_user(tx, user, true).await?;
+    let refresh_token = generate_refresh_token();
+    let session: Uuid = sqlx::query_scalar(
+        "INSERT INTO user_sessions(user_id,refresh_token_hash,auth_method,mfa_verified_at,user_agent,expires_at)
+         VALUES($1,$2,$3,CASE WHEN $3='passkey' THEN now() END,$4,now()+make_interval(days=>$5))
+         RETURNING id",
+    )
+    .bind(user)
+    .bind(hash_api_token(&refresh_token))
+    .bind(method)
+    .bind(user_agent(headers))
+    .bind(SESSION_IDLE_DAYS as i32)
+    .fetch_one(&mut **tx)
+    .await?;
+    sqlx::query("UPDATE users SET last_login_at=now() WHERE id=$1")
+        .bind(user)
+        .execute(&mut **tx)
+        .await?;
+    session_tokens(state, user, session, refresh_token)
+}
+
+fn session_tokens(
+    state: &AppState,
+    user: Uuid,
+    session: Uuid,
+    refresh_token: String,
+) -> Result<SessionTokens, ApiError> {
+    Ok(SessionTokens {
+        token: issue_session_token(
+            user,
+            session,
+            &state.jwt_secret,
+            state.access_token_ttl_seconds,
+        )
+        .map_err(|_| ApiError::Internal)?,
+        refresh_token,
+        expires_in: state.access_token_ttl_seconds,
+    })
+}
+
 async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(input): Json<Credentials>,
 ) -> Result<impl IntoResponse, ApiError> {
     validate_credentials(&input)?;
@@ -462,49 +630,195 @@ async fn register(
     .fetch_one(&state.pool)
     .await
     .map_err(map_conflict)?;
-    let token = issue_token(id, &state.jwt_secret, state.access_token_ttl_seconds)
-        .map_err(|_| ApiError::Internal)?;
-    Ok((StatusCode::CREATED, Json(TokenResponse { token })))
+    let tokens = create_session(&state, id, "password", &headers).await?;
+    Ok((StatusCode::CREATED, Json(tokens)))
 }
-async fn login(
-    State(state): State<AppState>,
-    Json(input): Json<Credentials>,
-) -> Result<Json<TokenResponse>, ApiError> {
-    let email = input.email.trim().to_lowercase();
-    if input.password.len() > 1024 || !state.login_limiter.check(&email) {
+
+/// Checks an email and password. Unknown, wrong, and disabled accounts look identical.
+async fn authenticate_password(
+    state: &AppState,
+    email: &str,
+    password: &str,
+) -> Result<Uuid, ApiError> {
+    let email = email.trim().to_lowercase();
+    if password.len() > 1024 || !state.login_limiter.check(&email) {
         return Err(ApiError::RateLimited);
     }
-    let row: Option<(Uuid, String)> =
-        sqlx::query_as("SELECT id,password_hash FROM users WHERE email=lower($1)")
-            .bind(&email)
-            .fetch_optional(&state.pool)
-            .await?;
-    let Some((id, hash)) = row else {
+    let row: Option<(Uuid, String, bool)> = sqlx::query_as(
+        "SELECT id,password_hash,disabled_at IS NOT NULL FROM users WHERE email=lower($1)",
+    )
+    .bind(&email)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((id, hash, disabled)) = row else {
         // Spend comparable time so unknown emails are not distinguishable by latency.
-        let _ = hash_password(&input.password);
+        let _ = hash_password(password);
         return Err(ApiError::Unauthorized);
     };
-    if !verify_password(&input.password, &hash).map_err(|_| ApiError::Unauthorized)? {
+    if !verify_password(password, &hash).map_err(|_| ApiError::Unauthorized)? || disabled {
         return Err(ApiError::Unauthorized);
     }
-    Ok(Json(TokenResponse {
-        token: issue_token(id, &state.jwt_secret, state.access_token_ttl_seconds)
-            .map_err(|_| ApiError::Internal)?,
-    }))
+    Ok(id)
 }
+
+async fn login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<Credentials>,
+) -> Result<Json<SessionTokens>, ApiError> {
+    let id = authenticate_password(&state, &input.email, &input.password).await?;
+    Ok(Json(
+        create_session(&state, id, "password", &headers).await?,
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshInput {
+    refresh_token: String,
+}
+
+/// Exchanges a refresh token for a new access token and a rotated refresh token.
+async fn refresh_session(
+    State(state): State<AppState>,
+    Json(input): Json<RefreshInput>,
+) -> Result<Json<SessionTokens>, ApiError> {
+    if input.refresh_token.len() > 128 {
+        return Err(ApiError::Unauthorized);
+    }
+    let presented = hash_api_token(&input.refresh_token);
+    let mut tx = state.pool.begin().await?;
+    // Lock order matches disabling an account: the user row, then its sessions.
+    let owner: Option<Uuid> =
+        sqlx::query_scalar("SELECT user_id FROM user_sessions WHERE refresh_token_hash=$1")
+            .bind(&presented)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some(owner) = owner {
+        lock_enabled_user(&mut tx, owner, false).await?;
+    }
+    let row: Option<(Uuid, Uuid)> = sqlx::query_as(
+        "SELECT s.id,s.user_id FROM user_sessions s JOIN users u ON u.id=s.user_id
+         WHERE s.refresh_token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now()
+           AND u.disabled_at IS NULL
+         FOR UPDATE OF s",
+    )
+    .bind(&presented)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((session, user)) = row else {
+        // Any rotated-out token replayed after the grace window means it leaked: end the
+        // session. Inside the window it is most likely two tabs racing, so only refuse it.
+        sqlx::query(
+            "UPDATE user_sessions s SET revoked_at=now()
+             FROM user_session_used_tokens t
+             WHERE t.token_hash=$1 AND t.session_id=s.id AND s.revoked_at IS NULL
+               AND t.used_at < now()-make_interval(secs=>$2)",
+        )
+        .bind(&presented)
+        .bind(REFRESH_REUSE_GRACE_SECONDS as f64)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        return Err(ApiError::Unauthorized);
+    };
+    sqlx::query("INSERT INTO user_session_used_tokens(token_hash,session_id) VALUES($1,$2)")
+        .bind(&presented)
+        .bind(session)
+        .execute(&mut *tx)
+        .await?;
+    let refresh_token = generate_refresh_token();
+    sqlx::query(
+        "UPDATE user_sessions SET refresh_token_hash=$2, last_used_at=now(),
+           expires_at=LEAST(now()+make_interval(days=>$3), created_at+make_interval(days=>$4))
+         WHERE id=$1",
+    )
+    .bind(session)
+    .bind(hash_api_token(&refresh_token))
+    .bind(SESSION_IDLE_DAYS as i32)
+    .bind(SESSION_MAX_DAYS as i32)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(session_tokens(&state, user, session, refresh_token)?))
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LogoutInput {
+    refresh_token: Option<String>,
+}
+
+/// Ends a session identified by its access token or, when that has already expired, by its
+/// current refresh token. Signing out always succeeds so a stale client can clear itself.
+async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Option<Json<LogoutInput>>,
+) -> Result<StatusCode, ApiError> {
+    let Json(input) = body.unwrap_or_default();
+    if let Some(session) = match bearer(&headers) {
+        Ok(value) if !value.starts_with("slyt_") => authenticate_jwt(&state, value)
+            .await
+            .ok()
+            .and_then(|signed_in| signed_in.session_id),
+        _ => None,
+    } {
+        sqlx::query("UPDATE user_sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL")
+            .bind(session)
+            .execute(&state.pool)
+            .await?;
+    }
+    if let Some(refresh_token) = input.refresh_token.filter(|value| value.len() <= 128) {
+        sqlx::query(
+            "UPDATE user_sessions SET revoked_at=now() WHERE refresh_token_hash=$1 AND revoked_at IS NULL",
+        )
+        .bind(hash_api_token(&refresh_token))
+        .execute(&state.pool)
+        .await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Whether this sign-in session proved a passkey recently enough to count as MFA.
+async fn session_mfa_verified(pool: &PgPool, session: Option<Uuid>) -> Result<bool, ApiError> {
+    let Some(session) = session else {
+        return Ok(false);
+    };
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_sessions
+         WHERE id=$1 AND mfa_verified_at > now()-make_interval(hours=>$2))",
+    )
+    .bind(session)
+    .bind(MFA_WINDOW_HOURS as i32)
+    .fetch_one(pool)
+    .await?)
+}
+
 async fn me(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let row: (Uuid, String, DateTime<Utc>) =
-        sqlx::query_as("SELECT id,email,created_at FROM users WHERE id=$1")
-            .bind(user)
-            .fetch_optional(&state.pool)
-            .await?
-            .ok_or(ApiError::Unauthorized)?;
-    Ok(Json(
-        json!({"id": row.0, "email": row.1, "createdAt": row.2}),
-    ))
+    // API tokens have no session; JWTs carry one.
+    let session = bearer(&headers)
+        .ok()
+        .filter(|value| !value.starts_with("slyt_"))
+        .and_then(|value| verify_token(value, &state.jwt_secret).ok())
+        .and_then(|claims| claims.sid);
+    let row: (Uuid, String, DateTime<Utc>, bool, i64) = sqlx::query_as(
+        "SELECT id,email,created_at,is_admin,(SELECT count(*) FROM user_passkeys WHERE user_id=users.id)
+         FROM users WHERE id=$1",
+    )
+    .bind(user)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::Unauthorized)?;
+    let mfa = session_mfa_verified(&state.pool, session).await?;
+    Ok(Json(json!({
+        "id": row.0, "email": row.1, "createdAt": row.2,
+        "isAdmin": row.3, "passkeyCount": row.4, "mfaVerified": mfa,
+    })))
 }
 
 async fn create_api_token(
@@ -3391,9 +3705,7 @@ async fn stream(
         .await?
         .ok_or(ApiError::Unauthorized)?
     } else {
-        verify_token(token, &s.jwt_secret)
-            .map_err(|_| ApiError::Unauthorized)?
-            .sub
+        authenticate_jwt(&s, token).await?.user_id
     };
     require_site(&s.pool, u, site, false).await?;
     let last = q
