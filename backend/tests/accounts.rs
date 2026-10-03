@@ -837,3 +837,75 @@ async fn logout_with_only_the_refresh_token_ends_the_session() {
     let (status, _) = call(&router, "GET", "/api/auth/me", Some(&token), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn enrollment_is_rechecked_when_a_passkey_is_saved() {
+    let (_, router) = setup().await;
+    let (_, token, _) = register(&router, &email()).await;
+    let mut first = authenticator();
+    let mut second = authenticator();
+    // Two ceremonies both authorised by the password while the account had no passkeys.
+    let mut ceremonies = Vec::new();
+    for auth in [&mut first, &mut second] {
+        let (status, start) = call(
+            &router,
+            "POST",
+            "/api/account/passkeys/register/start",
+            Some(&token),
+            Some(json!({"currentPassword": PASSWORD})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let mut soft = start["options"].clone();
+        soft["publicKey"]["authenticatorSelection"]["requireResidentKey"] = json!(false);
+        soft["publicKey"]["authenticatorSelection"]["residentKey"] = json!("discouraged");
+        let credential = auth
+            .do_registration(
+                Url::parse(ORIGIN).unwrap(),
+                serde_json::from_value(soft).unwrap(),
+            )
+            .unwrap();
+        ceremonies.push((start["challengeId"].clone(), credential));
+    }
+    let mut results = Vec::new();
+    for (challenge, credential) in ceremonies {
+        results.push(
+            call(
+                &router,
+                "POST",
+                "/api/account/passkeys/register/finish",
+                Some(&token),
+                Some(json!({"challengeId": challenge, "name": "Key", "credential": credential})),
+            )
+            .await,
+        );
+    }
+    assert_eq!(results[0].0, StatusCode::CREATED);
+    // Once a passkey exists, the password-only session cannot finish adding another.
+    assert_eq!(results[1].0, StatusCode::FORBIDDEN);
+    assert_eq!(results[1].1["error"]["code"], "mfa_required");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn password_reauthentication_is_rate_limited() {
+    let (_, router) = setup().await;
+    let (_, token, _) = register(&router, &email()).await;
+    let mut statuses = Vec::new();
+    for _ in 0..11 {
+        statuses.push(
+            call(
+                &router,
+                "POST",
+                "/api/account/passkeys/register/start",
+                Some(&token),
+                Some(json!({"currentPassword": "wrong password guess"})),
+            )
+            .await
+            .0,
+        );
+    }
+    assert!(statuses[..10].iter().all(|s| *s == StatusCode::FORBIDDEN));
+    assert_eq!(statuses[10], StatusCode::TOO_MANY_REQUESTS);
+}

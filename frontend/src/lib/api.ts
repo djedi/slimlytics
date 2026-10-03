@@ -50,10 +50,32 @@ export const browserSession: SessionStore = {
   }
 };
 
-/** Serializes token refreshes across tabs so two tabs never spend the same refresh token. */
-async function withLock<T>(name: string, task: () => Promise<T>): Promise<T> {
+const SESSION_LOCK = 'slimlytics-session';
+let localQueue: Promise<unknown> = Promise.resolve();
+/**
+ * Serializes refresh and sign-out across tabs (Web Locks) or, without that API, within this
+ * page, so two refreshes never spend the same refresh token and a refresh that is still in
+ * flight can never restore a session after sign-out.
+ */
+async function withSessionLock<T>(task: () => Promise<T>): Promise<T> {
   const locks = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { locks?: LockManager }).locks;
-  return locks ? locks.request(name, task) : task();
+  if (locks) return locks.request(SESSION_LOCK, task);
+  const run = localQueue.then(task, task);
+  localQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** The account a session JWT belongs to (its `sub` claim), or undefined if unreadable. */
+export function tokenSubject(token: string): string | undefined {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return undefined;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const sub = (JSON.parse(json) as { sub?: unknown }).sub;
+    return typeof sub === 'string' ? sub : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // Requests that must never trigger a refresh-and-retry.
@@ -190,7 +212,7 @@ export class ApiClient {
    */
   refreshSession(failedToken = this.token): Promise<boolean> {
     if (!this.store || this.demo) return Promise.resolve(false);
-    this.refreshing ??= withLock('slimlytics-session-refresh', () => this.exchangeRefreshToken(failedToken)).finally(() => {
+    this.refreshing ??= withSessionLock(() => this.exchangeRefreshToken(failedToken)).finally(() => {
       this.refreshing = undefined;
     });
     return this.refreshing;
@@ -198,8 +220,11 @@ export class ApiClient {
   private async exchangeRefreshToken(failedToken: string) {
     const store = this.store!;
     const current = store.load();
-    // Another tab may have refreshed while this one waited for the lock.
     if (current.token && current.token !== failedToken) {
+      // Another tab changed the session while this one waited. Adopt it only if it is the
+      // same account; otherwise this tab is stale and must not act as someone else.
+      const subject = tokenSubject(failedToken);
+      if (!subject || subject !== tokenSubject(current.token)) return false;
       this.token = current.token;
       return true;
     }
@@ -252,14 +277,20 @@ export class ApiClient {
   async login(email: string, password: string) { return this.adopt(await this.request<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, () => ({ accessToken: 'demo', user: { id: 'demo', email } }))); }
   /** Ends this session on the server, then forgets it locally even if the server is unreachable. */
   async logout() {
-    try {
-      const refreshToken = this.store?.load().refreshToken;
-      if ((this.token || refreshToken) && !this.demo)
-        await this.request<void>('/auth/logout', { method: 'POST', body: JSON.stringify(refreshToken ? { refreshToken } : {}) });
-    } catch { /* already signed out */ } finally {
-      this.store?.clear();
-      this.token = '';
-    }
+    // Under the session lock, so any refresh in flight (here or in another tab) finishes
+    // first and the session it renewed is the one revoked.
+    await withSessionLock(async () => {
+      try {
+        const stored = this.store?.load();
+        if (stored?.token) this.token = stored.token;
+        const refreshToken = stored?.refreshToken;
+        if ((this.token || refreshToken) && !this.demo)
+          await this.request<void>('/auth/logout', { method: 'POST', body: JSON.stringify(refreshToken ? { refreshToken } : {}) });
+      } catch { /* already signed out */ } finally {
+        this.store?.clear();
+        this.token = '';
+      }
+    });
   }
   me() { return this.request<User>('/auth/me'); }
   startPasskeySignIn() { return this.request<WebAuthnChallenge>('/auth/passkey/start', { method: 'POST' }); }

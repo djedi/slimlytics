@@ -134,13 +134,18 @@ async fn record_use(
     Ok(())
 }
 
-async fn password_matches(pool: &PgPool, user: Uuid, password: &str) -> Result<bool, ApiError> {
+/// Re-checks the signed-in person's password, throttled per account like sign-in so a
+/// stolen session cannot be used to guess it.
+async fn password_matches(state: &AppState, user: Uuid, password: &str) -> Result<bool, ApiError> {
+    if !state.login_limiter.check(&format!("reauth:{user}")) {
+        return Err(ApiError::RateLimited);
+    }
     if password.is_empty() || password.len() > 1024 {
         return Ok(false);
     }
     let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id=$1")
         .bind(user)
-        .fetch_one(pool)
+        .fetch_one(&state.pool)
         .await?;
     Ok(verify_password(password, &hash).unwrap_or(false))
 }
@@ -240,7 +245,7 @@ async fn start_registration(
     let keys = user_passkeys(&state.pool, user).await?;
     if keys.is_empty() {
         let password = reauth.current_password.unwrap_or_default();
-        if !password_matches(&state.pool, user, &password).await? {
+        if !password_matches(&state, user, &password).await? {
             return Err(ApiError::Forbidden);
         }
     } else if !session_mfa_verified(&state.pool, signed_in.session_id).await? {
@@ -314,6 +319,25 @@ async fn finish_registration(
     let passkey = webauthn(&state)?
         .finish_passkey_registration(&input.credential, &registration)
         .map_err(|_| ApiError::BadRequest("the passkey could not be verified".into()))?;
+    // Re-check enrollment rules now: another ceremony may have saved a passkey since this
+    // one started. The account row lock serializes concurrent enrollments.
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("SELECT 1 FROM users WHERE id=$1 FOR UPDATE")
+        .bind(signed_in.user_id)
+        .execute(&mut *tx)
+        .await?;
+    let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM user_passkeys WHERE user_id=$1")
+        .bind(signed_in.user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if existing >= MAX_PASSKEYS {
+        return Err(ApiError::BadRequest(format!(
+            "an account can have at most {MAX_PASSKEYS} passkeys"
+        )));
+    }
+    if existing > 0 && !session_mfa_verified(&state.pool, signed_in.session_id).await? {
+        return Err(ApiError::MfaRequired);
+    }
     let row: (Uuid, DateTime<Utc>) = sqlx::query_as(
         "INSERT INTO user_passkeys(user_id,name,credential_id,passkey) VALUES($1,$2,$3,$4)
          RETURNING id,created_at",
@@ -322,9 +346,10 @@ async fn finish_registration(
     .bind(name)
     .bind(passkey.cred_id().to_vec())
     .bind(serde_json::to_value(&passkey).map_err(|_| ApiError::Internal)?)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(map_conflict)?;
+    tx.commit().await?;
     Ok((
         StatusCode::CREATED,
         Json(json!({"id": row.0, "name": name, "createdAt": row.1, "lastUsedAt": null})),
