@@ -74,12 +74,18 @@ async fn audit(
     Ok(())
 }
 
-/// Loads a target account and refuses actions an admin must not take through the portal.
-async fn actionable_target(pool: &PgPool, admin: &Admin, target: Uuid) -> Result<String, ApiError> {
+/// Locks the target account and refuses actions an admin must not take through the portal.
+/// Runs inside the mutation's transaction, so a concurrent admin grant cannot slip in
+/// between this check and the change.
+async fn actionable_target(
+    tx: &mut Transaction<'_, Postgres>,
+    admin: &Admin,
+    target: Uuid,
+) -> Result<String, ApiError> {
     let row: Option<(String, bool)> =
-        sqlx::query_as("SELECT email,is_admin FROM users WHERE id=$1")
+        sqlx::query_as("SELECT email,is_admin FROM users WHERE id=$1 FOR NO KEY UPDATE")
             .bind(target)
-            .fetch_optional(pool)
+            .fetch_optional(&mut **tx)
             .await?;
     let (email, is_admin) = row.ok_or(ApiError::NotFound)?;
     if target == admin.user_id {
@@ -296,8 +302,8 @@ async fn disable_user(
     admin: Admin,
     Path(user): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let email = actionable_target(&state.pool, &admin, user).await?;
     let mut tx = state.pool.begin().await?;
+    let email = actionable_target(&mut tx, &admin, user).await?;
     sqlx::query("UPDATE users SET disabled_at=now() WHERE id=$1 AND disabled_at IS NULL")
         .bind(user)
         .execute(&mut *tx)
@@ -313,8 +319,8 @@ async fn enable_user(
     admin: Admin,
     Path(user): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let email = actionable_target(&state.pool, &admin, user).await?;
     let mut tx = state.pool.begin().await?;
+    let email = actionable_target(&mut tx, &admin, user).await?;
     sqlx::query("UPDATE users SET disabled_at=NULL WHERE id=$1")
         .bind(user)
         .execute(&mut *tx)
@@ -329,8 +335,8 @@ async fn revoke_user_sessions(
     admin: Admin,
     Path(user): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let email = actionable_target(&state.pool, &admin, user).await?;
     let mut tx = state.pool.begin().await?;
+    let email = actionable_target(&mut tx, &admin, user).await?;
     revoke_access(&mut tx, user).await?;
     audit(
         &mut *tx,
@@ -358,7 +364,8 @@ async fn delete_user(
     Path(user): Path<Uuid>,
     Json(input): Json<DeleteUser>,
 ) -> Result<StatusCode, ApiError> {
-    let email = actionable_target(&state.pool, &admin, user).await?;
+    let mut tx = state.pool.begin().await?;
+    let email = actionable_target(&mut tx, &admin, user).await?;
     if input.confirm_email.trim().to_lowercase() != email {
         return Err(ApiError::BadRequest(
             "type the account's email address to confirm".into(),
@@ -369,14 +376,13 @@ async fn delete_user(
          AND subscription_status IN ('active','trialing','past_due','unpaid','incomplete')",
     )
     .bind(user)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?;
     if billing.is_some() {
         return Err(ApiError::BadRequest(
             "cancel this account's Stripe subscription before deleting it".into(),
         ));
     }
-    let mut tx = state.pool.begin().await?;
     let sites = sqlx::query(
         "DELETE FROM sites s WHERE EXISTS (
            SELECT 1 FROM site_memberships m WHERE m.site_id=s.id AND m.user_id=$1 AND m.role='owner')

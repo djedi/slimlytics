@@ -305,4 +305,22 @@ describe('ApiClient sessions', () => {
     expect(unauthorized).not.toHaveBeenCalled();
     expect(store.cleared).toBe(false);
   });
+
+  it('renews an expired token before downloading an export', async () => {
+    const stale = jwt('user-a');
+    const fresh = jwt('user-a');
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/auth/refresh')) return json({ token: fresh, refreshToken: 'slrt_2', expiresIn: 3600 });
+      const auth = (init?.headers as Record<string, string>).authorization;
+      return auth === `Bearer ${fresh}` ? new Response('a,b\n', { status: 200 }) : json({}, 401);
+    });
+    const store = memoryStore(stale, 'slrt_1');
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    const unauthorized = vi.fn();
+    api.onUnauthorized = unauthorized;
+    expect((await api.downloadExport('s1', 7)).size).toBe(4);
+    expect(unauthorized).not.toHaveBeenCalled();
+    expect(store.state.token).toBe(fresh);
+  });
 });

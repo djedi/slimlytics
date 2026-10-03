@@ -449,9 +449,13 @@ export class ApiClient {
   async createGoal(id: string, goal: Omit<Goal, 'id'>) { const row = await this.request<WireGoal>(`/sites/${id}/goals`, { method: 'POST', body: JSON.stringify({ name: goal.name, eventName: goal.target }) }, () => ({ ...goal, id: crypto.randomUUID(), eventName: goal.target })); return { id: row.id, name: row.name, type: 'event', target: row.eventName ?? row.event_name ?? goal.target, conversions: 0, conversionRate: 0 }; }
   exportUrl(id: string, days: number) { return `${this.base}/sites/${id}/export.csv?${dateQuery(days)}`; }
   streamUrl(id: string, token?: string) { const query = token ? `?token=${encodeURIComponent(token)}` : ''; return `${this.base}/sites/${id}/stream${query}`; }
-  async downloadExport(id: string, days: number) {
-    const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(days)}`, { headers: this.token ? { authorization: `Bearer ${this.token}` } : {} });
-    if (response.status === 401 && this.token && !this.demo) this.onUnauthorized?.();
+  async downloadExport(id: string, days: number, attempts = 0): Promise<Blob> {
+    const sent = this.token;
+    const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(days)}`, { headers: sent ? { authorization: `Bearer ${sent}` } : {} });
+    if (response.status === 401 && sent && !this.demo) {
+      if (attempts < 2 && await this.refreshSession(sent)) return this.downloadExport(id, days, attempts + 1);
+      this.onUnauthorized?.();
+    }
     if (!response.ok) throw new ApiError(response.status, `Export failed (${response.status})`);
     return response.blob();
   }
