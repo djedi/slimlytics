@@ -190,6 +190,8 @@ export class ApiClient {
   private base: string;
   private store?: SessionStore;
   private refreshing?: Promise<boolean>;
+  // Bumped on sign-out so a sign-in response that arrives afterwards is discarded.
+  private generation = 0;
   constructor(base = '/api', private fetcher: Fetcher = fetch, private demo = false) { this.base = base.replace(/\/$/, ''); }
   onUnauthorized?: () => void;
   setToken(token: string) { this.token = token; }
@@ -199,11 +201,43 @@ export class ApiClient {
     this.token = store.load().token;
   }
   get accessToken() { return this.token; }
-  private adopt(response: AuthResponse) {
+  /** Stores a new sign-in, serialized with refresh and sign-out. */
+  private async adopt(response: AuthResponse, generation: number) {
     const token = response.accessToken ?? response.token ?? '';
-    if (token) this.token = token;
-    if (token && response.refreshToken) this.store?.save({ token, refreshToken: response.refreshToken });
+    const refreshToken = response.refreshToken;
+    if (!token || !refreshToken || !this.store) {
+      if (token) this.token = token;
+      return response;
+    }
+    await withSessionLock(async () => {
+      if (generation !== this.generation) {
+        // Signed out while this sign-in was in flight: end the session it just created.
+        await this.revokeByRefreshToken(refreshToken);
+        throw new ApiError(401, 'You signed out before sign-in finished.');
+      }
+      this.store!.save({ token, refreshToken });
+      this.token = token;
+    });
     return response;
+  }
+  /** Best-effort server sign-out of a session nobody will use. */
+  private async revokeByRefreshToken(refreshToken: string) {
+    try {
+      await this.fetcher(`${this.base}/auth/logout`, {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken })
+      });
+    } catch { /* it expires on its own */ }
+  }
+  /**
+   * Forgets this client's rejected session. Shared storage is cleared only if it still holds
+   * that session, so a stale tab never signs out an account another tab signed in to.
+   */
+  forgetSession() {
+    const stored = this.store?.load();
+    if (stored && (!stored.token || stored.token === this.token)) this.store!.clear();
+    this.token = '';
   }
   /**
    * Gets a new access token after `failedToken` was rejected. Resolves false when the
@@ -235,11 +269,16 @@ export class ApiClient {
       body: JSON.stringify({ refreshToken: current.refreshToken })
     });
     if (response.status === 400 || response.status === 401) {
-      store.clear();
+      if (store.load().refreshToken === current.refreshToken) store.clear();
       return false;
     }
     if (!response.ok) throw new ApiError(response.status, `Could not refresh your session (${response.status})`);
     const tokens = await response.json() as SessionTokens;
+    // Storage changed underneath (e.g. a tab without the lock): never overwrite it.
+    if (store.load().refreshToken !== current.refreshToken) {
+      await this.revokeByRefreshToken(tokens.refreshToken);
+      return false;
+    }
     store.save({ token: tokens.token, refreshToken: tokens.refreshToken });
     this.token = tokens.token;
     return true;
@@ -273,28 +312,50 @@ export class ApiClient {
   billing() { return this.request<BillingStatus>('/billing', {}, () => ({ enabled: false })); }
   billingCheckout(plan: string, interval: 'month' | 'year' = 'month') { return this.request<{ url: string; portal: boolean }>('/billing/checkout', { method: 'POST', body: JSON.stringify({ plan, interval }) }); }
   billingPortal() { return this.request<{ url: string }>('/billing/portal', { method: 'POST' }); }
-  async register(email: string, password: string, name = '') { return this.adopt(await this.request<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) })); }
-  async login(email: string, password: string) { return this.adopt(await this.request<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, () => ({ accessToken: 'demo', user: { id: 'demo', email } }))); }
+  async register(email: string, password: string, name = '') {
+    const generation = this.generation;
+    return this.adopt(await this.request<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify({ email, password, name }) }), generation);
+  }
+  async login(email: string, password: string) {
+    const generation = this.generation;
+    return this.adopt(await this.request<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }, () => ({ accessToken: 'demo', user: { id: 'demo', email } })), generation);
+  }
   /** Ends this session on the server, then forgets it locally even if the server is unreachable. */
   async logout() {
+    this.generation += 1;
     // Under the session lock, so any refresh in flight (here or in another tab) finishes
     // first and the session it renewed is the one revoked.
     await withSessionLock(async () => {
+      const stored = this.store?.load();
+      // Storage holding a different account belongs to another tab: leave it alone and
+      // revoke only this client's own session.
+      const subject = tokenSubject(this.token);
+      const mine = !!stored && (!this.token || stored.token === this.token || (!!subject && tokenSubject(stored.token) === subject));
+      const token = mine ? stored!.token || this.token : this.token;
+      const refreshToken = mine ? stored!.refreshToken : '';
       try {
-        const stored = this.store?.load();
-        if (stored?.token) this.token = stored.token;
-        const refreshToken = stored?.refreshToken;
-        if ((this.token || refreshToken) && !this.demo)
-          await this.request<void>('/auth/logout', { method: 'POST', body: JSON.stringify(refreshToken ? { refreshToken } : {}) });
+        if ((token || refreshToken) && !this.demo)
+          await this.fetcher(`${this.base}/auth/logout`, {
+            method: 'POST',
+            headers: {
+              accept: 'application/json',
+              'content-type': 'application/json',
+              ...(token ? { authorization: `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify(refreshToken ? { refreshToken } : {})
+          });
       } catch { /* already signed out */ } finally {
-        this.store?.clear();
+        if (mine) this.store?.clear();
         this.token = '';
       }
     });
   }
   me() { return this.request<User>('/auth/me'); }
   startPasskeySignIn() { return this.request<WebAuthnChallenge>('/auth/passkey/start', { method: 'POST' }); }
-  async finishPasskeySignIn(challengeId: string, credential: unknown) { return this.adopt(await this.request<AuthResponse>('/auth/passkey/finish', { method: 'POST', body: JSON.stringify({ challengeId, credential }) })); }
+  async finishPasskeySignIn(challengeId: string, credential: unknown) {
+    const generation = this.generation;
+    return this.adopt(await this.request<AuthResponse>('/auth/passkey/finish', { method: 'POST', body: JSON.stringify({ challengeId, credential }) }), generation);
+  }
   startStepUp() { return this.request<WebAuthnChallenge>('/auth/mfa/start', { method: 'POST' }); }
   finishStepUp(challengeId: string, credential: unknown) { return this.request<void>('/auth/mfa/finish', { method: 'POST', body: JSON.stringify({ challengeId, credential }) }); }
   accountSessions() { return this.request<AccountSession[]>('/account/sessions'); }

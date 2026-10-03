@@ -80,7 +80,7 @@
   const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, demo);
   // An expired or revoked session must clear the stored token, or /login would bounce straight back here.
   api.onUnauthorized = () => {
-    browserSession.clear();
+    api.forgetSession();
     source?.close();
     void goto('/login');
   };

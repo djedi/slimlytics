@@ -217,36 +217,26 @@ fn bearer(headers: &HeaderMap) -> Result<&str, ApiError> {
 }
 
 /// Verifies a session JWT and that its session is live and its account enabled, so signing
-/// out, revoking a device, or disabling an account takes effect immediately.
+/// out, revoking a device, or disabling an account takes effect immediately. Tokens without a
+/// session (issued before sessions existed) are refused: nothing could revoke them early.
 async fn authenticate_jwt(state: &AppState, value: &str) -> Result<SignedIn, ApiError> {
     let claims = verify_token(value, &state.jwt_secret).map_err(|_| ApiError::Unauthorized)?;
-    let active: bool = match claims.sid {
-        Some(sid) => {
-            sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM user_sessions s JOIN users u ON u.id=s.user_id
-                 WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now()
-                   AND u.disabled_at IS NULL)",
-            )
-            .bind(sid)
-            .bind(claims.sub)
-            .fetch_one(&state.pool)
-            .await?
-        }
-        None => {
-            sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL)",
-            )
-            .bind(claims.sub)
-            .fetch_one(&state.pool)
-            .await?
-        }
-    };
+    let session = claims.sid.ok_or(ApiError::Unauthorized)?;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM user_sessions s JOIN users u ON u.id=s.user_id
+         WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>now()
+           AND u.disabled_at IS NULL)",
+    )
+    .bind(session)
+    .bind(claims.sub)
+    .fetch_one(&state.pool)
+    .await?;
     if !active {
         return Err(ApiError::Unauthorized);
     }
     Ok(SignedIn {
         user_id: claims.sub,
-        session_id: claims.sid,
+        session_id: Some(session),
     })
 }
 

@@ -182,4 +182,72 @@ describe('ApiClient sessions', () => {
     api.setToken('t');
     await expect(api.adminUsers()).rejects.toMatchObject({ status: 403, code: 'mfa_required' });
   });
+
+  it('signing out a stale tab leaves another account\'s session alone', async () => {
+    const accountA = jwt('user-a');
+    const accountB = jwt('user-b');
+    const store = memoryStore(accountA, 'slrt_a');
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    Object.assign(store.state, { token: accountB, refreshToken: 'slrt_b' });
+    await api.logout();
+    expect(fetcher).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({
+      body: '{}',
+      headers: expect.objectContaining({ authorization: `Bearer ${accountA}` })
+    }));
+    expect(store.state).toEqual({ token: accountB, refreshToken: 'slrt_b' });
+  });
+
+  it('forgetting a rejected session keeps a newer account in shared storage', () => {
+    const store = memoryStore(jwt('user-a'), 'slrt_a');
+    const api = new ApiClient('/api', vi.fn(), false);
+    api.useSession(store);
+    const accountB = jwt('user-b');
+    Object.assign(store.state, { token: accountB, refreshToken: 'slrt_b' });
+    api.forgetSession();
+    expect(store.state.token).toBe(accountB);
+    expect(store.cleared).toBe(false);
+    api.useSession(store);
+    api.forgetSession();
+    expect(store.cleared).toBe(true);
+  });
+
+  it('discards and revokes a sign-in that finishes after signing out', async () => {
+    let finishLogin: (response: Response) => void = () => {};
+    const fetcher = vi.fn((input: RequestInfo | URL, _init?: RequestInit) =>
+      String(input).endsWith('/auth/login')
+        ? new Promise<Response>((resolve) => (finishLogin = resolve))
+        : Promise.resolve(new Response(null, { status: 204 }))
+    );
+    const store = memoryStore('', '');
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    const signingIn = api.login('a@example.com', 'correct horse battery staple');
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    await api.logout();
+    finishLogin(json({ token: jwt('user-a'), refreshToken: 'slrt_late', expiresIn: 3600 }));
+    await expect(signingIn).rejects.toMatchObject({ status: 401 });
+    expect(store.state).toEqual({ token: '', refreshToken: '' });
+    expect(fetcher).toHaveBeenLastCalledWith('/api/auth/logout', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'slrt_late' }) }));
+  });
+
+  it('never lets a refresh response overwrite a session that changed meanwhile', async () => {
+    const accountA = jwt('user-a');
+    const store = memoryStore(accountA, 'slrt_a');
+    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/auth/refresh')) {
+        Object.assign(store.state, { token: jwt('user-b'), refreshToken: 'slrt_b' });
+        return json({ token: jwt('user-a'), refreshToken: 'slrt_a2', expiresIn: 3600 });
+      }
+      if (url.endsWith('/auth/logout')) return new Response(null, { status: 204 });
+      return json({}, 401);
+    });
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    await expect(api.sites()).rejects.toMatchObject({ status: 401 });
+    expect(store.state.refreshToken).toBe('slrt_b');
+    expect(fetcher).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'slrt_a2' }) }));
+  });
 });

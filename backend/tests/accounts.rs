@@ -909,3 +909,16 @@ async fn password_reauthentication_is_rate_limited() {
     assert!(statuses[..10].iter().all(|s| *s == StatusCode::FORBIDDEN));
     assert_eq!(statuses[10], StatusCode::TOO_MANY_REQUESTS);
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn access_tokens_without_a_session_are_refused() {
+    let (_, router) = setup().await;
+    let (user, _, _) = register(&router, &email()).await;
+    // Pre-session JWTs could never be revoked early, so they are no longer accepted.
+    let legacy =
+        slimlytics_backend::auth::issue_token(user, "01234567890123456789012345678901", 3600)
+            .unwrap();
+    let (status, _) = call(&router, "GET", "/api/auth/me", Some(&legacy), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

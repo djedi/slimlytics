@@ -20,11 +20,11 @@
   const PAGE_SIZE = 50;
   const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, false);
   api.onUnauthorized = () => {
-    browserSession.clear();
+    api.forgetSession();
     void goto('/login');
   };
 
-  type Gate = 'loading' | 'forbidden' | 'needs-passkey' | 'needs-verification' | 'ready';
+  type Gate = 'loading' | 'unavailable' | 'forbidden' | 'needs-passkey' | 'needs-verification' | 'ready';
   let gate = $state<Gate>('loading');
   let account = $state<User | null>(null);
   let overview = $state<AdminOverview | null>(null);
@@ -47,9 +47,16 @@
   });
 
   async function start() {
+    gate = 'loading';
+    error = '';
     try {
       account = await api.me();
-    } catch {
+    } catch (reason) {
+      // A 401 already redirected to sign-in; anything else gets a visible retry.
+      if (!(reason instanceof ApiError && reason.status === 401)) {
+        error = reason instanceof Error ? reason.message : 'Could not reach the server.';
+        gate = 'unavailable';
+      }
       return;
     }
     if (!account.isAdmin) gate = 'forbidden';
@@ -72,7 +79,10 @@
 
   async function loadAll() {
     const result = await guarded(() => Promise.all([api.adminOverview(), api.adminUsers(query, offset, PAGE_SIZE), api.adminAudit(50)]));
-    if (!result) return;
+    if (!result) {
+      if (gate === 'loading') gate = 'unavailable';
+      return;
+    }
     [overview, { users, total }, audit] = [result[0], result[1], result[2]];
     gate = 'ready';
   }
@@ -166,6 +176,13 @@
   <main id="main" class="console-main">
     {#if gate === 'loading'}
       <div class="loading" role="status"><span></span><p>Loading…</p></div>
+    {:else if gate === 'unavailable'}
+      <section class="console-card console-gate">
+        <span class="console-icon"><ShieldAlert size={24} aria-hidden="true" /></span>
+        <h1>Admin tools didn't load</h1>
+        <p>{error || 'The server could not be reached.'}</p>
+        <button class="primary" onclick={() => void start()}>Try again</button>
+      </section>
     {:else if gate === 'forbidden'}
       <section class="console-card console-gate">
         <span class="console-icon"><ShieldAlert size={24} aria-hidden="true" /></span>

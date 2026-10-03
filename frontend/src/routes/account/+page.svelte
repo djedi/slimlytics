@@ -17,7 +17,7 @@
 
   const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, false);
   api.onUnauthorized = () => {
-    browserSession.clear();
+    api.forgetSession();
     void goto('/login');
   };
 

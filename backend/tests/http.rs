@@ -527,9 +527,21 @@ async fn mcp_negotiates_client_revision_and_accepts_notifications() {
             .fetch_one(&state.pool)
             .await
             .unwrap();
-    let token =
-        slimlytics_backend::auth::issue_token(user, "test-secret-at-least-32-characters", 3600)
-            .unwrap();
+    let session: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO user_sessions(user_id,refresh_token_hash,auth_method,expires_at)
+         VALUES($1,gen_random_bytes(32),'password',now()+interval '1 day') RETURNING id",
+    )
+    .bind(user)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap();
+    let token = slimlytics_backend::auth::issue_session_token(
+        user,
+        session,
+        "test-secret-at-least-32-characters",
+        3600,
+    )
+    .unwrap();
     let response = app(state.clone()).oneshot(Request::post("/api/mcp").header("authorization",format!("Bearer {token}")).header("content-type","application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)).unwrap()).await.unwrap();
     let body: serde_json::Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
