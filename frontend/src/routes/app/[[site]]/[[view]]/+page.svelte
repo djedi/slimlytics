@@ -505,7 +505,12 @@
             if (!renewed) api.onUnauthorized?.();
             else if (view === 'spy' && !paused) connectSpy();
           })
-          .catch(() => {});
+          // A network or server hiccup: try the stream again shortly.
+          .catch(() =>
+            window.setTimeout(() => {
+              if (view === 'spy' && !paused && source?.readyState === EventSource.CLOSED) connectSpy();
+            }, 5000)
+          );
     };
   }
   // Visitors who arrived after the page loaded aren't in `visitors` yet; describe them

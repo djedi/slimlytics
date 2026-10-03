@@ -24,6 +24,7 @@ SELECT id AS user_id, email AS user_email FROM users WHERE lower(email) = lower(
   \quit
 \endif
 SELECT (:'mode' = '--revoke') AS revoke \gset
+BEGIN;
 \if :revoke
   UPDATE users SET is_admin = false, updated_at = now() WHERE id = :'user_id';
   INSERT INTO admin_audit_log(actor_email, action, target_user_id, target_email)
@@ -35,6 +36,7 @@ SELECT (:'mode' = '--revoke') AS revoke \gset
   VALUES ('scripts/admin-grant.sh', 'admin.grant', :'user_id', :'user_email');
   \echo 'Admin access granted. Add a passkey under Account security to open /admin.'
 \endif
+COMMIT;
 SELECT email, is_admin, (SELECT count(*) FROM user_passkeys p WHERE p.user_id = users.id) AS passkeys
 FROM users WHERE id = :'user_id';
 SQL

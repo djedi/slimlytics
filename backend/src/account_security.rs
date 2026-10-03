@@ -346,8 +346,20 @@ async fn finish_registration(
             "an account can have at most {MAX_PASSKEYS} passkeys"
         )));
     }
-    if existing > 0 && !session_mfa_verified(&state.pool, signed_in.session_id).await? {
-        return Err(ApiError::MfaRequired);
+    if existing > 0 {
+        // Same connection as the transaction: waiting on the pool while holding the account
+        // lock could starve concurrent enrollments.
+        let verified: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM user_sessions
+             WHERE id=$1 AND mfa_verified_at > now()-make_interval(hours=>$2))",
+        )
+        .bind(signed_in.session_id)
+        .bind(MFA_WINDOW_HOURS as i32)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !verified {
+            return Err(ApiError::MfaRequired);
+        }
     }
     let row: (Uuid, DateTime<Utc>) = sqlx::query_as(
         "INSERT INTO user_passkeys(user_id,name,credential_id,passkey) VALUES($1,$2,$3,$4)

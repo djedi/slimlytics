@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Remove every passkey from an account, for someone who lost all of theirs. Also signs the
-# account out everywhere. They can then sign in with their password and add a new passkey.
+# account out everywhere and revokes its API tokens and MCP connections. They can then sign
+# in with their password and add a new passkey.
 #
 #   scripts/passkey-reset.sh you@example.com
 #
@@ -28,6 +29,9 @@ BEGIN;
 SELECT 1 FROM users WHERE id = :'user_id' FOR NO KEY UPDATE;
 DELETE FROM user_passkeys WHERE user_id = :'user_id';
 UPDATE user_sessions SET revoked_at = now() WHERE user_id = :'user_id' AND revoked_at IS NULL;
+-- API tokens and MCP connections may have been minted from a compromised session.
+UPDATE api_tokens SET revoked_at = now() WHERE user_id = :'user_id' AND revoked_at IS NULL;
+DELETE FROM oauth_codes WHERE user_id = :'user_id';
 INSERT INTO admin_audit_log(actor_email, action, target_user_id, target_email)
 VALUES ('scripts/passkey-reset.sh', 'passkeys.reset', :'user_id', :'user_email');
 COMMIT;
