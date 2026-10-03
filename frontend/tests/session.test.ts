@@ -250,4 +250,23 @@ describe('ApiClient sessions', () => {
     expect(store.state.refreshToken).toBe('slrt_b');
     expect(fetcher).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'slrt_a2' }) }));
   });
+
+  it('refreshes again when a token adopted from another tab has expired too', async () => {
+    const t0 = jwt('user-a');
+    const t1 = jwt('user-a');
+    const t2 = jwt('user-a');
+    const store = memoryStore(t0, 'slrt_0');
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/auth/refresh')) return json({ token: t2, refreshToken: 'slrt_2', expiresIn: 3600 });
+      const auth = (init?.headers as Record<string, string>).authorization;
+      return auth === `Bearer ${t2}` ? json([]) : json({}, 401);
+    });
+    const api = new ApiClient('/api', fetcher, false);
+    api.useSession(store);
+    // Another tab refreshed earlier; its token T1 has since expired as well.
+    Object.assign(store.state, { token: t1, refreshToken: 'slrt_1' });
+    await expect(api.sites()).resolves.toEqual([]);
+    expect(store.state).toEqual({ token: t2, refreshToken: 'slrt_2' });
+    expect(fetcher).toHaveBeenCalledWith('/api/auth/refresh', expect.objectContaining({ body: JSON.stringify({ refreshToken: 'slrt_1' }) }));
+  });
 });

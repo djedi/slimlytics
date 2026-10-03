@@ -421,15 +421,6 @@ async fn finish_login(
     let (user, _) = webauthn
         .identify_discoverable_authentication(&input.credential)
         .map_err(|_| ApiError::Unauthorized)?;
-    let enabled: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL)",
-    )
-    .bind(user)
-    .fetch_one(&state.pool)
-    .await?;
-    if !enabled {
-        return Err(ApiError::Unauthorized);
-    }
     let keys = user_passkeys(&state.pool, user).await?;
     let discoverable: Vec<DiscoverableKey> = keys
         .iter()
@@ -438,12 +429,14 @@ async fn finish_login(
     let result = webauthn
         .finish_discoverable_authentication(&input.credential, authentication, &discoverable)
         .map_err(|_| ApiError::Unauthorized)?;
+    // One transaction, account row first, then the passkey row: a concurrent disable or
+    // passkey reset either blocks this sign-in or revokes the session it creates.
     let mut tx = state.pool.begin().await?;
+    lock_enabled_user(&mut tx, user, true).await?;
     record_use(&mut tx, user, &result).await?;
+    let tokens = create_session_in(&mut tx, &state, user, "passkey", &headers).await?;
     tx.commit().await?;
-    Ok(Json(
-        create_session(&state, user, "passkey", &headers).await?,
-    ))
+    Ok(Json(tokens))
 }
 
 // ---- step-up (MFA) --------------------------------------------------------------------

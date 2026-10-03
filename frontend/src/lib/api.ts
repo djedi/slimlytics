@@ -283,14 +283,16 @@ export class ApiClient {
     this.token = tokens.token;
     return true;
   }
-  private async request<T>(path: string, init: RequestInit = {}, fallback?: () => T, retried = false): Promise<T> {
+  // `attempts` counts refreshes for this request: a token adopted from another tab may itself
+  // have expired, so one more refresh is allowed before the session counts as over.
+  private async request<T>(path: string, init: RequestInit = {}, fallback?: () => T, attempts = 0): Promise<T> {
     const sent = this.token;
     const headers: Record<string, string> = { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...(sent ? { authorization: `Bearer ${sent}` } : {}), ...(init.headers as Record<string, string> ?? {}) };
     try {
       const response = await this.fetcher(`${this.base}${path}`, { ...init, headers });
       if (!response.ok) {
         if (response.status === 401 && sent && !this.demo && !sessionlessPaths.some((prefix) => path.startsWith(prefix))) {
-          if (!retried && await this.refreshSession(sent)) return this.request(path, init, fallback, true);
+          if (attempts < 2 && await this.refreshSession(sent)) return this.request(path, init, fallback, attempts + 1);
           this.onUnauthorized?.();
         }
         let message = `Request failed (${response.status})`;

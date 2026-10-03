@@ -530,12 +530,52 @@ fn user_agent(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Starts a revocable sign-in session and returns its access and refresh tokens.
+/// Locks the account row and confirms it is enabled. Taken before issuing any credential so
+/// issuance serializes with disabling (which locks the same row before revoking access):
+/// either the disable waits and then revokes the new credential, or issuance sees it.
+/// `exclusive` is for transactions that go on to update the account row.
+async fn lock_enabled_user(
+    tx: &mut Transaction<'_, Postgres>,
+    user: Uuid,
+    exclusive: bool,
+) -> Result<(), ApiError> {
+    let sql = if exclusive {
+        "SELECT disabled_at IS NULL FROM users WHERE id=$1 FOR NO KEY UPDATE"
+    } else {
+        "SELECT disabled_at IS NULL FROM users WHERE id=$1 FOR SHARE"
+    };
+    let enabled: Option<bool> = sqlx::query_scalar(sql)
+        .bind(user)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if enabled == Some(true) {
+        Ok(())
+    } else {
+        Err(ApiError::Unauthorized)
+    }
+}
+
 async fn create_session(
     state: &AppState,
     user: Uuid,
     method: &str,
     headers: &HeaderMap,
 ) -> Result<SessionTokens, ApiError> {
+    let mut tx = state.pool.begin().await?;
+    let tokens = create_session_in(&mut tx, state, user, method, headers).await?;
+    tx.commit().await?;
+    Ok(tokens)
+}
+
+/// Starts a session inside `tx`, so callers can make it atomic with their own checks.
+async fn create_session_in(
+    tx: &mut Transaction<'_, Postgres>,
+    state: &AppState,
+    user: Uuid,
+    method: &str,
+    headers: &HeaderMap,
+) -> Result<SessionTokens, ApiError> {
+    lock_enabled_user(tx, user, true).await?;
     let refresh_token = generate_refresh_token();
     let session: Uuid = sqlx::query_scalar(
         "INSERT INTO user_sessions(user_id,refresh_token_hash,auth_method,mfa_verified_at,user_agent,expires_at)
@@ -547,11 +587,11 @@ async fn create_session(
     .bind(method)
     .bind(user_agent(headers))
     .bind(SESSION_IDLE_DAYS as i32)
-    .fetch_one(&state.pool)
+    .fetch_one(&mut **tx)
     .await?;
     sqlx::query("UPDATE users SET last_login_at=now() WHERE id=$1")
         .bind(user)
-        .execute(&state.pool)
+        .execute(&mut **tx)
         .await?;
     session_tokens(state, user, session, refresh_token)
 }
@@ -648,6 +688,15 @@ async fn refresh_session(
     }
     let presented = hash_api_token(&input.refresh_token);
     let mut tx = state.pool.begin().await?;
+    // Lock order matches disabling an account: the user row, then its sessions.
+    let owner: Option<Uuid> =
+        sqlx::query_scalar("SELECT user_id FROM user_sessions WHERE refresh_token_hash=$1")
+            .bind(&presented)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some(owner) = owner {
+        lock_enabled_user(&mut tx, owner, false).await?;
+    }
     let row: Option<(Uuid, Uuid)> = sqlx::query_as(
         "SELECT s.id,s.user_id FROM user_sessions s JOIN users u ON u.id=s.user_id
          WHERE s.refresh_token_hash=$1 AND s.revoked_at IS NULL AND s.expires_at>now()
