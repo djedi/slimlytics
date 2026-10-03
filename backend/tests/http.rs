@@ -196,6 +196,26 @@ async fn openapi_document_covers_every_public_backend_route() {
         ("/api/e/{writeKey}", "post"),
         ("/api/e/{writeKey}", "options"),
         ("/api/ingest", "post"),
+        ("/api/auth/refresh", "post"),
+        ("/api/auth/logout", "post"),
+        ("/api/auth/passkey/start", "post"),
+        ("/api/auth/passkey/finish", "post"),
+        ("/api/auth/mfa/start", "post"),
+        ("/api/auth/mfa/finish", "post"),
+        ("/api/account/sessions", "get"),
+        ("/api/account/sessions/{sessionId}", "delete"),
+        ("/api/account/passkeys", "get"),
+        ("/api/account/passkeys/register/start", "post"),
+        ("/api/account/passkeys/register/finish", "post"),
+        ("/api/account/passkeys/{passkeyId}", "delete"),
+        ("/api/admin/overview", "get"),
+        ("/api/admin/users", "get"),
+        ("/api/admin/users/{userId}", "get"),
+        ("/api/admin/users/{userId}", "delete"),
+        ("/api/admin/users/{userId}/disable", "post"),
+        ("/api/admin/users/{userId}/enable", "post"),
+        ("/api/admin/users/{userId}/revoke-sessions", "post"),
+        ("/api/admin/audit", "get"),
     ];
     for (path, method) in required_operations {
         assert!(
@@ -483,19 +503,38 @@ async fn oauth_registration_rejects_unsupported_metadata_with_rfc7591_errors() {
     assert_eq!(body_json(response).await["error"], "invalid_redirect_uri");
 }
 
-#[tokio::test]
-async fn mcp_negotiates_client_revision_and_accepts_notifications() {
-    let token = slimlytics_backend::auth::issue_token(
-        uuid::Uuid::new_v4(),
-        "test-secret-at-least-32-characters",
-        3600,
+/// Session JWTs are checked against the live account, so this needs a real database.
+async fn database_state() -> AppState {
+    let pool = PgPoolOptions::new()
+        .connect(&std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL required"))
+        .await
+        .unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    AppState::new(
+        pool,
+        "test-secret-at-least-32-characters".into(),
+        b"identity-secret".to_vec(),
     )
-    .unwrap();
-    let response = app(state()).oneshot(Request::post("/api/mcp").header("authorization",format!("Bearer {token}")).header("content-type","application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)).unwrap()).await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn mcp_negotiates_client_revision_and_accepts_notifications() {
+    let state = database_state().await;
+    let user: uuid::Uuid =
+        sqlx::query_scalar("INSERT INTO users(email,password_hash) VALUES($1,'x') RETURNING id")
+            .bind(format!("mcp-{}@example.com", uuid::Uuid::new_v4().simple()))
+            .fetch_one(&state.pool)
+            .await
+            .unwrap();
+    let token =
+        slimlytics_backend::auth::issue_token(user, "test-secret-at-least-32-characters", 3600)
+            .unwrap();
+    let response = app(state.clone()).oneshot(Request::post("/api/mcp").header("authorization",format!("Bearer {token}")).header("content-type","application/json").body(Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#)).unwrap()).await.unwrap();
     let body: serde_json::Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 10000).await.unwrap()).unwrap();
     assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
-    let response = app(state())
+    let response = app(state)
         .oneshot(
             Request::post("/api/mcp")
                 .header("authorization", format!("Bearer {token}"))

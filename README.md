@@ -173,6 +173,17 @@ Before upgrading:
 
 Rollback by checking out the previous tag and restoring the pre-upgrade backup if the migration is not backward compatible.
 
+### Admin portal
+
+`/admin` lists accounts, their sites, devices, and passkeys, and can sign accounts out, disable, re-enable, or delete them. Every action is recorded in an audit log. Grant access from the deployment directory:
+
+```bash
+scripts/admin-grant.sh you@example.com            # make an admin
+scripts/admin-grant.sh you@example.com --revoke   # remove admin access
+```
+
+An admin must add a passkey under **Account security** (`/account`). The portal then requires a session that verified that passkey within the last 12 hours.
+
 ## Security
 
 - Never commit `.env`.

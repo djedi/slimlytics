@@ -551,16 +551,8 @@ async fn approve(
         ));
     }
     let email = f.email.clone();
-    let session = match login(
-        State(s.clone()),
-        Json(Credentials {
-            email: f.email,
-            password: f.password,
-        }),
-    )
-    .await
-    {
-        Ok(Json(session)) => session,
+    let user = match authenticate_password(&s, &f.email, &f.password).await {
+        Ok(user) => user,
         // Show credential problems on the page instead of a bare JSON error.
         Err(error @ (ApiError::Unauthorized | ApiError::RateLimited)) => {
             let (status, message) = match error {
@@ -588,9 +580,6 @@ async fn approve(
         }
         Err(error) => return Err(error),
     };
-    let user = verify_token(&session.token, &s.jwt_secret)
-        .map_err(|_| ApiError::Unauthorized)?
-        .sub;
     let code = generate_api_token();
     sqlx::query("INSERT INTO oauth_codes(code_hash,client_id,user_id,redirect_uri,challenge,scopes) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(hash_api_token(&code))
