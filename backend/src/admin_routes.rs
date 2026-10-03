@@ -265,7 +265,8 @@ async fn user_detail(
     })))
 }
 
-/// Ends every way the account can act: browser sessions, API tokens, and MCP connections.
+/// Ends every way the account can act: browser sessions, API tokens, MCP connections, and
+/// MCP authorization codes that were approved but not yet exchanged.
 async fn revoke_access(tx: &mut Transaction<'_, Postgres>, user: Uuid) -> Result<(), ApiError> {
     sqlx::query(
         "UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL",
@@ -274,6 +275,10 @@ async fn revoke_access(tx: &mut Transaction<'_, Postgres>, user: Uuid) -> Result
     .execute(&mut **tx)
     .await?;
     sqlx::query("UPDATE api_tokens SET revoked_at=now() WHERE user_id=$1 AND revoked_at IS NULL")
+        .bind(user)
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_codes WHERE user_id=$1")
         .bind(user)
         .execute(&mut **tx)
         .await?;

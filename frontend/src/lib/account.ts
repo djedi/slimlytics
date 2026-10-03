@@ -56,7 +56,8 @@ const auditLabels: Record<string, string> = {
   'user.revoke_sessions': 'Signed out everywhere',
   'user.delete': 'Deleted account',
   'admin.grant': 'Granted admin access',
-  'admin.revoke': 'Removed admin access'
+  'admin.revoke': 'Removed admin access',
+  'passkeys.reset': 'Reset passkeys'
 };
 
 export function auditLabel(action: string): string {

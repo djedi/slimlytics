@@ -253,7 +253,9 @@ export class ApiClient {
   /** Ends this session on the server, then forgets it locally even if the server is unreachable. */
   async logout() {
     try {
-      if (this.token && !this.demo) await this.request<void>('/auth/logout', { method: 'POST' });
+      const refreshToken = this.store?.load().refreshToken;
+      if ((this.token || refreshToken) && !this.demo)
+        await this.request<void>('/auth/logout', { method: 'POST', body: JSON.stringify(refreshToken ? { refreshToken } : {}) });
     } catch { /* already signed out */ } finally {
       this.store?.clear();
       this.token = '';
@@ -269,7 +271,7 @@ export class ApiClient {
   passkeys() { return this.request<PasskeySummary[]>('/account/passkeys'); }
   startPasskeyRegistration(currentPassword?: string) { return this.request<WebAuthnChallenge>('/account/passkeys/register/start', { method: 'POST', body: JSON.stringify(currentPassword ? { currentPassword } : {}) }); }
   finishPasskeyRegistration(challengeId: string, name: string, credential: unknown) { return this.request<PasskeySummary>('/account/passkeys/register/finish', { method: 'POST', body: JSON.stringify({ challengeId, name, credential }) }); }
-  deletePasskey(id: string, currentPassword?: string) { return this.request<void>(`/account/passkeys/${id}`, { method: 'DELETE', body: JSON.stringify(currentPassword ? { currentPassword } : {}) }); }
+  deletePasskey(id: string) { return this.request<void>(`/account/passkeys/${id}`, { method: 'DELETE' }); }
   adminOverview() { return this.request<AdminOverview>('/admin/overview'); }
   adminUsers(query = '', offset = 0, limit = 50) { return this.request<{ users: AdminUser[]; total: number }>(`/admin/users?${new URLSearchParams({ q: query, offset: String(offset), limit: String(limit) })}`); }
   adminUser(id: string) { return this.request<AdminUserDetail>(`/admin/users/${id}`); }

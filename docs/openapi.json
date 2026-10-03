@@ -142,7 +142,7 @@
         "tags": [
           "Authentication"
         ],
-        "summary": "Sign out this session",
+        "summary": "Sign out a session",
         "operationId": "logout",
         "responses": {
           "204": {
@@ -180,10 +180,27 @@
           }
         },
         "security": [
+          {},
           {
             "bearerAuth": []
           }
-        ]
+        ],
+        "description": "Revokes the session of the Bearer access token and/or the session whose current refresh token is supplied, so a client whose access token already expired can still end its session. Always returns 204.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refreshToken": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/auth/passkey/start": {
@@ -821,7 +838,7 @@
         "tags": [
           "Account"
         ],
-        "summary": "Remove a passkey",
+        "summary": "Remove a passkey (requires a passkey-verified session)",
         "operationId": "deletePasskey",
         "responses": {
           "204": {
@@ -883,16 +900,6 @@
             "bearerAuth": []
           }
         ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Reauthentication"
-              }
-            }
-          }
-        },
         "parameters": [
           {
             "name": "passkeyId",
@@ -6431,7 +6438,7 @@
         "properties": {
           "currentPassword": {
             "type": "string",
-            "description": "Required unless this session verified a passkey within the last 12 hours"
+            "description": "Required to add the first passkey. Adding more needs a session that verified a passkey within the last 12 hours."
           }
         }
       },

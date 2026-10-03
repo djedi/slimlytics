@@ -182,7 +182,7 @@ scripts/admin-grant.sh you@example.com            # make an admin
 scripts/admin-grant.sh you@example.com --revoke   # remove admin access
 ```
 
-An admin must add a passkey under **Account security** (`/account`). The portal then requires a session that verified that passkey within the last 12 hours.
+An admin must add a passkey under **Account security** (`/account`). The portal then requires a session that verified that passkey within the last 12 hours. If someone loses every passkey, confirm their identity and run `scripts/passkey-reset.sh EMAIL`; they can then sign in with their password and add a new one.
 
 ## Security
 

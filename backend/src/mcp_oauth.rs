@@ -701,6 +701,18 @@ async fn exchange_code(s: &AppState, f: &TokenRequest) -> Result<Value, TokenErr
     .fetch_optional(&mut *tx)
     .await?;
     let (user, scopes) = row.ok_or(invalid)?;
+    let enabled: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND disabled_at IS NULL)",
+    )
+    .bind(user)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !enabled {
+        return Err(TokenError::OAuth(
+            "invalid_grant",
+            "the authorization code is invalid or expired",
+        ));
+    }
     let access = generate_api_token();
     let connection: Uuid = sqlx::query_scalar(
         "INSERT INTO api_tokens(user_id,name,token_hash,token_prefix,expires_at,access_expires_at,scopes,oauth_resource)
@@ -755,7 +767,8 @@ async fn exchange_refresh(s: &AppState, f: &TokenRequest) -> Result<Value, Token
     .await?;
     let connection = connection.ok_or_else(invalid)?;
     let grant: Option<(Vec<String>, bool)> = sqlx::query_as(
-        "SELECT scopes,(revoked_at IS NULL AND expires_at>now()) FROM api_tokens WHERE id=$1 FOR UPDATE",
+        "SELECT t.scopes,(t.revoked_at IS NULL AND t.expires_at>now() AND u.disabled_at IS NULL)
+         FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 FOR UPDATE OF t",
     )
     .bind(connection)
     .fetch_optional(&mut *tx)

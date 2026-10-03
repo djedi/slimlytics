@@ -117,7 +117,11 @@ describe('ApiClient sessions', () => {
     await api.login('a@example.com', 'correct horse battery staple');
     expect(store.state).toEqual({ token: 'access', refreshToken: 'slrt_a' });
     await api.logout();
-    expect(fetcher).toHaveBeenLastCalledWith('/api/auth/logout', expect.objectContaining({ method: 'POST' }));
+    // The refresh token identifies the session even if the access token has expired.
+    expect(fetcher).toHaveBeenLastCalledWith('/api/auth/logout', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: 'slrt_a' })
+    }));
     expect(store.cleared).toBe(true);
   });
 

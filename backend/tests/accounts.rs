@@ -108,8 +108,18 @@ async fn add_passkey(
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{start}");
-    let options: CreationChallengeResponse =
-        serde_json::from_value(start["options"].clone()).unwrap();
+    let selection = &start["options"]["publicKey"]["authenticatorSelection"];
+    assert_eq!(
+        selection["residentKey"], "required",
+        "usernameless sign-in needs it"
+    );
+    assert_eq!(selection["requireResidentKey"], true);
+    // The soft authenticator cannot store resident keys; real ones (and the browser E2E with
+    // a CDP virtual authenticator) honour the requirement. The server does not depend on it.
+    let mut soft = start["options"].clone();
+    soft["publicKey"]["authenticatorSelection"]["requireResidentKey"] = json!(false);
+    soft["publicKey"]["authenticatorSelection"]["residentKey"] = json!("discouraged");
+    let options: CreationChallengeResponse = serde_json::from_value(soft).unwrap();
     let credential = auth
         .do_registration(Url::parse(ORIGIN).unwrap(), options)
         .unwrap();
@@ -226,8 +236,8 @@ async fn refresh_tokens_keep_people_signed_in_and_rotate() {
     assert_eq!(status, StatusCode::OK);
 
     // Replay well after rotation means the token leaked: the whole session is revoked.
-    sqlx::query("UPDATE user_sessions SET rotated_at=now()-interval '5 minutes' WHERE refresh_token_hash=sha256($1::text::bytea)")
-        .bind(&second_refresh)
+    sqlx::query("UPDATE user_session_used_tokens SET used_at=now()-interval '5 minutes' WHERE token_hash=sha256($1::text::bytea)")
+        .bind(&first_refresh)
         .execute(&pool)
         .await
         .unwrap();
@@ -458,8 +468,9 @@ async fn passkeys_register_sign_in_and_step_up() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // Removing a passkey needs re-authentication too.
-    let id = passkeys[0]["id"].as_str().unwrap();
+    // Removing a passkey needs a passkey check: a password alone would let a thief swap
+    // the victim's passkeys for their own.
+    let id = passkeys[0]["id"].as_str().unwrap().to_owned();
     let (_, other_login) = call(
         &router,
         "POST",
@@ -468,7 +479,17 @@ async fn passkeys_register_sign_in_and_step_up() {
         Some(json!({"email": address, "password": PASSWORD})),
     )
     .await;
-    let password_only = other_login["token"].as_str().unwrap();
+    let password_only = other_login["token"].as_str().unwrap().to_owned();
+    let (status, body) = call(
+        &router,
+        "DELETE",
+        &format!("/api/account/passkeys/{id}"),
+        Some(&password_only),
+        Some(json!({"currentPassword": PASSWORD})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"]["code"], "mfa_required");
 
     // A step-up challenge only verifies the session that requested it.
     let (_, start) = call(&router, "POST", "/api/auth/mfa/start", Some(&token), None).await;
@@ -477,31 +498,43 @@ async fn passkeys_register_sign_in_and_step_up() {
         &router,
         "POST",
         "/api/auth/mfa/finish",
-        Some(password_only),
+        Some(&password_only),
         Some(json!({"challengeId": start["challengeId"], "credential": assertion})),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
-    let (_, me) = call(&router, "GET", "/api/auth/me", Some(password_only), None).await;
+    let (_, me) = call(&router, "GET", "/api/auth/me", Some(&password_only), None).await;
     assert_eq!(me["mfaVerified"], false);
-    let (status, _) = call(
+    // A step-up started before a passkey is removed cannot finish with that passkey.
+    let (_, pending) = call(
         &router,
-        "DELETE",
-        &format!("/api/account/passkeys/{id}"),
-        Some(password_only),
+        "POST",
+        "/api/auth/mfa/start",
+        Some(&password_only),
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
     let (status, _) = call(
         &router,
         "DELETE",
         &format!("/api/account/passkeys/{id}"),
-        Some(password_only),
-        Some(json!({"currentPassword": PASSWORD})),
+        Some(&token),
+        None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let stale = sign(&mut auth, pending["options"].clone(), &credential_id, None);
+    let (status, _) = call(
+        &router,
+        "POST",
+        "/api/auth/mfa/finish",
+        Some(&password_only),
+        Some(json!({"challengeId": pending["challengeId"], "credential": stale})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, me) = call(&router, "GET", "/api/auth/me", Some(&password_only), None).await;
+    assert_eq!(me["mfaVerified"], false);
     let (_, passkeys) = call(&router, "GET", "/api/account/passkeys", Some(&token), None).await;
     assert!(passkeys.as_array().unwrap().is_empty());
 }
@@ -729,4 +762,78 @@ async fn admin_portal_requires_admin_role_and_passkey_mfa() {
     let (status, body) = call(&router, "GET", "/api/admin/users", Some(&admin_token), None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "mfa_required");
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn replaying_any_rotated_refresh_token_revokes_the_session() {
+    let (pool, router) = setup().await;
+    let (_, _, r0) = register(&router, &email()).await;
+    let mut current = r0.clone();
+    let mut access = String::new();
+    for _ in 0..3 {
+        let (status, body) = call(
+            &router,
+            "POST",
+            "/api/auth/refresh",
+            None,
+            Some(json!({"refreshToken": current})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        current = body["refreshToken"].as_str().unwrap().to_owned();
+        access = body["token"].as_str().unwrap().to_owned();
+    }
+    // R0 was rotated out three generations ago; age the history past the grace window.
+    sqlx::query(
+        "UPDATE user_session_used_tokens SET used_at=now()-interval '5 minutes'
+         WHERE token_hash=sha256($1::text::bytea)",
+    )
+    .bind(&r0)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (status, _) = call(
+        &router,
+        "POST",
+        "/api/auth/refresh",
+        None,
+        Some(json!({"refreshToken": r0})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = call(&router, "GET", "/api/auth/me", Some(&access), None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "the descendant session is revoked"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn logout_with_only_the_refresh_token_ends_the_session() {
+    let (_, router) = setup().await;
+    let (_, token, refresh) = register(&router, &email()).await;
+    // An expired access token cannot authenticate, so the refresh token proves the session.
+    let (status, _) = call(
+        &router,
+        "POST",
+        "/api/auth/logout",
+        Some("expired.jwt.value"),
+        Some(json!({"refreshToken": refresh})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = call(
+        &router,
+        "POST",
+        "/api/auth/refresh",
+        None,
+        Some(json!({"refreshToken": refresh})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = call(&router, "GET", "/api/auth/me", Some(&token), None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

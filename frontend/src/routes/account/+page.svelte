@@ -32,7 +32,8 @@
   let password = $state('');
 
   const mfa = $derived(account?.mfaVerified ?? false);
-  // Adding a first passkey needs the password; adding another needs a passkey check first.
+  // Adding a first passkey needs the password. Adding or removing one once any exist needs
+  // a passkey check, so a stolen password can never swap in someone else's passkey.
   const needsStepUp = $derived(passkeys.length > 0 && !mfa);
 
   onMount(() => {
@@ -89,7 +90,7 @@
 
   const removePasskey = (key: PasskeySummary) => {
     if (!confirm(`Remove “${key.name}”? You will no longer be able to sign in with it.`)) return;
-    return run(() => api.deletePasskey(key.id, mfa ? undefined : password), `Removed “${key.name}”.`);
+    return run(() => api.deletePasskey(key.id), `Removed “${key.name}”.`);
   };
 
   const signOut = (session: AccountSession) =>
@@ -138,7 +139,7 @@
                 <strong>{key.name}</strong>
                 <small>Added {formatDate(key.createdAt)} · Last used {formatDate(key.lastUsedAt)}</small>
               </span>
-              <button class="danger" disabled={busy || (!mfa && !password)} onclick={() => void removePasskey(key)}>
+              <button class="danger" disabled={busy || !mfa} onclick={() => void removePasskey(key)}>
                 <Trash2 size={15} aria-hidden="true" />Remove
               </button>
             </li>
@@ -152,7 +153,7 @@
         <p class="console-empty">This browser doesn't support passkeys.</p>
       {:else if needsStepUp}
         <div class="console-form step-up">
-          <p class="console-empty">To add another passkey, first verify with one you already have.</p>
+          <p class="console-empty">To add or remove a passkey, first verify with one you already have.</p>
           <button class="primary" disabled={busy} onclick={() => void verify()}>
             <ShieldCheck size={16} aria-hidden="true" />Verify with passkey
           </button>
@@ -174,12 +175,11 @@
           <button class="primary" disabled={busy}><KeyRound size={16} aria-hidden="true" />Add a passkey</button>
         </form>
       {/if}
-      {#if passkeys.length && !mfa}
-        <div class="console-form">
-          <label for="remove-password"
-            >Current password, to remove a passkey<input id="remove-password" type="password" bind:value={password} autocomplete="current-password" /></label
-          >
-        </div>
+      {#if passkeys.length}
+        <p class="console-empty">
+          Lost every passkey? Sign in with your password and ask the server operator to run
+          <code>scripts/passkey-reset.sh</code> for your account.
+        </p>
       {/if}
     </section>
 

@@ -668,11 +668,13 @@ async fn refresh_session(
     .fetch_optional(&mut *tx)
     .await?;
     let Some((session, user)) = row else {
-        // A rotated-out token replayed after the grace window means it leaked: end the session.
+        // Any rotated-out token replayed after the grace window means it leaked: end the
+        // session. Inside the window it is most likely two tabs racing, so only refuse it.
         sqlx::query(
-            "UPDATE user_sessions SET revoked_at=now()
-             WHERE previous_token_hash=$1 AND revoked_at IS NULL
-               AND rotated_at < now()-make_interval(secs=>$2)",
+            "UPDATE user_sessions s SET revoked_at=now()
+             FROM user_session_used_tokens t
+             WHERE t.token_hash=$1 AND t.session_id=s.id AND s.revoked_at IS NULL
+               AND t.used_at < now()-make_interval(secs=>$2)",
         )
         .bind(&presented)
         .bind(REFRESH_REUSE_GRACE_SECONDS as f64)
@@ -681,10 +683,14 @@ async fn refresh_session(
         tx.commit().await?;
         return Err(ApiError::Unauthorized);
     };
+    sqlx::query("INSERT INTO user_session_used_tokens(token_hash,session_id) VALUES($1,$2)")
+        .bind(&presented)
+        .bind(session)
+        .execute(&mut *tx)
+        .await?;
     let refresh_token = generate_refresh_token();
     sqlx::query(
-        "UPDATE user_sessions SET previous_token_hash=refresh_token_hash, refresh_token_hash=$2,
-           rotated_at=now(), last_used_at=now(),
+        "UPDATE user_sessions SET refresh_token_hash=$2, last_used_at=now(),
            expires_at=LEAST(now()+make_interval(days=>$3), created_at+make_interval(days=>$4))
          WHERE id=$1",
     )
@@ -698,15 +704,39 @@ async fn refresh_session(
     Ok(Json(session_tokens(&state, user, session, refresh_token)?))
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LogoutInput {
+    refresh_token: Option<String>,
+}
+
+/// Ends a session identified by its access token or, when that has already expired, by its
+/// current refresh token. Signing out always succeeds so a stale client can clear itself.
 async fn logout(
     State(state): State<AppState>,
-    signed_in: SignedIn,
+    headers: HeaderMap,
+    body: Option<Json<LogoutInput>>,
 ) -> Result<StatusCode, ApiError> {
-    if let Some(session) = signed_in.session_id {
+    let Json(input) = body.unwrap_or_default();
+    if let Some(session) = match bearer(&headers) {
+        Ok(value) if !value.starts_with("slyt_") => authenticate_jwt(&state, value)
+            .await
+            .ok()
+            .and_then(|signed_in| signed_in.session_id),
+        _ => None,
+    } {
         sqlx::query("UPDATE user_sessions SET revoked_at=now() WHERE id=$1 AND revoked_at IS NULL")
             .bind(session)
             .execute(&state.pool)
             .await?;
+    }
+    if let Some(refresh_token) = input.refresh_token.filter(|value| value.len() <= 128) {
+        sqlx::query(
+            "UPDATE user_sessions SET revoked_at=now() WHERE refresh_token_hash=$1 AND revoked_at IS NULL",
+        )
+        .bind(hash_api_token(&refresh_token))
+        .execute(&state.pool)
+        .await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }

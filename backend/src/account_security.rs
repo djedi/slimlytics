@@ -108,23 +108,29 @@ async fn user_passkeys(pool: &PgPool, user: Uuid) -> Result<Vec<(Uuid, Passkey)>
         .collect()
 }
 
-/// Saves the authenticator's new signature counter and backup state after a sign-in.
+/// Confirms the asserted passkey is still registered to `user` (it may have been removed
+/// while the ceremony was pending) and saves its new signature counter. The row lock holds
+/// off a concurrent removal until the caller's transaction commits.
 async fn record_use(
-    pool: &PgPool,
-    keys: &mut [(Uuid, Passkey)],
+    tx: &mut Transaction<'_, Postgres>,
+    user: Uuid,
     result: &webauthn_rs::prelude::AuthenticationResult,
 ) -> Result<(), ApiError> {
-    if let Some((id, key)) = keys
-        .iter_mut()
-        .find(|(_, key)| key.cred_id() == result.cred_id())
-    {
-        key.update_credential(result);
-        sqlx::query("UPDATE user_passkeys SET passkey=$2,last_used_at=now() WHERE id=$1")
-            .bind(*id)
-            .bind(serde_json::to_value(&*key).map_err(|_| ApiError::Internal)?)
-            .execute(pool)
-            .await?;
-    }
+    let row: Option<(Uuid, Value)> = sqlx::query_as(
+        "SELECT id,passkey FROM user_passkeys WHERE user_id=$1 AND credential_id=$2 FOR UPDATE",
+    )
+    .bind(user)
+    .bind(result.cred_id().to_vec())
+    .fetch_optional(&mut **tx)
+    .await?;
+    let (id, value) = row.ok_or(ApiError::Unauthorized)?;
+    let mut key: Passkey = serde_json::from_value(value).map_err(|_| ApiError::Internal)?;
+    key.update_credential(result);
+    sqlx::query("UPDATE user_passkeys SET passkey=$2,last_used_at=now() WHERE id=$1")
+        .bind(id)
+        .bind(serde_json::to_value(&key).map_err(|_| ApiError::Internal)?)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 
@@ -253,14 +259,15 @@ async fn start_registration(
     let (options, registration) = webauthn(&state)?
         .start_passkey_registration(user, &email, &email, Some(exclude))
         .map_err(|_| ApiError::Internal)?;
-    // Ask for a discoverable credential so the passkey also works for usernameless sign-in.
-    // (Only the browser hint changes; verification does not depend on it.)
+    // Require a discoverable credential: sign-in is usernameless, so a passkey the
+    // authenticator cannot offer unprompted would be unusable there.
     let mut options = serde_json::to_value(options).map_err(|_| ApiError::Internal)?;
     if let Some(selection) = options
         .pointer_mut("/publicKey/authenticatorSelection")
         .and_then(Value::as_object_mut)
     {
-        selection.insert("residentKey".into(), json!("preferred"));
+        selection.insert("residentKey".into(), json!("required"));
+        selection.insert("requireResidentKey".into(), json!(true));
     }
     let challenge_id = store_challenge(
         &state.pool,
@@ -324,22 +331,15 @@ async fn finish_registration(
     ))
 }
 
+/// Removing a passkey needs a passkey-verified session. Accepting the password here would
+/// let a thief delete every passkey and then enroll their own with the password alone.
 async fn delete_passkey(
     State(state): State<AppState>,
     signed_in: SignedIn,
     Path(passkey): Path<Uuid>,
-    body: Option<Json<Reauth>>,
 ) -> Result<StatusCode, ApiError> {
-    let Json(reauth) = body.unwrap_or_default();
-    let verified = session_mfa_verified(&state.pool, signed_in.session_id).await?
-        || password_matches(
-            &state.pool,
-            signed_in.user_id,
-            reauth.current_password.as_deref().unwrap_or(""),
-        )
-        .await?;
-    if !verified {
-        return Err(ApiError::Forbidden);
+    if !session_mfa_verified(&state.pool, signed_in.session_id).await? {
+        return Err(ApiError::MfaRequired);
     }
     let done = sqlx::query("DELETE FROM user_passkeys WHERE id=$1 AND user_id=$2")
         .bind(passkey)
@@ -405,7 +405,7 @@ async fn finish_login(
     if !enabled {
         return Err(ApiError::Unauthorized);
     }
-    let mut keys = user_passkeys(&state.pool, user).await?;
+    let keys = user_passkeys(&state.pool, user).await?;
     let discoverable: Vec<DiscoverableKey> = keys
         .iter()
         .map(|(_, key)| DiscoverableKey::from(key))
@@ -413,7 +413,9 @@ async fn finish_login(
     let result = webauthn
         .finish_discoverable_authentication(&input.credential, authentication, &discoverable)
         .map_err(|_| ApiError::Unauthorized)?;
-    record_use(&state.pool, &mut keys, &result).await?;
+    let mut tx = state.pool.begin().await?;
+    record_use(&mut tx, user, &result).await?;
+    tx.commit().await?;
     Ok(Json(
         create_session(&state, user, "passkey", &headers).await?,
     ))
@@ -469,11 +471,12 @@ async fn finish_step_up(
     let result = webauthn(&state)?
         .finish_passkey_authentication(&input.credential, &authentication)
         .map_err(|_| ApiError::Unauthorized)?;
-    let mut keys = user_passkeys(&state.pool, signed_in.user_id).await?;
-    record_use(&state.pool, &mut keys, &result).await?;
+    let mut tx = state.pool.begin().await?;
+    record_use(&mut tx, signed_in.user_id, &result).await?;
     sqlx::query("UPDATE user_sessions SET mfa_verified_at=now() WHERE id=$1")
         .bind(session)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

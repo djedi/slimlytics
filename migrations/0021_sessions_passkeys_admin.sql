@@ -7,13 +7,11 @@ ALTER TABLE users
   ADD COLUMN last_login_at timestamptz;
 
 -- One row per signed-in browser/device. The refresh token is opaque and stored only as a
--- SHA-256 hash; it rotates on every use and the previous hash is kept to detect replay.
+-- SHA-256 hash; it rotates on every use.
 CREATE TABLE user_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   refresh_token_hash bytea NOT NULL UNIQUE,
-  previous_token_hash bytea,
-  rotated_at timestamptz,
   auth_method text NOT NULL CHECK (auth_method IN ('password', 'passkey')),
   -- Set when this session proved possession of a passkey; admin access requires it.
   mfa_verified_at timestamptz,
@@ -24,8 +22,15 @@ CREATE TABLE user_sessions (
   revoked_at timestamptz
 );
 CREATE INDEX user_sessions_user_idx ON user_sessions(user_id) WHERE revoked_at IS NULL;
-CREATE INDEX user_sessions_previous_idx ON user_sessions(previous_token_hash)
-  WHERE previous_token_hash IS NOT NULL;
+
+-- Every rotated-out refresh token, kept for the session's lifetime: replaying any of them
+-- (outside a short grace window for racing tabs) revokes the session.
+CREATE TABLE user_session_used_tokens (
+  token_hash bytea PRIMARY KEY,
+  session_id uuid NOT NULL REFERENCES user_sessions(id) ON DELETE CASCADE,
+  used_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX user_session_used_tokens_session_idx ON user_session_used_tokens(session_id);
 
 CREATE TABLE user_passkeys (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
