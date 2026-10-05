@@ -272,6 +272,15 @@ Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) fo
 
 This codebase is a ground-up rewrite of the earlier Slimlytics projects.
 
+## License
+
+Slimlytics is open source under the [GNU Affero General Public License v3.0](LICENSE). You can run, study, modify, and self-host it freely. If you offer a modified version to others as a network service, the AGPL requires you to make your modified source available to its users.
+
+Two components meant to be embedded in other projects use the permissive [MIT License](cli/LICENSE) instead:
+
+- `tracker/`: the browser tracker script that runs on your website ([tracker/LICENSE](tracker/LICENSE))
+- `cli/`: the `slimlytics` command-line tool ([cli/LICENSE](cli/LICENSE))
+
 ---
 
 **Try it in a minute:** [slimlytics.com](https://slimlytics.com). Free hosted plan, no card required.
