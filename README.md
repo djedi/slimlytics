@@ -1,12 +1,61 @@
 # Slimlytics
 
-Slimlytics is a lightweight, privacy-minded, self-hostable web analytics platform with real-time traffic visibility. It combines a Rust/Axum ingestion and reporting API, PostgreSQL, a Svelte dashboard, and a small first-party browser tracker.
+**Private, real-time web analytics. Know what works, skip the noise.**
 
-Marketing workflows include journeys, sequential funnels, attribution and revenue, content reporting, anomalies, AI referrals/crawlers, and an optional Google Search Console sync. Agents can connect through browser OAuth, create sites, and install first-party tracking with the MCP server. See [the agent setup guide](docs/MCP.md); scoped personal tokens and REST are also supported.
+[Website](https://slimlytics.com) · [Start free (hosted)](https://slimlytics.com/register) · [Pricing](https://slimlytics.com/pricing) · [Docs](https://slimlytics.com/docs) · [Agent setup](https://slimlytics.com/docs/mcp) · [Privacy model](https://slimlytics.com/privacy)
 
-This repository is a ground-up rewrite. It does not replace or rewrite the history of the older `djedi/slimlytics` or `djedi/go_slimlytics` repositories.
+[![Watch the 30-second Slimlytics tour](https://slimlytics.com/video/slimlytics-promo-poster.jpg)](https://slimlytics.com/#tour)
 
-## Highlights
+Slimlytics shows you who is on your site right now, where they came from, and what they did, without cookies, fingerprinting, or session replay. One small first-party script, a clean dashboard, and a live visitor stream. Your AI coding agent can even install it for you.
+
+> **Looking for the product?** Head to **[slimlytics.com](https://slimlytics.com)**. You do not need to clone this repository to use Slimlytics. The hosted version has a free plan and takes about a minute to set up.
+
+## Hosted or self-hosted: your call
+
+Every feature is included on every option. Pick the one that fits.
+
+|  | **Slimlytics Cloud** (hosted) | **Self-hosted** (this repo) |
+| --- | --- | --- |
+| Best for | Anyone who wants analytics, not another server to babysit | Teams who want full control of their infrastructure |
+| Setup | Create an account, paste one script tag | Docker Compose, PostgreSQL, Caddy |
+| Servers, upgrades, TLS, GeoIP data | Handled for you | You run them |
+| Cost | Free plan for one site; paid plans from $7/month | $0, unlimited sites and page views |
+| Support | Community, email, or priority email by plan | Community |
+| Get started | **[Create a free account](https://slimlytics.com/register)** | [Quick start](#self-hosting-quick-start) below |
+
+Plan limits and current prices are on the [pricing page](https://slimlytics.com/pricing).
+
+## Why Slimlytics
+
+- **Private by default.** No tracking cookies, no cross-site profiles, no form capture. Sensitive query parameters are redacted before storage, and Do Not Track and Global Privacy Control are respected.
+- **Real-time Spy.** Watch visitors arrive and move through your site as it happens.
+- **Reports that matter.** Pages, referrers, countries, devices, campaigns, visitors, and custom events, ranked and exportable to CSV.
+- **Goals and marketing insights.** Goals, UTM attribution, journeys, sequential funnels, revenue, anomalies, AI referrals and crawlers, and optional Google Search Console sync.
+- **First-party delivery.** Serve the tracker from your own domain with generated Caddy, Nginx, or Apache routes, so ad blockers break it less often.
+- **Agent-native.** A remote MCP server with browser OAuth lets Claude Code, Codex, Hermes, or any MCP client create your site, wire up tracking, and verify it.
+- **Fast and small.** A Rust API, PostgreSQL, and a Svelte dashboard with light, dark, and system themes.
+
+## Let your AI agent install it
+
+Connect your coding agent to the hosted MCP server once, then ask it to set up analytics:
+
+```bash
+claude mcp add --transport http slimlytics https://slimlytics.com/api/mcp
+```
+
+```text
+> Set up Slimlytics for https://shop.example.com behind Nginx and verify it.
+```
+
+The agent creates the site, adds the first-party proxy routes and script tag, and confirms the first page view landed. Codex and Hermes instructions are in the [agent guide](https://slimlytics.com/docs/mcp) (repository copy: [docs/MCP.md](docs/MCP.md)). Scoped personal tokens and the REST API are also supported.
+
+---
+
+## Self-hosting and development
+
+Everything below is for running your own instance or contributing. If you just want analytics, [Slimlytics Cloud](https://slimlytics.com/register) is the faster path.
+
+### Feature details
 
 - Multiple sites with independent write keys, origins, timezones, and retention settings
 - 28-day overview cards and comparison metrics
@@ -39,9 +88,9 @@ Dashboard ◀── JSON + SSE ─────┘
 - `docker/` — production container definitions and reverse proxy
 - `scripts/` — verified backup and guarded restore tooling
 
-## Quick start
+## Self-hosting quick start
 
-Requirements: Docker with Compose v2+.
+Requirements: Docker with Compose v2+. Prefer not to run servers? [Slimlytics Cloud](https://slimlytics.com/register) is free to start.
 
 Generate a private `.env` with independent random database, JWT, and visitor-hash secrets:
 
@@ -130,7 +179,7 @@ The tracker never captures form values. Cookieless tracking, Do Not Track, and G
 Install the `slimlytics` binary with Rust's Cargo:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/djedi/slimlytics-next/cli-v0.2.0/scripts/install-cli.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/djedi/slimlytics/cli-v0.2.0/scripts/install-cli.sh | sh
 slimlytics auth login --email you@example.com
 ```
 
@@ -207,6 +256,8 @@ See `SECURITY.md` for reporting and deployment guidance.
 - `docs/FIRST_PARTY_PROXY.md`
 - `docs/SERVER_INGESTION.md`
 - `docs/CLI.md`
+- `docs/MCP.md`
+- `docs/AGENT_INTEGRATION.md`
 - `docs/MIGRATION.md`
 - `docs/OPERATIONS.md`
 - `docs/BILLING.md`
@@ -214,3 +265,22 @@ See `SECURITY.md` for reporting and deployment guidance.
 ## Project status
 
 The current release includes collection diagnostics, marketing insights, sequential funnels, Search Console sync, and scoped REST/MCP access for agents. Retention cohorts, heatmaps, uptime monitoring, scheduled notification delivery, white-labeling, and a plugin marketplace remain later features.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development loop and privacy review checklist, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities privately.
+
+This codebase is a ground-up rewrite of the earlier Slimlytics projects.
+
+## License
+
+Slimlytics is open source under the [GNU Affero General Public License v3.0](LICENSE). You can run, study, modify, and self-host it freely. If you offer a modified version to others as a network service, the AGPL requires you to make your modified source available to its users.
+
+Two components meant to be embedded in other projects use the permissive [MIT License](cli/LICENSE) instead:
+
+- `tracker/`: the browser tracker script that runs on your website ([tracker/LICENSE](tracker/LICENSE))
+- `cli/`: the `slimlytics` command-line tool ([cli/LICENSE](cli/LICENSE))
+
+---
+
+**Try it in a minute:** [slimlytics.com](https://slimlytics.com). Free hosted plan, no card required.
