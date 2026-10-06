@@ -138,7 +138,7 @@ async function defaultTransport(url: string, payload: TrackerPayload, stillValid
       }
     }
     // The browser may have opted out (and possibly resumed) while the fetch was pending.
-    if (isIgnored() || !stillValid()) return false;
+    if (applyIgnoreToggle() || !stillValid()) return false;
     if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
       return navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     }
@@ -235,9 +235,10 @@ export function createTracker(options: TrackerOptions): Tracker {
     return enqueue({ id: id(), type: 'event', ...context(), name: name.slice(0, 120), properties });
   };
   const flush = async (): Promise<boolean> => {
-    if (sending) return sending;
+    // Before the in-flight early return, so a pending opt-out invalidates the batch being sent.
     if (typeof window !== 'undefined') applyIgnoreToggle();
     discardIfIgnored();
+    if (sending) return sending;
     if (!enabled() || queue.length === 0) return false;
     const events = queue.splice(0, batchSize);
     const epoch = optOutEpoch;

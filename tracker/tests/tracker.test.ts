@@ -373,6 +373,25 @@ describe('ignore my visits', () => {
     tracker.destroy();
   });
 
+  it('invalidates an in-flight batch when flush() sees a pushState opt-out', async () => {
+    const beacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true });
+    let fail!: (error: Error) => void;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const tracker = createTracker({ writeKey: 'key', autoTrack: false });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.pushState({}, '', '/#slimlytics-ignore');
+    void tracker.flush();
+    expect(isIgnored()).toBe(true);
+    window.localStorage.removeItem(IGNORE_STORAGE_KEY);
+    fail(new Error('network'));
+    await pending;
+    expect(beacon).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    tracker.destroy();
+  });
+
   it('discards the queue for a cross-tab opt-out even if that tab already resumed', async () => {
     const send = vi.fn().mockResolvedValue(true);
     const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
