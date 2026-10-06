@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { env } from '$env/dynamic/public';
-  import { BarChart3, CircleDot, Eye, EyeOff, KeyRound, ShieldCheck, TrendingUp, Zap } from '@lucide/svelte';
+  import { CircleDot, Eye, EyeOff, KeyRound, ShieldCheck, TrendingUp, Zap } from '@lucide/svelte';
   import { ApiClient, browserSession } from '$lib/api';
   import { getPasskey, passkeyErrorMessage, passkeysSupported } from '$lib/webauthn';
 
@@ -106,7 +106,7 @@
 <main id="main" class="auth-shell">
   <section class="auth-pitch">
     <a class="brand" href="/" aria-label="Slimlytics home">
-      <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span>Slimlytics
+      <img class="mascot-logo" src="/images/mascot/meerkat-logo.webp" width="38" height="38" alt="" />Slimlytics
     </a>
     <div>
       <p class="eyebrow">Privacy-first web analytics</p>
@@ -131,7 +131,7 @@
 
   <section class="mobile-intro" aria-labelledby="mobile-intro-title">
     <a class="brand" href="/" aria-label="Slimlytics home">
-      <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span>Slimlytics
+      <img class="mascot-logo" src="/images/mascot/meerkat-logo.webp" width="38" height="38" alt="" />Slimlytics
     </a>
     <div>
       <p class="eyebrow">Privacy-first web analytics</p>
