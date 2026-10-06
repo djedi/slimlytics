@@ -41,16 +41,6 @@ export const TRACKER_VERSION = '1.1.0';
 export const IGNORE_STORAGE_KEY = 'slimlytics_ignore';
 const IGNORE_FRAGMENT = /^#slimlytics-ignore(?:=(on|off|true|false))?$/i;
 
-/** True when `url` carries an opt-in-to-ignore fragment (not the `=off` resume form). */
-function isOptOutUrl(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const match = IGNORE_FRAGMENT.exec(new URL(url).hash);
-    return !!match && !/^(off|false)$/i.test(match[1] ?? '');
-  } catch {
-    return false;
-  }
-}
 
 // Fallback for the current document when the opt-out could not be persisted to localStorage.
 let ignoredInMemory: boolean | undefined;
@@ -67,11 +57,16 @@ export function isIgnored(): boolean {
 
 /**
  * Applies a `#slimlytics-ignore` / `#slimlytics-ignore=off` fragment, removes the marker from
- * the address bar, and returns whether this browser is now ignored.
+ * the address bar, and returns whether this browser is now ignored. `url` defaults to the
+ * current location; pass a hashchange event's `newURL` to apply that navigation's fragment.
  */
-export function applyIgnoreToggle(): boolean {
+export function applyIgnoreToggle(url?: string): boolean {
   if (typeof location === 'undefined') return false;
-  const match = IGNORE_FRAGMENT.exec(location.hash);
+  let hash = location.hash;
+  if (url !== undefined) {
+    try { hash = new URL(url, location.href).hash; } catch { return isIgnored(); }
+  }
+  const match = IGNORE_FRAGMENT.exec(hash);
   if (match) {
     const off = /^(off|false)$/i.test(match[1] ?? '');
     try {
@@ -82,11 +77,14 @@ export function applyIgnoreToggle(): boolean {
       // Storage blocked or full: still honor the choice for this document.
       ignoredInMemory = !off;
     }
-    try {
-      // Prototype method, not the instance wrapper, so this cleanup is not tracked as a navigation.
-      History.prototype.replaceState.call(history, history.state, '', location.pathname + location.search);
-    } catch {
-      /* non-browser environment */
+    // Only strip the marker if it is still in the address bar.
+    if (hash === location.hash) {
+      try {
+        // Prototype method, not the instance wrapper, so this cleanup is not tracked as a navigation.
+        History.prototype.replaceState.call(history, history.state, '', location.pathname + location.search);
+      } catch {
+        /* non-browser environment */
+      }
     }
   }
   return isIgnored();
@@ -238,6 +236,7 @@ export function createTracker(options: TrackerOptions): Tracker {
   };
   const flush = async (): Promise<boolean> => {
     if (sending) return sending;
+    if (typeof window !== 'undefined') applyIgnoreToggle();
     discardIfIgnored();
     if (!enabled() || queue.length === 0) return false;
     const events = queue.splice(0, batchSize);
@@ -263,8 +262,8 @@ export function createTracker(options: TrackerOptions): Tracker {
     // Same-document navigation to the fragment (in-page link, address bar edit) does not re-run init.
     // hashchange is async: location.hash may already be past this event's fragment, so read newURL.
     const onHashChange = (change: HashChangeEvent) => {
-      applyIgnoreToggle();
-      discardIfIgnored(isOptOutUrl(change.newURL));
+      applyIgnoreToggle(change.newURL || undefined);
+      discardIfIgnored();
     };
     // Another tab on this origin opted out: drop this tab's queue now.
     const onStorage = (change: StorageEvent) => {
