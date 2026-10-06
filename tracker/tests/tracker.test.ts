@@ -250,6 +250,30 @@ describe('ignore my visits', () => {
     applyIgnoreToggle();
   });
 
+  it('applies the toggle on same-document hash navigation', () => {
+    const tracker = createTracker({ writeKey: 'key', transport: vi.fn().mockResolvedValue(true), autoTrack: false });
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(isIgnored()).toBe(true);
+    expect(location.hash).toBe('');
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(isIgnored()).toBe(false);
+    tracker.destroy();
+  });
+
+  it('discards events queued before an opt-out so resuming cannot replay them', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('before-opt-out');
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    await tracker.flush();
+    window.localStorage.removeItem(IGNORE_STORAGE_KEY);
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
   it('leaves unrelated fragments alone', () => {
     history.replaceState(null, '', '/docs#install');
     expect(applyIgnoreToggle()).toBe(false);

@@ -185,7 +185,15 @@ export function createTracker(options: TrackerOptions): Tracker {
       && !(options.respectDnt !== false && privacy.dnt)
       && !(options.gpcMode === 'deny' && privacy.gpc);
   };
+  // Drop anything retained from before an opt-out so resuming later cannot replay it.
+  const discardIfIgnored = () => {
+    if (!isIgnored()) return false;
+    queue.length = 0;
+    queuedIds.clear();
+    return true;
+  };
   const enqueue = (event: TrackerEvent): string | undefined => {
+    discardIfIgnored();
     if (!enabled() || queuedIds.has(event.id)) return undefined;
     queuedIds.add(event.id);
     queue.push(event);
@@ -210,28 +218,41 @@ export function createTracker(options: TrackerOptions): Tracker {
   };
   const flush = async (): Promise<boolean> => {
     if (sending) return sending;
+    discardIfIgnored();
     if (!enabled() || queue.length === 0) return false;
     const events = queue.splice(0, batchSize);
     sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }))
       .then((ok) => {
-        if (!ok) queue.unshift(...events);
-        else events.forEach((item) => queuedIds.delete(item.id));
+        if (ok) events.forEach((item) => queuedIds.delete(item.id));
+        else if (!discardIfIgnored()) queue.unshift(...events);
         return ok;
       })
-      .catch(() => { queue.unshift(...events); return false; })
+      .catch(() => { if (!discardIfIgnored()) queue.unshift(...events); return false; })
       .finally(() => { sending = undefined; });
     return sending;
   };
 
   // Process opt-out fragments even without auto-tracking so manual page()/event() calls respect them.
-  if (typeof window !== 'undefined') applyIgnoreToggle();
+  if (typeof window !== 'undefined') {
+    applyIgnoreToggle();
+    // Same-document navigation to the fragment (in-page link, address bar edit) does not re-run init.
+    const onHashChange = () => { applyIgnoreToggle(); discardIfIgnored(); };
+    // Another tab on this origin opted out: drop this tab's queue now.
+    const onStorage = (change: StorageEvent) => { if (change.key === IGNORE_STORAGE_KEY) discardIfIgnored(); };
+    addEventListener('hashchange', onHashChange);
+    addEventListener('storage', onStorage);
+    disposers.push(() => {
+      removeEventListener('hashchange', onHashChange);
+      removeEventListener('storage', onStorage);
+    });
+  }
   if (options.autoTrack !== false && typeof window !== 'undefined') {
     page();
     // Send the first pageview promptly so short visits are not lost waiting on the batch timer.
     void flush();
     const originalPush = history.pushState;
     const originalReplace = history.replaceState;
-    const trackNavigation = () => queueMicrotask(() => page());
+    const trackNavigation = () => queueMicrotask(() => { applyIgnoreToggle(); page(); });
     history.pushState = function (...args) { originalPush.apply(this, args); trackNavigation(); };
     history.replaceState = function (...args) { originalReplace.apply(this, args); trackNavigation(); };
     addEventListener('popstate', trackNavigation);
