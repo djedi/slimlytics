@@ -63,7 +63,7 @@
     type Site,
     type Visitor
   } from '$lib/api';
-  import { applyTheme, compactNumber, duration, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
+  import { applyTheme, compactNumber, duration, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
   import { appHref, parseDays, parseView, type SiteView } from '$lib/app-routes';
   import ChangeBadge from '$lib/components/rollup/ChangeBadge.svelte';
   import SiteCard from '$lib/components/rollup/SiteCard.svelte';
@@ -1119,6 +1119,21 @@
               {/if}
             </dl>
           </div>
+          {#if ignoreVisitsLinks(site.domain)}
+            {@const ignoreLinks = ignoreVisitsLinks(site.domain)!}
+            <div class="panel settings-card">
+              <p class="eyebrow">Your own traffic</p>
+              <h2>Ignore my visits</h2>
+              <p class="muted">
+                Open this link once in each browser you use to keep your own visits out of reports. It saves
+                a flag in that browser only. No cookies, and nothing is sent to Slimlytics.
+              </p>
+              <div class="test-links">
+                <a class="button primary" href={ignoreLinks.ignore} target="_blank" rel="noopener">Ignore this browser</a>
+                <a class="button secondary" href={ignoreLinks.resume} target="_blank" rel="noopener">Count me again</a>
+              </div>
+            </div>
+          {/if}
           <div class="panel settings-card">
             <p class="eyebrow">Server collection</p>
             <h2>Request ingestion</h2>

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTracker, redactUrl, toCollectInput, trackerOptionsFromScript } from '../src/index';
+import { applyIgnoreToggle, createTracker, isIgnored, redactUrl, toCollectInput, trackerOptionsFromScript, IGNORE_STORAGE_KEY } from '../src/index';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -197,5 +197,55 @@ describe('default transport', () => {
       referrer: '   '
     });
     expect(mapped.referrer).toBeUndefined();
+  });
+});
+
+describe('ignore my visits', () => {
+  beforeEach(() => {
+    // Node 25+ ships an empty global localStorage that shadows jsdom's; use the real one.
+    const storage = (globalThis as unknown as { jsdom: { window: Window } }).jsdom.window.localStorage;
+    Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
+    window.localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
+
+  it('turns ignore on and off from the URL fragment and strips the marker', () => {
+    history.replaceState(null, '', '/pricing?plan=pro#slimlytics-ignore');
+    expect(applyIgnoreToggle()).toBe(true);
+    expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBe('true');
+    expect(location.hash).toBe('');
+    expect(location.pathname + location.search).toBe('/pricing?plan=pro');
+
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    expect(applyIgnoreToggle()).toBe(false);
+    expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBeNull();
+  });
+
+  it('leaves unrelated fragments alone', () => {
+    history.replaceState(null, '', '/docs#install');
+    expect(applyIgnoreToggle()).toBe(false);
+    expect(location.hash).toBe('#install');
+  });
+
+  it('does not send anything while the browser is ignored', async () => {
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    expect(isIgnored()).toBe(true);
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    expect(tracker.page()).toBeUndefined();
+    expect(tracker.event('signup')).toBeUndefined();
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('tracks normally when storage is unavailable', () => {
+    const spy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    expect(isIgnored()).toBe(false);
+    spy.mockRestore();
   });
 });

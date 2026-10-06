@@ -13,6 +13,7 @@ Slimlytics is cookieless by default and designed to answer site-analytics questi
 - Do Not Track stops collection by default
 - Global Privacy Control defaults to privacy-reduced collection: no title, custom properties, region, or city
 - Collection can be disabled until the host application grants consent
+- The optional "ignore my visits" flag lives only in the site owner's own browser `localStorage`, is written only when the owner opens a `#slimlytics-ignore` link, and is never sent anywhere
 
 ## Sensitive URL data
 
@@ -30,7 +31,7 @@ Site owners should avoid putting personal or secret data into URLs at all. Confi
 
 ## IP handling
 
-Raw addresses are used only transiently for abuse controls and coarse location derivation when enabled. Persisted visitor identifiers must be one-way, site-scoped, and rotated. Application logs must not include raw authorization tokens, passwords, full IP addresses, or unredacted collector payloads.
+Raw addresses are used only transiently for abuse controls, crawler-network classification, and coarse location derivation when enabled. Persisted visitor identifiers must be one-way, site-scoped, and rotated. Application logs must not include raw authorization tokens, passwords, full IP addresses, or unredacted collector payloads.
 
 Server-side ingestion follows the same rule: a supplied access-log IP is used transiently for classification, optional GeoIP, and rotating HMAC identifiers, then discarded. Server ingestion is marked separately from browser collection and accepts only bounded request metadata for the configured site domain.
 

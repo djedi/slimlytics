@@ -36,7 +36,42 @@ export interface TrackerOptions {
 
 const SENSITIVE = /^(token|access_token|auth|authorization|password|passwd|secret|api_?key|email|phone|session|code|signature)$/i;
 const DEFAULT_DOWNLOADS = ['pdf', 'zip', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'dmg', 'exe', 'mp3', 'mp4'];
-export const TRACKER_VERSION = '1.0.0';
+export const TRACKER_VERSION = '1.1.0';
+export const IGNORE_STORAGE_KEY = 'slimlytics_ignore';
+const IGNORE_FRAGMENT = /^#slimlytics-ignore(?:=(on|off|true|false))?$/i;
+
+/** True when the site owner opted this browser out with `#slimlytics-ignore`. */
+export function isIgnored(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.localStorage?.getItem(IGNORE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Applies a `#slimlytics-ignore` / `#slimlytics-ignore=off` fragment, removes the marker from
+ * the address bar, and returns whether this browser is now ignored.
+ */
+export function applyIgnoreToggle(): boolean {
+  if (typeof location === 'undefined') return false;
+  const match = IGNORE_FRAGMENT.exec(location.hash);
+  if (match) {
+    const off = /^(off|false)$/i.test(match[1] ?? '');
+    try {
+      if (off) window.localStorage.removeItem(IGNORE_STORAGE_KEY);
+      else window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    } catch {
+      /* storage blocked: nothing to persist */
+    }
+    try {
+      history.replaceState(history.state, '', location.pathname + location.search);
+    } catch {
+      /* non-browser environment */
+    }
+  }
+  return isIgnored();
+}
 
 export function redactUrl(value: string): string {
   try {
@@ -140,6 +175,7 @@ export function createTracker(options: TrackerOptions): Tracker {
     const privacy = signals();
     return !destroyed
       && allowed
+      && !isIgnored()
       && !(options.respectDnt !== false && privacy.dnt)
       && !(options.gpcMode === 'deny' && privacy.gpc);
   };
@@ -182,6 +218,7 @@ export function createTracker(options: TrackerOptions): Tracker {
   };
 
   if (options.autoTrack !== false && typeof window !== 'undefined') {
+    applyIgnoreToggle();
     page();
     // Send the first pageview promptly so short visits are not lost waiting on the batch timer.
     void flush();
@@ -261,7 +298,7 @@ export function trackerOptionsFromScript(script: HTMLScriptElement | null): Trac
 }
 
 if (typeof window !== 'undefined') {
-  (window as typeof window & { Slimlytics?: unknown }).Slimlytics = { init, page, event, consent, createTracker };
+  (window as typeof window & { Slimlytics?: unknown }).Slimlytics = { init, page, event, consent, createTracker, isIgnored };
   const options = trackerOptionsFromScript(document.currentScript as HTMLScriptElement | null);
   if (options) init(options);
 }

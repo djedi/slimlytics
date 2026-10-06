@@ -74,7 +74,7 @@ A site has a display name, canonical URL, timezone, allowed origins, retention p
 - `POST /api/e/{writeKey}` — neutral anti-adblock alias with identical behavior
 - `GET /api/e/{writeKey}` — non-ingesting legacy-alias diagnostic
 
-The browser tracker sends page views and custom events. The collector accepts `sendBeacon` bodies, applies origin checks, normalizes and redacts URLs, classifies obvious bots/internal traffic, derives site-scoped anonymous identifiers, deduplicates event IDs, and persists accepted events.
+The browser tracker sends page views and custom events. The collector accepts `sendBeacon` bodies, applies origin checks, normalizes and redacts URLs, classifies bots (by product name and by published Google, Meta, and Bing crawler networks whose ad-review and preview fetchers send stock browser user agents) and internal traffic, derives site-scoped anonymous identifiers, deduplicates event IDs, and persists accepted events.
 
 A write key authorizes ingestion only. It never grants dashboard or reporting access.
 
@@ -127,3 +127,7 @@ The global tracker provides:
 - `flush()`
 
 Initialization options include the collector endpoint, site write key, batching interval, automatic SPA/page tracking, outbound/download tracking, DNT/GPC behavior, and initial consent state.
+
+### Ignore my visits
+
+Open any page of the site with `#slimlytics-ignore` appended (for example `https://example.com/#slimlytics-ignore`) to stop counting that browser. The tracker stores `slimlytics_ignore=true` in that browser's `localStorage`, removes the fragment from the address bar, and sends nothing afterwards. Open `#slimlytics-ignore=off` to resume. The flag is only written when the site owner opens the link, so visitors are never affected, and fragments are never sent to the collector. The dashboard's site settings page has both links. `window.Slimlytics.isIgnored()` reports the current state.

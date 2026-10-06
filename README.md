@@ -64,6 +64,8 @@ Everything below is for running your own instance or contributing. If you just w
 - Standard UTM attribution and basic goals
 - CSV export
 - Cookieless tracking by default
+- Bot filtering by crawler product name and by published Google, Meta, and Bing crawler networks
+- "Ignore my visits" opt-out link per browser, with no cookies
 - Sensitive query-parameter redaction and no form capture
 - First-party tracker delivery to reduce accidental blocking
 - Clicky-style first-party proxy setup with per-site paths, Caddy/Nginx/Apache configuration, and test links

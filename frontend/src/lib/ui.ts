@@ -183,3 +183,16 @@ export function activeVisitorCount(
     events.filter((event) => event.visitorId && new Date(event.timestamp).getTime() >= since).map((event) => event.visitorId)
   ).size;
 }
+
+/** Links that toggle the tracker's "ignore my visits" flag in the browser that opens them. */
+export function ignoreVisitsLinks(domain: string): { ignore: string; resume: string } | undefined {
+  const raw = domain.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (!/^https?:$/.test(url.protocol) || !url.hostname) return undefined;
+    return { ignore: `${url.origin}/#slimlytics-ignore`, resume: `${url.origin}/#slimlytics-ignore=off` };
+  } catch {
+    return undefined;
+  }
+}
