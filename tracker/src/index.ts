@@ -44,6 +44,9 @@ const IGNORE_FRAGMENT = /^#slimlytics-ignore(?:=(on|off|true|false))?$/i;
 
 // Fallback for the current document when the opt-out could not be persisted to localStorage.
 let ignoredInMemory: boolean | undefined;
+// Incremented on every opt-out, however it is detected. Queues and in-flight batches captured
+// under an older generation are dropped, so resuming can never replay pre-opt-out events.
+let optOutGeneration = 0;
 
 /** True when the site owner opted this browser out with `#slimlytics-ignore`. */
 export function isIgnored(): boolean {
@@ -69,6 +72,7 @@ export function applyIgnoreToggle(url?: string): boolean {
   const match = IGNORE_FRAGMENT.exec(hash);
   if (match) {
     const off = /^(off|false)$/i.test(match[1] ?? '');
+    if (!off) optOutGeneration += 1;
     try {
       if (off) window.localStorage.removeItem(IGNORE_STORAGE_KEY);
       else window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
@@ -199,11 +203,11 @@ export function createTracker(options: TrackerOptions): Tracker {
       && !(options.gpcMode === 'deny' && privacy.gpc);
   };
   // Drop anything retained from before an opt-out so resuming later cannot replay it.
-  // Bumped on every opt-out so batches in flight at that moment are never requeued, even after resuming.
-  let optOutEpoch = 0;
+  let queueGeneration = optOutGeneration;
   const discardIfIgnored = (force = false) => {
-    if (!force && !isIgnored()) return false;
-    optOutEpoch += 1;
+    if (force || isIgnored()) optOutGeneration += 1;
+    if (queueGeneration === optOutGeneration) return false;
+    queueGeneration = optOutGeneration;
     queue.length = 0;
     queuedIds.clear();
     return true;
@@ -241,12 +245,12 @@ export function createTracker(options: TrackerOptions): Tracker {
     if (sending) return sending;
     if (!enabled() || queue.length === 0) return false;
     const events = queue.splice(0, batchSize);
-    const epoch = optOutEpoch;
+    const epoch = optOutGeneration;
     const requeue = () => {
-      if (discardIfIgnored() || epoch !== optOutEpoch) events.forEach((item) => queuedIds.delete(item.id));
+      if (discardIfIgnored() || epoch !== optOutGeneration) events.forEach((item) => queuedIds.delete(item.id));
       else queue.unshift(...events);
     };
-    sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }, () => epoch === optOutEpoch))
+    sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }, () => epoch === optOutGeneration))
       .then((ok) => {
         if (ok) events.forEach((item) => queuedIds.delete(item.id));
         else requeue();

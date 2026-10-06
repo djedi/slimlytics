@@ -392,6 +392,25 @@ describe('ignore my visits', () => {
     tracker.destroy();
   });
 
+  it('does not requeue a batch after an opt-out detected by the transport and a later resume', async () => {
+    const settles: Array<(ok: boolean) => void> = [];
+    const send = vi.fn().mockImplementation(() => new Promise<boolean>((resolve) => { settles.push(resolve); }));
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.pushState({}, '', '/#slimlytics-ignore');
+    applyIgnoreToggle(); // as defaultTransport's fallback check would
+    history.pushState({}, '', '/#slimlytics-ignore=off');
+    expect(tracker.event('after-resume')).toBeDefined();
+    settles[0](false);
+    await pending;
+    send.mockResolvedValue(true);
+    await tracker.flush();
+    const names = send.mock.calls.slice(1).flatMap(([, payload]) => payload.events).map((item) => item.name);
+    expect(names).toEqual(['after-resume']);
+    tracker.destroy();
+  });
+
   it('discards the queue for a cross-tab opt-out even if that tab already resumed', async () => {
     const send = vi.fn().mockResolvedValue(true);
     const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
