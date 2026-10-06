@@ -18,7 +18,8 @@ export interface TrackerPayload {
   events: TrackerEvent[];
 }
 
-export type Transport = (url: string, payload: TrackerPayload) => boolean | Promise<boolean>;
+/** `stillValid` turns false once an opt-out has invalidated the batch; check it before any retry or fallback. */
+export type Transport = (url: string, payload: TrackerPayload, stillValid?: () => boolean) => boolean | Promise<boolean>;
 
 export interface TrackerOptions {
   writeKey: string;
@@ -108,7 +109,7 @@ function privacySignals(): { dnt: boolean; gpc: boolean } {
   };
 }
 
-async function defaultTransport(url: string, payload: TrackerPayload): Promise<boolean> {
+async function defaultTransport(url: string, payload: TrackerPayload, stillValid: () => boolean = () => true): Promise<boolean> {
   const results = await Promise.all(payload.events.map(async (event) => {
     const body = JSON.stringify(toCollectInput(event));
     // Prefer fetch: Safari sendBeacon has historically dropped or mishandled
@@ -127,8 +128,8 @@ async function defaultTransport(url: string, payload: TrackerPayload): Promise<b
         /* fall through to sendBeacon */
       }
     }
-    // The browser may have opted out while the fetch was pending; don't start a new request.
-    if (isIgnored()) return false;
+    // The browser may have opted out (and possibly resumed) while the fetch was pending.
+    if (isIgnored() || !stillValid()) return false;
     if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
       return navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     }
@@ -232,7 +233,7 @@ export function createTracker(options: TrackerOptions): Tracker {
       if (discardIfIgnored() || epoch !== optOutEpoch) events.forEach((item) => queuedIds.delete(item.id));
       else queue.unshift(...events);
     };
-    sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }))
+    sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }, () => epoch === optOutEpoch))
       .then((ok) => {
         if (ok) events.forEach((item) => queuedIds.delete(item.id));
         else requeue();
