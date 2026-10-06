@@ -339,6 +339,28 @@ describe('ignore my visits', () => {
     tracker.destroy();
   });
 
+  it('honors the opt-out carried by a hashchange event even if the hash already moved on', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('before-opt-out');
+    history.replaceState(null, '', '/');
+    window.dispatchEvent(new HashChangeEvent('hashchange', { newURL: `${location.origin}/#slimlytics-ignore` }));
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('applies a fragment set via pushState before manual tracking calls', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    history.pushState({}, '', '/#slimlytics-ignore');
+    expect(tracker.page()).toBeUndefined();
+    expect(isIgnored()).toBe(true);
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
   it('discards the queue for a cross-tab opt-out even if that tab already resumed', async () => {
     const send = vi.fn().mockResolvedValue(true);
     const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });

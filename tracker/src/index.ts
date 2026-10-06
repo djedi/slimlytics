@@ -41,6 +41,17 @@ export const TRACKER_VERSION = '1.1.0';
 export const IGNORE_STORAGE_KEY = 'slimlytics_ignore';
 const IGNORE_FRAGMENT = /^#slimlytics-ignore(?:=(on|off|true|false))?$/i;
 
+/** True when `url` carries an opt-in-to-ignore fragment (not the `=off` resume form). */
+function isOptOutUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const match = IGNORE_FRAGMENT.exec(new URL(url).hash);
+    return !!match && !/^(off|false)$/i.test(match[1] ?? '');
+  } catch {
+    return false;
+  }
+}
+
 // Fallback for the current document when the opt-out could not be persisted to localStorage.
 let ignoredInMemory: boolean | undefined;
 
@@ -200,6 +211,8 @@ export function createTracker(options: TrackerOptions): Tracker {
     return true;
   };
   const enqueue = (event: TrackerEvent): string | undefined => {
+    // Pick up fragments set via History API navigation, which fires no hashchange (e.g. autoTrack: false).
+    if (typeof window !== 'undefined') applyIgnoreToggle();
     discardIfIgnored();
     if (!enabled() || queuedIds.has(event.id)) return undefined;
     queuedIds.add(event.id);
@@ -248,7 +261,11 @@ export function createTracker(options: TrackerOptions): Tracker {
   if (typeof window !== 'undefined') {
     applyIgnoreToggle();
     // Same-document navigation to the fragment (in-page link, address bar edit) does not re-run init.
-    const onHashChange = () => { applyIgnoreToggle(); discardIfIgnored(); };
+    // hashchange is async: location.hash may already be past this event's fragment, so read newURL.
+    const onHashChange = (change: HashChangeEvent) => {
+      applyIgnoreToggle();
+      discardIfIgnored(isOptOutUrl(change.newURL));
+    };
     // Another tab on this origin opted out: drop this tab's queue now.
     const onStorage = (change: StorageEvent) => {
       // Use the event's value: the other tab may have resumed again before this event is handled.
