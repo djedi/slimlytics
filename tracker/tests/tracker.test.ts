@@ -274,6 +274,36 @@ describe('ignore my visits', () => {
     tracker.destroy();
   });
 
+  it('does not requeue a batch that was in flight when the browser opted out', async () => {
+    let settle!: (ok: boolean) => void;
+    const send = vi.fn().mockImplementationOnce(() => new Promise<boolean>((resolve) => { settle = resolve; }))
+      .mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    settle(false);
+    await pending;
+    await tracker.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    tracker.destroy();
+  });
+
+  it('records one pageview when SPA navigation resumes tracking', async () => {
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, batchSize: 50 });
+    history.pushState({}, '', '/#slimlytics-ignore=off');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await tracker.flush();
+    const pages = send.mock.calls.flatMap(([, payload]) => payload.events).filter((item) => item.type === 'page');
+    expect(pages).toHaveLength(1);
+    tracker.destroy();
+  });
+
   it('leaves unrelated fragments alone', () => {
     history.replaceState(null, '', '/docs#install');
     expect(applyIgnoreToggle()).toBe(false);

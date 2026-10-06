@@ -71,7 +71,8 @@ export function applyIgnoreToggle(): boolean {
       ignoredInMemory = !off;
     }
     try {
-      history.replaceState(history.state, '', location.pathname + location.search);
+      // Prototype method, not the instance wrapper, so this cleanup is not tracked as a navigation.
+      History.prototype.replaceState.call(history, history.state, '', location.pathname + location.search);
     } catch {
       /* non-browser environment */
     }
@@ -186,8 +187,11 @@ export function createTracker(options: TrackerOptions): Tracker {
       && !(options.gpcMode === 'deny' && privacy.gpc);
   };
   // Drop anything retained from before an opt-out so resuming later cannot replay it.
+  // Bumped on every opt-out so batches in flight at that moment are never requeued, even after resuming.
+  let optOutEpoch = 0;
   const discardIfIgnored = () => {
     if (!isIgnored()) return false;
+    optOutEpoch += 1;
     queue.length = 0;
     queuedIds.clear();
     return true;
@@ -221,13 +225,18 @@ export function createTracker(options: TrackerOptions): Tracker {
     discardIfIgnored();
     if (!enabled() || queue.length === 0) return false;
     const events = queue.splice(0, batchSize);
+    const epoch = optOutEpoch;
+    const requeue = () => {
+      if (discardIfIgnored() || epoch !== optOutEpoch) events.forEach((item) => queuedIds.delete(item.id));
+      else queue.unshift(...events);
+    };
     sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }))
       .then((ok) => {
         if (ok) events.forEach((item) => queuedIds.delete(item.id));
-        else if (!discardIfIgnored()) queue.unshift(...events);
+        else requeue();
         return ok;
       })
-      .catch(() => { if (!discardIfIgnored()) queue.unshift(...events); return false; })
+      .catch(() => { requeue(); return false; })
       .finally(() => { sending = undefined; });
     return sending;
   };
