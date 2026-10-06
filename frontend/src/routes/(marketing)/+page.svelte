@@ -3,7 +3,6 @@
   import {
     Activity,
     ArrowRight,
-    Bot,
     Check,
     CircleDot,
     Eye,
@@ -70,7 +69,10 @@
         </ul>
       </div>
 
-      <aside class="mkt-hero-preview" aria-label="Product preview">
+      <aside class="mkt-hero-preview mkt-mascot-preview" aria-label="Product preview">
+        <div class="mkt-hero-mascot" aria-hidden="true">
+          <img src="/images/mascot/meerkat-wave.webp" width="160" height="240" alt="" fetchpriority="high" />
+        </div>
         <div class="mkt-preview-card">
           <div class="mkt-preview-top">
             <span class="mkt-live"><i aria-hidden="true"></i>14 online now</span>
@@ -134,6 +136,7 @@
       <h2 id="tour-title">Slimlytics in 30 seconds</h2>
       <p>Privacy-first analytics, a live visitor stream, and setup your AI agent can do for you.</p>
     </div>
+    <div class="mkt-video-stage">
     <figure class="mkt-video">
       <video
         controls
@@ -151,6 +154,7 @@
       <button class="mkt-video-play" type="button" data-tour-play aria-label="Play the 30-second tour">
         <Play size={34} aria-hidden="true" />
       </button>
+      <img class="mkt-video-mascot" src="/images/mascot/meerkat-watch.webp" width="144" height="142" alt="" loading="lazy" />
       <figcaption id="tour-transcript" class="sr-only">
         A 30-second tour set to music. Slimlytics: know what works, skip the noise. All the insight, none
         of the creepy: no cookies, no fingerprinting, no session replay, and Do Not Track and Global
@@ -162,6 +166,7 @@
         Analytics you’ll actually love. Start free at slimlytics.com.
       </figcaption>
     </figure>
+    </div>
   </section>
 
   <section id="features" class="mkt-section">
@@ -173,7 +178,12 @@
     <div class="feature-grid">
       {#each productFeatures as feature, index}
         {@const Icon = featureIcons[index] ?? Activity}
-        <article class="feature-card">
+        <article class="feature-card" class:mkt-feature-illustrated={index <= 2}>
+          {#if index === 0 || index === 2}
+            <img class="mkt-feature-mascot" src={`/images/mascot/meerkat-${index === 0 ? 'shield' : 'reports'}.webp`} width="132" height="132" alt="" loading="lazy" />
+          {:else if index === 1}
+            <img class="mkt-feature-mascot" src="/images/mascot/meerkat-lookout.webp" width="452" height="736" alt="" loading="lazy" decoding="async" />
+          {/if}
           <span class="feature-icon"><Icon size={22} aria-hidden="true" /></span>
           <h3>{feature.title}</h3>
           <p>{feature.body}</p>
@@ -199,7 +209,9 @@
         </ul>
         <a class="primary" href="/docs/mcp">Read the agent guide <ArrowRight class="mkt-arrow" size={17} aria-hidden="true" /></a>
       </div>
-      <div class="mkt-terminal" role="img" aria-label="Terminal session connecting Claude Code to Slimlytics and installing analytics">
+      <div class="mkt-agent-demo">
+        <img class="mkt-agent-mascot" src="/images/mascot/meerkat-helper.webp" width="576" height="736" alt="" loading="lazy" decoding="async" />
+        <div class="mkt-terminal" role="img" aria-label="Terminal session connecting Claude Code to Slimlytics and installing analytics">
         <div class="mkt-terminal-bar" aria-hidden="true"><i></i><i></i><i></i><span>~/shop — claude</span></div>
         <pre aria-hidden="true"><span class="t-p">$</span> claude mcp add --transport http slimlytics https://slimlytics.com/api/mcp
 <span class="t-m">Added HTTP MCP server slimlytics</span>
@@ -211,6 +223,7 @@
 <span class="t-a">● Edit</span> <span class="t-m">src/app.html  +1 line</span>
 <span class="t-a">● Bash</span> <span class="t-m">curl -fsS $scriptTestUrl  →  200</span>
 <span class="t-ok">✓ First-party tracker live. First page view recorded.</span></pre>
+        </div>
       </div>
     </div>
   </section>
@@ -263,7 +276,7 @@
 
   <section class="mkt-section mkt-cta">
     <div class="mkt-cta-inner">
-      <Bot size={32} aria-hidden="true" />
+      <img class="mkt-team-mascot" src="/images/mascot/meerkat-team.webp" width="736" height="496" alt="" loading="lazy" decoding="async" />
       <h2>Start measuring what actually matters</h2>
       <p>Create an account, add your site, and see private, useful analytics in minutes.</p>
       <div class="mkt-hero-actions">

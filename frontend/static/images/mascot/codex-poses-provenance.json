@@ -1,0 +1,48 @@
+{
+  "tool": "image_gen.imagegen",
+  "transparent_background": true,
+  "assets": [
+    {
+      "prompt": "Use case: illustration-story. Generate a new Slimlytics mascot illustration using the supplied image as the strict character and style reference. One full-body meerkat standing as a live analytics lookout, holding binoculars up near its eyes and looking into the distance, friendly alert expression. Preserve the reference precisely: sandy golden cream fur, pale cream muzzle and belly, thick dark navy outlines, dark brown eye patches, large green eyes with white highlights, same rounded face proportions and small dark nose, small rounded ears, tufted hair, long curved dark-tipped tail, emerald green triangular scarf with tied ends. Clean friendly vector-like raster illustration, same lineweight and restrained cel shading as reference. Entire character and binoculars visible, centered with comfortable transparent margins. Genuine transparent alpha background. No backdrop, no words, no symbols, no ground shadow, no watermark. The reference is for identity/style; change pose and add binoculars only.",
+      "web_asset": "/images/mascot/meerkat-lookout.webp",
+      "width": 452,
+      "height": 736,
+      "bytes": 52870,
+      "sha256": "25469f4b15111ac91f4ec6f6456fe78faa3c85c0a47018123f1b17cfc68c91e9",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "prompt": "Use case: illustration-story. Generate a new Slimlytics mascot illustration using the supplied image as the strict character and style reference. One full-body meerkat seated comfortably using an open laptop as a friendly coding-agent helper, paws on keyboard, looking warmly toward viewer, laptop screen facing the meerkat. Preserve the reference precisely: sandy golden cream fur, pale cream muzzle and belly, thick dark navy outlines, dark brown eye patches, large green eyes with white highlights, same rounded face proportions and small dark nose, small rounded ears, tufted hair, long curved dark-tipped tail, emerald green triangular scarf with tied ends. Clean friendly vector-like raster illustration, same lineweight and restrained cel shading as reference. Simple navy/slate laptop without any logo or text. Entire seated character, tail, and laptop visible, centered with comfortable transparent margins. Genuine transparent alpha background. No backdrop, no words, no symbols, no ground shadow, no watermark. The reference is for identity/style; change pose and add laptop only.",
+      "edit_prompt": "Edit this generated seated Slimlytics laptop helper image. Remove all glow, haze, shadow, halo, and background pixels outside the actual character and laptop silhouette. Background must be completely clear alpha=0, including gaps around arms and tail. The character and laptop must be opaque with crisp antialiased edges. Preserve the illustration itself exactly, its pose, face, eyes, sandy cream fur, navy outlines, emerald scarf, laptop and composition. No backdrop, no ground shadow, no words. This is a clean transparent PNG mascot cutout.",
+      "web_asset": "/images/mascot/meerkat-helper.webp",
+      "width": 576,
+      "height": 736,
+      "bytes": 64220,
+      "sha256": "e327eeba4a8f1fd0f4b4bb69ccbda6e5d73a4a005385084e3ceed1437e20ff54",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "prompt": "Use case: illustration-story. Generate a new Slimlytics mascot illustration using the supplied image as the strict character and style reference. Two full-body meerkats facing each other and celebrating a successful collaboration with a clear overhead high-five, their raised inner paws meeting, happy friendly expressions. Both are the same Slimlytics character design. Preserve the reference precisely for both: sandy golden cream fur, pale cream muzzle and belly, thick dark navy outlines, dark brown eye patches, large green eyes with white highlights, same rounded face proportions and small dark nose, small rounded ears, tufted hair, long curved dark-tipped tails, emerald green triangular scarves with tied ends. Clean friendly vector-like raster illustration, same lineweight and restrained cel shading as reference. Entire two characters and tails visible, balanced centered composition with comfortable transparent margins. Genuine transparent alpha background. No backdrop, no words, no symbols, no confetti, no ground shadow, no watermark. The reference is for identity/style; change poses to celebratory high-five only.",
+      "edit_prompt": "Edit this generated Slimlytics high-five team image. Remove all glow, haze, shadow, halo, and background pixels outside the actual two meerkat silhouettes. Background must be completely clear alpha=0, including the space between characters and all gaps around limbs and tails. Both characters must be fully opaque with crisp antialiased edges. Preserve the illustration itself exactly, the high-five pose, faces, green eyes, sandy cream fur, thick navy outlines, emerald scarves and composition. No backdrop, no ground shadow, no words. This is a clean transparent PNG mascot cutout.",
+      "web_asset": "/images/mascot/meerkat-team.webp",
+      "width": 736,
+      "height": 496,
+      "bytes": 71744,
+      "sha256": "7c94e789caa945f2488715e0a2eb130e1cc002f10917ca51f72cae2829f48c19",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    }
+  ],
+  "postprocessing": "Pillow: alpha below 16 removed as generation residue, alpha above 245 made opaque; crop alpha bounds, fit within 720x720, add 8px transparent padding; WebP quality 88 method 6. Artwork itself generated by Codex native image_gen.imagegen.",
+  "codex_version": "0.160.1",
+  "codex_model": "gpt-6-astra",
+  "reference_repository_asset": "frontend/static/images/mascot/meerkat-wave.webp"
+}

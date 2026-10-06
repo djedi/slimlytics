@@ -154,3 +154,5 @@
 .rollup-note{margin:-14px 0 20px;color:var(--muted);font-size:12px}
 .billing-notice{margin:0 0 16px}
 .sidebar-foot .sidebar-link{text-decoration:none;color:#99a6b7;min-height:38px;border-radius:7px;padding:0 11px;display:flex;align-items:center;gap:11px}.sidebar-foot .sidebar-link:hover,.sidebar-foot .sidebar-link:focus-visible{background:#182331;color:#fff}
+
+.mascot-logo { display: block; width: 38px; height: 38px; flex: none; object-fit: contain; }

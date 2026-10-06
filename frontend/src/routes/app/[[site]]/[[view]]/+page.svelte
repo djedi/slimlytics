@@ -670,7 +670,7 @@
     <aside class:open={menuOpen} aria-label="Primary navigation">
       <div class="sidebar-brand">
         <a class="brand" href={appHref(null, null, days)}>
-          <span class="brand-mark"><BarChart3 size={20} aria-hidden="true" /></span><strong>Slimlytics</strong>
+          <img class="mascot-logo" src="/images/mascot/meerkat-logo.webp" width="38" height="38" alt="" /><strong>Slimlytics</strong>
         </a>
         <button class="icon-button close-menu" aria-label="Close menu" onclick={() => (menuOpen = false)}
           ><X /></button

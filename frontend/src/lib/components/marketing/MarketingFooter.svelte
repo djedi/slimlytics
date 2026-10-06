@@ -1,14 +1,11 @@
-<script lang="ts">
-  import { BarChart3 } from '@lucide/svelte';
-</script>
-
 <footer class="mkt-footer">
   <div class="mkt-footer-inner">
     <div class="mkt-footer-brand">
       <a class="brand" href="/" aria-label="Slimlytics home">
-        <span class="brand-mark"><BarChart3 size={18} aria-hidden="true" /></span>
+        <img class="mkt-mascot-logo" src="/images/mascot/meerkat-logo.webp" width="38" height="38" alt="" loading="lazy" />
         Slimlytics
       </a>
+      <img class="mkt-footer-mascot" src="/images/mascot/meerkat-wave.webp" width="100" height="150" alt="" loading="lazy" />
       <p>Privacy-first web analytics for independent teams. Self-host free or run hosted plans.</p>
     </div>
     <nav aria-label="Footer product">

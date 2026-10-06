@@ -682,3 +682,38 @@ a:hover > .mkt-arrow { transform: translateX(3px); }
 @media (max-width: 1180px) { .pricing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 760px; } .mkt-plans > .pricing-grid, .mkt-section-alt > .pricing-grid { margin-left: auto; margin-right: auto; } }
 @media (max-width: 900px) { .why-grid { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .pricing-grid { grid-template-columns: 1fr; max-width: 560px; } }
+
+/* Our curious little lookout: small brand touches in the existing palette. */
+.mkt-mascot-logo { display: block; width: 38px; height: 38px; flex: none; object-fit: contain; }
+.mkt-mascot-preview { padding-top: 112px; }
+.mkt-hero-mascot { position: absolute; top: 0; right: 24px; width: 160px; height: 120px; overflow: hidden; pointer-events: none; }
+.mkt-hero-mascot img { display: block; width: 160px; height: auto; }
+.mkt-footer-brand { position: relative; padding-right: 104px; min-height: 156px; }
+.mkt-footer-mascot { position: absolute; right: 0; bottom: 0; width: 100px; height: 150px; object-fit: contain; pointer-events: none; }
+@media (max-width: 900px) {
+  .mkt-footer-brand { max-width: 460px; }
+}
+@media (max-width: 620px) {
+  .mkt-mascot-preview { padding-top: 92px; }
+  .mkt-hero-mascot { width: 136px; height: 100px; right: 16px; }
+  .mkt-hero-mascot img { width: 136px; }
+}
+
+.mkt-github { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex: none; border-radius: 50%; color: var(--m-muted); }
+.mkt-github:hover { color: var(--m-accent); background: var(--m-accent-soft); }
+.mkt-video-section .mkt-section-head { margin-bottom: 16px; }
+.mkt-video-stage { position: relative; max-width: 1040px; margin-inline: auto; padding-top: 96px; }
+.mkt-video-mascot { position: absolute; right: 30px; bottom: calc(100% - 16px); z-index: 1; width: 120px; height: auto; pointer-events: none; }
+.mkt-feature-illustrated .feature-icon { margin-bottom: 66px; }
+.mkt-feature-mascot { position: absolute; width: 132px; height: 132px; object-fit: contain; right: 20px; top: 10px; pointer-events: none; }
+/* New poses stay in reserved space; artwork never obscures copy or controls. */
+.mkt-agent-demo { min-width: 0; display: grid; gap: 18px; }
+.mkt-agent-mascot { display: block; width: 148px; height: auto; max-width: 100%; justify-self: end; margin-right: 24px; pointer-events: none; }
+.mkt-team-mascot { display: block; width: 232px; height: auto; max-width: 100%; margin-inline: auto; margin-bottom: 24px; pointer-events: none; }
+@media (max-width: 620px) {
+  .mkt-agent-mascot { width: 112px; margin-right: 16px; }
+  .mkt-team-mascot { width: 184px; }
+  .mkt-header-inner { gap: 8px; }
+  .mkt-video-stage { padding-top: 64px; }
+  .mkt-video-mascot { width: 80px; right: 18px; bottom: calc(100% - 12px); }
+}

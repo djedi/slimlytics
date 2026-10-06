@@ -18,6 +18,7 @@ describe('marketing header', () => {
 
   it('links to pricing, privacy, docs, and signup when logged out', () => {
     render(MarketingHeader);
+    expect(screen.getByRole('link', { name: 'Slimlytics on GitHub' })).toHaveAttribute('href', 'https://github.com/djedi/slimlytics');
     expect(screen.getByRole('link', { name: 'Pricing' })).toHaveAttribute('href', '/pricing');
     expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs');
