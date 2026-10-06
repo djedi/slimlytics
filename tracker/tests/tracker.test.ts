@@ -411,6 +411,22 @@ describe('ignore my visits', () => {
     tracker.destroy();
   });
 
+  it('does not let a delayed hashchange overwrite a newer choice', async () => {
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    const staleResume = new HashChangeEvent('hashchange', { newURL: `${location.origin}/#slimlytics-ignore=off` });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    tracker.page();
+    history.pushState({}, '', '/#slimlytics-ignore');
+    tracker.page();
+    expect(isIgnored()).toBe(true);
+    window.dispatchEvent(staleResume);
+    expect(isIgnored()).toBe(true);
+    tracker.destroy();
+  });
+
   it('discards the queue for a cross-tab opt-out even if that tab already resumed', async () => {
     const send = vi.fn().mockResolvedValue(true);
     const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });

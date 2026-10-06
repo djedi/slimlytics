@@ -47,6 +47,13 @@ let ignoredInMemory: boolean | undefined;
 // Incremented on every opt-out, however it is detected. Queues and in-flight batches captured
 // under an older generation are dropped, so resuming can never replay pre-opt-out events.
 let optOutGeneration = 0;
+// When a toggle was last applied, on both clocks an Event.timeStamp may use (page-relative or epoch).
+let lastToggleAt = { page: -Infinity, epoch: -Infinity };
+
+/** True when a toggle was applied after `timeStamp`, so an event from then is stale. */
+function toggledSince(timeStamp: number): boolean {
+  return timeStamp > 1e12 ? timeStamp < lastToggleAt.epoch : timeStamp < lastToggleAt.page;
+}
 
 /** True when the site owner opted this browser out with `#slimlytics-ignore`. */
 export function isIgnored(): boolean {
@@ -73,6 +80,7 @@ export function applyIgnoreToggle(url?: string): boolean {
   if (match) {
     const off = /^(off|false)$/i.test(match[1] ?? '');
     if (!off) optOutGeneration += 1;
+    lastToggleAt = { page: typeof performance === 'undefined' ? -Infinity : performance.now(), epoch: Date.now() };
     try {
       if (off) window.localStorage.removeItem(IGNORE_STORAGE_KEY);
       else window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
@@ -267,7 +275,8 @@ export function createTracker(options: TrackerOptions): Tracker {
     // Same-document navigation to the fragment (in-page link, address bar edit) does not re-run init.
     // hashchange is async: location.hash may already be past this event's fragment, so read newURL.
     const onHashChange = (change: HashChangeEvent) => {
-      applyIgnoreToggle(change.newURL || undefined);
+      // Skip if a newer choice was already applied (e.g. by page()/flush() after a later pushState).
+      if (!toggledSince(change.timeStamp)) applyIgnoreToggle(change.newURL || undefined);
       discardIfIgnored();
     };
     // Another tab on this origin opted out: drop this tab's queue now.
