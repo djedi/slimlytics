@@ -40,8 +40,12 @@ export const TRACKER_VERSION = '1.1.0';
 export const IGNORE_STORAGE_KEY = 'slimlytics_ignore';
 const IGNORE_FRAGMENT = /^#slimlytics-ignore(?:=(on|off|true|false))?$/i;
 
+// Fallback for the current document when the opt-out could not be persisted to localStorage.
+let ignoredInMemory: boolean | undefined;
+
 /** True when the site owner opted this browser out with `#slimlytics-ignore`. */
 export function isIgnored(): boolean {
+  if (ignoredInMemory !== undefined) return ignoredInMemory;
   try {
     return typeof window !== 'undefined' && window.localStorage?.getItem(IGNORE_STORAGE_KEY) === 'true';
   } catch {
@@ -61,8 +65,10 @@ export function applyIgnoreToggle(): boolean {
     try {
       if (off) window.localStorage.removeItem(IGNORE_STORAGE_KEY);
       else window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+      ignoredInMemory = undefined;
     } catch {
-      /* storage blocked: nothing to persist */
+      // Storage blocked or full: still honor the choice for this document.
+      ignoredInMemory = !off;
     }
     try {
       history.replaceState(history.state, '', location.pathname + location.search);
@@ -217,8 +223,9 @@ export function createTracker(options: TrackerOptions): Tracker {
     return sending;
   };
 
+  // Process opt-out fragments even without auto-tracking so manual page()/event() calls respect them.
+  if (typeof window !== 'undefined') applyIgnoreToggle();
   if (options.autoTrack !== false && typeof window !== 'undefined') {
-    applyIgnoreToggle();
     page();
     // Send the first pageview promptly so short visits are not lost waiting on the batch timer.
     void flush();

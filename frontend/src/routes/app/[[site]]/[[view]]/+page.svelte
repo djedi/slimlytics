@@ -1119,8 +1119,8 @@
               {/if}
             </dl>
           </div>
-          {#if ignoreVisitsLinks(site.domain)}
-            {@const ignoreLinks = ignoreVisitsLinks(site.domain)!}
+          {#if siteOrigin && ignoreVisitsLinks(siteOrigin)}
+            {@const ignoreLinks = ignoreVisitsLinks(siteOrigin)!}
             <div class="panel settings-card">
               <p class="eyebrow">Your own traffic</p>
               <h2>Ignore my visits</h2>

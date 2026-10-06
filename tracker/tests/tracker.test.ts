@@ -225,6 +225,31 @@ describe('ignore my visits', () => {
     expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBeNull();
   });
 
+  it('applies the fragment even when autoTrack is disabled', async () => {
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBe('true');
+    expect(tracker.page()).toBeUndefined();
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('honors the opt-out in memory when localStorage cannot be written', () => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    const removeItem = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    expect(applyIgnoreToggle()).toBe(true);
+    expect(isIgnored()).toBe(true);
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    expect(applyIgnoreToggle()).toBe(false);
+    setItem.mockRestore();
+    removeItem.mockRestore();
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    applyIgnoreToggle();
+  });
+
   it('leaves unrelated fragments alone', () => {
     history.replaceState(null, '', '/docs#install');
     expect(applyIgnoreToggle()).toBe(false);
