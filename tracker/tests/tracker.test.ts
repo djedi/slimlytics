@@ -304,6 +304,32 @@ describe('ignore my visits', () => {
     tracker.destroy();
   });
 
+  it('does not fall back to sendBeacon after opting out mid-fetch', async () => {
+    const beacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true });
+    let fail!: (error: Error) => void;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const tracker = createTracker({ writeKey: 'key', autoTrack: false });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    fail(new Error('network'));
+    await pending;
+    expect(beacon).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    tracker.destroy();
+  });
+
+  it('discards the queue for a cross-tab opt-out even if that tab already resumed', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('before-opt-out');
+    window.dispatchEvent(new StorageEvent('storage', { key: IGNORE_STORAGE_KEY, newValue: 'true' }));
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
   it('leaves unrelated fragments alone', () => {
     history.replaceState(null, '', '/docs#install');
     expect(applyIgnoreToggle()).toBe(false);

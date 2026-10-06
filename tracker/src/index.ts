@@ -127,6 +127,8 @@ async function defaultTransport(url: string, payload: TrackerPayload): Promise<b
         /* fall through to sendBeacon */
       }
     }
+    // The browser may have opted out while the fetch was pending; don't start a new request.
+    if (isIgnored()) return false;
     if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
       return navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     }
@@ -189,8 +191,8 @@ export function createTracker(options: TrackerOptions): Tracker {
   // Drop anything retained from before an opt-out so resuming later cannot replay it.
   // Bumped on every opt-out so batches in flight at that moment are never requeued, even after resuming.
   let optOutEpoch = 0;
-  const discardIfIgnored = () => {
-    if (!isIgnored()) return false;
+  const discardIfIgnored = (force = false) => {
+    if (!force && !isIgnored()) return false;
     optOutEpoch += 1;
     queue.length = 0;
     queuedIds.clear();
@@ -247,7 +249,10 @@ export function createTracker(options: TrackerOptions): Tracker {
     // Same-document navigation to the fragment (in-page link, address bar edit) does not re-run init.
     const onHashChange = () => { applyIgnoreToggle(); discardIfIgnored(); };
     // Another tab on this origin opted out: drop this tab's queue now.
-    const onStorage = (change: StorageEvent) => { if (change.key === IGNORE_STORAGE_KEY) discardIfIgnored(); };
+    const onStorage = (change: StorageEvent) => {
+      // Use the event's value: the other tab may have resumed again before this event is handled.
+      if (change.key === IGNORE_STORAGE_KEY) discardIfIgnored(change.newValue === 'true');
+    };
     addEventListener('hashchange', onHashChange);
     addEventListener('storage', onStorage);
     disposers.push(() => {
