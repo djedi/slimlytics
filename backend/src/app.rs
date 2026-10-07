@@ -1139,8 +1139,8 @@ async fn update_site_icon(
     let background = color(input.background)?;
     let background_end = color(input.background_end)?;
     let foreground = color(input.foreground)?;
-    // Choosing (or re-saving) favicon mode fetches a fresh copy; a site without a usable icon
-    // keeps its previous settings so the avatar never goes blank.
+    // Choosing (or re-saving) favicon mode fetches a fresh copy; if no complete image can be
+    // fetched the save fails and the previous icon and settings stay as they were.
     // Fetch over the network first, then store the icon, its cache version, and the settings
     // together so a failure never leaves a new image behind an old version (or half a save).
     let icon = if input.mode == "favicon" {

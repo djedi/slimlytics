@@ -55,6 +55,46 @@ pub fn sniff_image(body: &[u8]) -> Option<&'static str> {
     }
 }
 
+/// Structural checks that catch truncated or stub files without decoding them: each format's
+/// terminator is present (or, for ICO, the directory fits in the body).
+pub fn looks_complete(content_type: &str, body: &[u8]) -> bool {
+    let trimmed = body.trim_ascii_end();
+    match content_type {
+        "image/png" => body.windows(8).any(|chunk| chunk == b"IEND\xaeB`\x82"),
+        "image/jpeg" => trimmed.ends_with(b"\xff\xd9"),
+        "image/gif" => trimmed.ends_with(b";"),
+        "image/webp" => {
+            body.len() >= 12
+                && u32::from_le_bytes([body[4], body[5], body[6], body[7]]) as usize + 8
+                    <= body.len()
+        }
+        "image/x-icon" => {
+            let count = body
+                .get(4..6)
+                .map_or(0, |n| u16::from_le_bytes([n[0], n[1]]) as usize);
+            count > 0
+                && (0..count).all(|index| {
+                    let entry = 6 + index * 16;
+                    body.get(entry + 8..entry + 16).is_some_and(|fields| {
+                        let size = u32::from_le_bytes(fields[0..4].try_into().unwrap()) as usize;
+                        let offset = u32::from_le_bytes(fields[4..8].try_into().unwrap()) as usize;
+                        size > 0
+                            && offset
+                                .checked_add(size)
+                                .is_some_and(|end| end <= body.len())
+                    })
+                })
+        }
+        "image/svg+xml" => {
+            let text = String::from_utf8_lossy(trimmed).to_ascii_lowercase();
+            text.ends_with("</svg>")
+                || (text.ends_with("/>")
+                    && text.matches('<').count() == 1 + usize::from(text.starts_with("<?xml")))
+        }
+        _ => false,
+    }
+}
+
 static BASE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<base\b[^>]*>").unwrap());
 static LINK_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<link\b[^>]*>").unwrap());
 static ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
@@ -211,16 +251,18 @@ pub async fn fetch_favicon(domain: &str) -> Result<Favicon, String> {
     let mut last_error = "no icon found".to_owned();
     for url in attempts {
         match get(url, MAX_ICON_BYTES, false).await {
-            Ok((url, body)) => match sniff_image(&body) {
-                Some(content_type) => {
-                    return Ok(Favicon {
-                        content_type,
-                        body,
-                        source_url: stored_source_url(url),
-                    })
+            Ok((url, body)) => {
+                match sniff_image(&body).filter(|kind| looks_complete(kind, &body)) {
+                    Some(content_type) => {
+                        return Ok(Favicon {
+                            content_type,
+                            body,
+                            source_url: stored_source_url(url),
+                        })
+                    }
+                    None => last_error = format!("{url} is not a complete image"),
                 }
-                None => last_error = format!("{url} is not an image"),
-            },
+            }
             Err(error) => last_error = error,
         }
     }
@@ -421,6 +463,38 @@ mod tests {
             icon_candidates(html, &page)[0].as_str(),
             "https://example.com/assets/icon.png"
         );
+    }
+
+    #[test]
+    fn rejects_truncated_images() {
+        let png_end = b"\0\0\0\0IEND\xaeB`\x82";
+        let png = [b"\x89PNG\r\n\x1a\n".as_slice(), png_end].concat();
+        assert!(looks_complete("image/png", &png));
+        assert!(!looks_complete("image/png", b"\x89PNG\r\n\x1a\n"));
+        assert!(looks_complete(
+            "image/jpeg",
+            b"\xff\xd8\xff\xe0data\xff\xd9\n"
+        ));
+        assert!(!looks_complete("image/jpeg", b"\xff\xd8\xff\xe0data"));
+        assert!(looks_complete("image/gif", b"GIF89adata;"));
+        assert!(!looks_complete("image/gif", b"GIF89adata"));
+        // One 4-byte image at offset 22, inside a 26-byte body.
+        let mut ico = vec![0, 0, 1, 0, 1, 0];
+        ico.extend([16, 16, 0, 0, 1, 0, 32, 0]);
+        ico.extend(4u32.to_le_bytes());
+        ico.extend(22u32.to_le_bytes());
+        ico.extend([1, 2, 3, 4]);
+        assert!(looks_complete("image/x-icon", &ico));
+        assert!(!looks_complete("image/x-icon", &ico[..24]));
+        assert!(looks_complete(
+            "image/svg+xml",
+            b"<svg xmlns=\"x\"><path d=\"M0\"/></svg>\n"
+        ));
+        assert!(looks_complete("image/svg+xml", b"<svg xmlns=\"x\"/>"));
+        assert!(!looks_complete(
+            "image/svg+xml",
+            b"<svg xmlns=\"x\"><path d=\"M0\"/>"
+        ));
     }
 
     #[tokio::test]
