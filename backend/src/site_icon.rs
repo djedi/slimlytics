@@ -111,10 +111,11 @@ pub fn icon_candidates(html: &str, page: &Url) -> Vec<Url> {
             urls.push(url);
         }
     }
+    // The fallback always goes last, even if the page declares it, so attempt_order can rely
+    // on it being the final candidate.
     if let Ok(fallback) = page.join("/favicon.ico") {
-        if !urls.contains(&fallback) {
-            urls.push(fallback);
-        }
+        urls.retain(|url| *url != fallback);
+        urls.push(fallback);
     }
     urls
 }
@@ -309,6 +310,23 @@ mod tests {
         assert_eq!(urls.len(), 5);
         assert_eq!(urls[0], "https://example.com/6.png");
         assert_eq!(urls[4], "https://example.com/favicon.ico");
+    }
+
+    #[test]
+    fn declared_favicon_ico_still_comes_last() {
+        let page = Url::parse("https://example.com/").unwrap();
+        let mut html: String = (2..=5)
+            .map(|size| format!(r#"<link rel="icon" sizes="{size}x{size}" href="/{size}.png">"#))
+            .collect();
+        html.push_str(
+            r#"<link rel="icon" sizes="1x1" href="/favicon.ico"><link rel="icon" href="/x.png">"#,
+        );
+        let urls: Vec<String> = attempt_order(icon_candidates(&html, &page))
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(urls.last().unwrap(), "https://example.com/favicon.ico");
+        assert_eq!(urls.len(), 5);
     }
 
     #[tokio::test]

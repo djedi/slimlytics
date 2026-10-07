@@ -1141,11 +1141,18 @@ async fn update_site_icon(
     let foreground = color(input.foreground)?;
     // Choosing (or re-saving) favicon mode fetches a fresh copy; a site without a usable icon
     // keeps its previous settings so the avatar never goes blank.
-    if input.mode == "favicon" {
+    // Fetch over the network first, then store the icon, its cache version, and the settings
+    // together so a failure never leaves a new image behind an old version (or half a save).
+    let icon = if input.mode == "favicon" {
         let domain = fetch_site(&state.pool, site).await?.domain;
-        let icon = fetch_favicon(&domain).await.map_err(|error| {
+        Some(fetch_favicon(&domain).await.map_err(|error| {
             ApiError::BadRequest(format!("couldn't load a favicon for {domain}: {error}"))
-        })?;
+        })?)
+    } else {
+        None
+    };
+    let mut tx = state.pool.begin().await?;
+    if let Some(icon) = icon {
         sqlx::query(
             "INSERT INTO site_icons(site_id,content_type,body,source_url) VALUES($1,$2,$3,$4)
              ON CONFLICT (site_id) DO UPDATE SET content_type=$2,body=$3,source_url=$4,fetched_at=now()",
@@ -1154,11 +1161,11 @@ async fn update_site_icon(
         .bind(icon.content_type)
         .bind(icon.body)
         .bind(icon.source_url)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?;
         sqlx::query("UPDATE sites SET icon_updated_at=now() WHERE id=$1")
             .bind(site)
-            .execute(&state.pool)
+            .execute(&mut *tx)
             .await?;
     }
     sqlx::query(
@@ -1169,8 +1176,9 @@ async fn update_site_icon(
     .bind(background)
     .bind(background_end)
     .bind(foreground)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Json(fetch_site(&state.pool, site).await?))
 }
 
