@@ -30,4 +30,20 @@ describe('analytics components', () => {
     expect(screen.queryByRole('link', { name: /not set/ })).toBeNull();
     expect(screen.queryByRole('link', { name: /evil/ })).toBeNull();
   });
+
+  it('links bare referrer hostnames, not direct traffic or UTM source names', () => {
+    render(ReportTable, {
+      title: 'Top referrers',
+      linkHosts: true,
+      rows: [
+        { label: 'news.ycombinator.com', value: 3 },
+        { label: '(direct)', value: 2 },
+        { label: 'newsletter', value: 1 }
+      ]
+    });
+    const link = screen.getByRole('link', { name: 'Open news.ycombinator.com in a new tab' });
+    expect(link).toHaveAttribute('href', 'https://news.ycombinator.com/');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+  });
 });

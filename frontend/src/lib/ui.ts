@@ -168,6 +168,16 @@ export function pageHref(label: string, origin: string | undefined): string | nu
   }
 }
 
+/**
+ * https URL for a referrer label that is a bare hostname ("news.ycombinator.com"), or null for
+ * "(direct)", UTM source names like "newsletter", and anything carrying a path, port or scheme.
+ */
+export function referrerHref(label: string): string | null {
+  const host = label.trim().toLowerCase();
+  if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(host)) return null;
+  return `https://${host}/`;
+}
+
 export function relativeTime(timestamp: string, now = Date.now()): string {
   const seconds = Math.max(0, (now - new Date(timestamp).getTime()) / 1000);
   if (seconds < 45) return 'just now';

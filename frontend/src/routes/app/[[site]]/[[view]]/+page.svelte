@@ -915,6 +915,7 @@
             title="Top referrers"
             rows={topReferrers}
             moreHref={appHref(site.id, 'referrers', days)}
+            linkHosts
           />
         </div>
       {:else if view === 'spy'}
@@ -970,6 +971,7 @@
           title={`${nav.find((item) => item.id === view)?.label} report`}
           rows={report}
           pageOrigin={view === 'pages' ? siteOrigin : undefined}
+          linkHosts={view === 'referrers'}
         />
       {:else if view === 'visitors'}
         <section class="panel">

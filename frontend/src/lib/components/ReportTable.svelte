@@ -1,13 +1,14 @@
 <script lang="ts">
   import { ArrowDown, ArrowRight, ArrowUp, ExternalLink, Minus } from '@lucide/svelte';
   import type { ReportRow } from '../api';
-  import { formatChange, pageHref } from '../ui';
+  import { formatChange, pageHref, referrerHref } from '../ui';
 
   let {
     title,
     rows,
     moreHref,
     pageOrigin,
+    linkHosts = false,
     emptyText = 'No report data for this period.',
     emptyHint = 'Try a wider date range.'
   }: {
@@ -16,6 +17,8 @@
     moreHref?: string;
     /** Site origin (e.g. https://example.com); rows whose label is a path get an open-in-new-tab link. */
     pageOrigin?: string;
+    /** Rows whose label is a bare hostname (referrers) get an open-in-new-tab link. */
+    linkHosts?: boolean;
     emptyText?: string;
     emptyHint?: string;
   } =
@@ -52,7 +55,7 @@
         </thead>
         <tbody>
           {#each rows as row}
-            {@const href = pageHref(row.label, pageOrigin)}
+            {@const href = pageHref(row.label, pageOrigin) ?? (linkHosts ? referrerHref(row.label) : null)}
             <tr style={`--share:${row.value / max}`}>
               <th scope="row">
                 <span class="report-cell">
