@@ -18,7 +18,8 @@ export interface TrackerPayload {
   events: TrackerEvent[];
 }
 
-export type Transport = (url: string, payload: TrackerPayload) => boolean | Promise<boolean>;
+/** `stillValid` turns false once an opt-out has invalidated the batch; check it before any retry or fallback. */
+export type Transport = (url: string, payload: TrackerPayload, stillValid?: () => boolean) => boolean | Promise<boolean>;
 
 export interface TrackerOptions {
   writeKey: string;
@@ -36,7 +37,70 @@ export interface TrackerOptions {
 
 const SENSITIVE = /^(token|access_token|auth|authorization|password|passwd|secret|api_?key|email|phone|session|code|signature)$/i;
 const DEFAULT_DOWNLOADS = ['pdf', 'zip', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'dmg', 'exe', 'mp3', 'mp4'];
-export const TRACKER_VERSION = '1.0.0';
+export const TRACKER_VERSION = '1.1.0';
+export const IGNORE_STORAGE_KEY = 'slimlytics_ignore';
+const IGNORE_FRAGMENT = /^#slimlytics-ignore(?:=(on|off|true|false))?$/i;
+
+
+// Fallback for the current document when the opt-out could not be persisted to localStorage.
+let ignoredInMemory: boolean | undefined;
+// Incremented on every opt-out, however it is detected. Queues and in-flight batches captured
+// under an older generation are dropped, so resuming can never replay pre-opt-out events.
+let optOutGeneration = 0;
+// When a toggle was last applied, on both clocks an Event.timeStamp may use (page-relative or epoch).
+let lastToggleAt = { page: -Infinity, epoch: -Infinity };
+
+/** True when a toggle was applied after `timeStamp`, so an event from then is stale. */
+function toggledSince(timeStamp: number): boolean {
+  return timeStamp > 1e12 ? timeStamp < lastToggleAt.epoch : timeStamp < lastToggleAt.page;
+}
+
+/** True when the site owner opted this browser out with `#slimlytics-ignore`. */
+export function isIgnored(): boolean {
+  if (ignoredInMemory !== undefined) return ignoredInMemory;
+  try {
+    return typeof window !== 'undefined' && window.localStorage?.getItem(IGNORE_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Applies a `#slimlytics-ignore` / `#slimlytics-ignore=off` fragment, removes the marker from
+ * the address bar, and returns whether this browser is now ignored. `url` defaults to the
+ * current location; pass a hashchange event's `newURL` to apply that navigation's fragment.
+ */
+export function applyIgnoreToggle(url?: string): boolean {
+  if (typeof location === 'undefined') return false;
+  let hash = location.hash;
+  if (url !== undefined) {
+    try { hash = new URL(url, location.href).hash; } catch { return isIgnored(); }
+  }
+  const match = IGNORE_FRAGMENT.exec(hash);
+  if (match) {
+    const off = /^(off|false)$/i.test(match[1] ?? '');
+    if (!off) optOutGeneration += 1;
+    lastToggleAt = { page: typeof performance === 'undefined' ? -Infinity : performance.now(), epoch: Date.now() };
+    try {
+      if (off) window.localStorage.removeItem(IGNORE_STORAGE_KEY);
+      else window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+      ignoredInMemory = undefined;
+    } catch {
+      // Storage blocked or full: still honor the choice for this document.
+      ignoredInMemory = !off;
+    }
+    // Only strip the marker if it is still in the address bar.
+    if (hash === location.hash) {
+      try {
+        // Prototype method, not the instance wrapper, so this cleanup is not tracked as a navigation.
+        History.prototype.replaceState.call(history, history.state, '', location.pathname + location.search);
+      } catch {
+        /* non-browser environment */
+      }
+    }
+  }
+  return isIgnored();
+}
 
 export function redactUrl(value: string): string {
   try {
@@ -66,7 +130,7 @@ function privacySignals(): { dnt: boolean; gpc: boolean } {
   };
 }
 
-async function defaultTransport(url: string, payload: TrackerPayload): Promise<boolean> {
+async function defaultTransport(url: string, payload: TrackerPayload, stillValid: () => boolean = () => true): Promise<boolean> {
   const results = await Promise.all(payload.events.map(async (event) => {
     const body = JSON.stringify(toCollectInput(event));
     // Prefer fetch: Safari sendBeacon has historically dropped or mishandled
@@ -85,6 +149,8 @@ async function defaultTransport(url: string, payload: TrackerPayload): Promise<b
         /* fall through to sendBeacon */
       }
     }
+    // The browser may have opted out (and possibly resumed) while the fetch was pending.
+    if (applyIgnoreToggle() || !stillValid()) return false;
     if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
       return navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
     }
@@ -140,10 +206,24 @@ export function createTracker(options: TrackerOptions): Tracker {
     const privacy = signals();
     return !destroyed
       && allowed
+      && !isIgnored()
       && !(options.respectDnt !== false && privacy.dnt)
       && !(options.gpcMode === 'deny' && privacy.gpc);
   };
+  // Drop anything retained from before an opt-out so resuming later cannot replay it.
+  let queueGeneration = optOutGeneration;
+  const discardIfIgnored = (force = false) => {
+    if (force || isIgnored()) optOutGeneration += 1;
+    if (queueGeneration === optOutGeneration) return false;
+    queueGeneration = optOutGeneration;
+    queue.length = 0;
+    queuedIds.clear();
+    return true;
+  };
   const enqueue = (event: TrackerEvent): string | undefined => {
+    // Pick up fragments set via History API navigation, which fires no hashchange (e.g. autoTrack: false).
+    if (typeof window !== 'undefined') applyIgnoreToggle();
+    discardIfIgnored();
     if (!enabled() || queuedIds.has(event.id)) return undefined;
     queuedIds.add(event.id);
     queue.push(event);
@@ -167,27 +247,57 @@ export function createTracker(options: TrackerOptions): Tracker {
     return enqueue({ id: id(), type: 'event', ...context(), name: name.slice(0, 120), properties });
   };
   const flush = async (): Promise<boolean> => {
+    // Before the in-flight early return, so a pending opt-out invalidates the batch being sent.
+    if (typeof window !== 'undefined') applyIgnoreToggle();
+    discardIfIgnored();
     if (sending) return sending;
     if (!enabled() || queue.length === 0) return false;
     const events = queue.splice(0, batchSize);
-    sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }))
+    const epoch = optOutGeneration;
+    const requeue = () => {
+      if (discardIfIgnored() || epoch !== optOutGeneration) events.forEach((item) => queuedIds.delete(item.id));
+      else queue.unshift(...events);
+    };
+    sending = Promise.resolve(transport(endpoint, { sentAt: new Date().toISOString(), events }, () => epoch === optOutGeneration))
       .then((ok) => {
-        if (!ok) queue.unshift(...events);
-        else events.forEach((item) => queuedIds.delete(item.id));
+        if (ok) events.forEach((item) => queuedIds.delete(item.id));
+        else requeue();
         return ok;
       })
-      .catch(() => { queue.unshift(...events); return false; })
+      .catch(() => { requeue(); return false; })
       .finally(() => { sending = undefined; });
     return sending;
   };
 
+  // Process opt-out fragments even without auto-tracking so manual page()/event() calls respect them.
+  if (typeof window !== 'undefined') {
+    applyIgnoreToggle();
+    // Same-document navigation to the fragment (in-page link, address bar edit) does not re-run init.
+    // hashchange is async: location.hash may already be past this event's fragment, so read newURL.
+    const onHashChange = (change: HashChangeEvent) => {
+      // Skip if a newer choice was already applied (e.g. by page()/flush() after a later pushState).
+      if (!toggledSince(change.timeStamp)) applyIgnoreToggle(change.newURL || undefined);
+      discardIfIgnored();
+    };
+    // Another tab on this origin opted out: drop this tab's queue now.
+    const onStorage = (change: StorageEvent) => {
+      // Use the event's value: the other tab may have resumed again before this event is handled.
+      if (change.key === IGNORE_STORAGE_KEY) discardIfIgnored(change.newValue === 'true');
+    };
+    addEventListener('hashchange', onHashChange);
+    addEventListener('storage', onStorage);
+    disposers.push(() => {
+      removeEventListener('hashchange', onHashChange);
+      removeEventListener('storage', onStorage);
+    });
+  }
   if (options.autoTrack !== false && typeof window !== 'undefined') {
     page();
     // Send the first pageview promptly so short visits are not lost waiting on the batch timer.
     void flush();
     const originalPush = history.pushState;
     const originalReplace = history.replaceState;
-    const trackNavigation = () => queueMicrotask(() => page());
+    const trackNavigation = () => queueMicrotask(() => { applyIgnoreToggle(); page(); });
     history.pushState = function (...args) { originalPush.apply(this, args); trackNavigation(); };
     history.replaceState = function (...args) { originalReplace.apply(this, args); trackNavigation(); };
     addEventListener('popstate', trackNavigation);
@@ -261,7 +371,7 @@ export function trackerOptionsFromScript(script: HTMLScriptElement | null): Trac
 }
 
 if (typeof window !== 'undefined') {
-  (window as typeof window & { Slimlytics?: unknown }).Slimlytics = { init, page, event, consent, createTracker };
+  (window as typeof window & { Slimlytics?: unknown }).Slimlytics = { init, page, event, consent, createTracker, isIgnored };
   const options = trackerOptionsFromScript(document.currentScript as HTMLScriptElement | null);
   if (options) init(options);
 }

@@ -30,8 +30,8 @@ use crate::{
     },
     server_ingest::{validate_server_event, ServerEventBatch},
     traffic::{
-        automation_metadata, client_metadata, collection_origin_allowed, origin_allowed,
-        traffic_class, RateLimiter,
+        automation_for, client_metadata, collection_origin_allowed, origin_allowed, traffic_class,
+        RateLimiter,
     },
     webhooks::{signing_secret, validate_webhook_url},
 };
@@ -1359,7 +1359,7 @@ async fn collect(
         .and_then(|v| Url::parse(v).ok())
         .and_then(|v| v.host_str().map(str::to_owned));
     let class = traffic_class(ua, ip, &state.internal_ips);
-    let automation = automation_metadata(ua);
+    let automation = automation_for(ua, ip);
     let client = client_metadata(ua);
     if !input.properties.is_object() {
         record_collection_rejection(&state.pool, site, "invalid_properties").await;
@@ -1569,7 +1569,7 @@ async fn server_collect(
             event.occurred_at,
         );
         let class = traffic_class(&event.user_agent, event.client_ip, &state.internal_ips);
-        let automation = automation_metadata(&event.user_agent);
+        let automation = automation_for(&event.user_agent, event.client_ip);
         let client = client_metadata(&event.user_agent);
         let location = state
             .geoip

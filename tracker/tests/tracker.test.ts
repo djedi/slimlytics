@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createTracker, redactUrl, toCollectInput, trackerOptionsFromScript } from '../src/index';
+import { applyIgnoreToggle, createTracker, isIgnored, redactUrl, toCollectInput, trackerOptionsFromScript, IGNORE_STORAGE_KEY } from '../src/index';
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -197,5 +197,267 @@ describe('default transport', () => {
       referrer: '   '
     });
     expect(mapped.referrer).toBeUndefined();
+  });
+});
+
+describe('ignore my visits', () => {
+  beforeEach(() => {
+    // Node 25+ ships an empty global localStorage that shadows jsdom's; use the real one.
+    const storage = (globalThis as unknown as { jsdom: { window: Window } }).jsdom.window.localStorage;
+    Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
+    window.localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
+  afterEach(() => {
+    window.localStorage.clear();
+    history.replaceState(null, '', '/');
+  });
+
+  it('turns ignore on and off from the URL fragment and strips the marker', () => {
+    history.replaceState(null, '', '/pricing?plan=pro#slimlytics-ignore');
+    expect(applyIgnoreToggle()).toBe(true);
+    expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBe('true');
+    expect(location.hash).toBe('');
+    expect(location.pathname + location.search).toBe('/pricing?plan=pro');
+
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    expect(applyIgnoreToggle()).toBe(false);
+    expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBeNull();
+  });
+
+  it('applies the fragment even when autoTrack is disabled', async () => {
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    expect(window.localStorage.getItem(IGNORE_STORAGE_KEY)).toBe('true');
+    expect(tracker.page()).toBeUndefined();
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('honors the opt-out in memory when localStorage cannot be written', () => {
+    const setItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+    const removeItem = vi.spyOn(window.localStorage, 'removeItem').mockImplementation(() => { throw new Error('blocked'); });
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    expect(applyIgnoreToggle()).toBe(true);
+    expect(isIgnored()).toBe(true);
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    expect(applyIgnoreToggle()).toBe(false);
+    setItem.mockRestore();
+    removeItem.mockRestore();
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    applyIgnoreToggle();
+  });
+
+  it('applies the toggle on same-document hash navigation', () => {
+    const tracker = createTracker({ writeKey: 'key', transport: vi.fn().mockResolvedValue(true), autoTrack: false });
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(isIgnored()).toBe(true);
+    expect(location.hash).toBe('');
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    expect(isIgnored()).toBe(false);
+    tracker.destroy();
+  });
+
+  it('discards events queued before an opt-out so resuming cannot replay them', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('before-opt-out');
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    await tracker.flush();
+    window.localStorage.removeItem(IGNORE_STORAGE_KEY);
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('does not requeue a batch that was in flight when the browser opted out', async () => {
+    let settle!: (ok: boolean) => void;
+    const send = vi.fn().mockImplementationOnce(() => new Promise<boolean>((resolve) => { settle = resolve; }))
+      .mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    settle(false);
+    await pending;
+    await tracker.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    tracker.destroy();
+  });
+
+  it('records one pageview when SPA navigation resumes tracking', async () => {
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, batchSize: 50 });
+    history.pushState({}, '', '/#slimlytics-ignore=off');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await tracker.flush();
+    const pages = send.mock.calls.flatMap(([, payload]) => payload.events).filter((item) => item.type === 'page');
+    expect(pages).toHaveLength(1);
+    tracker.destroy();
+  });
+
+  it('does not fall back to sendBeacon after opting out mid-fetch', async () => {
+    const beacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true });
+    let fail!: (error: Error) => void;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const tracker = createTracker({ writeKey: 'key', autoTrack: false });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    fail(new Error('network'));
+    await pending;
+    expect(beacon).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    tracker.destroy();
+  });
+
+  it('does not fall back to sendBeacon when an opt-out and resume happen mid-fetch', async () => {
+    const beacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true });
+    let fail!: (error: Error) => void;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const tracker = createTracker({ writeKey: 'key', autoTrack: false });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.replaceState(null, '', '/#slimlytics-ignore');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    fail(new Error('network'));
+    await pending;
+    expect(beacon).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    tracker.destroy();
+  });
+
+  it('honors the opt-out carried by a hashchange event even if the hash already moved on', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('before-opt-out');
+    history.replaceState(null, '', '/');
+    window.dispatchEvent(new HashChangeEvent('hashchange', { newURL: `${location.origin}/#slimlytics-ignore` }));
+    await tracker.flush();
+    expect(isIgnored()).toBe(true);
+    expect(tracker.event('after-opt-out')).toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('applies a fragment set via pushState before manual tracking calls', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    history.pushState({}, '', '/#slimlytics-ignore');
+    expect(tracker.page()).toBeUndefined();
+    expect(isIgnored()).toBe(true);
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('applies a fragment set via pushState before flushing queued events', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('queued');
+    history.pushState({}, '', '/#slimlytics-ignore');
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('invalidates an in-flight batch when flush() sees a pushState opt-out', async () => {
+    const beacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true });
+    let fail!: (error: Error) => void;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise((_, reject) => { fail = reject; }));
+    const tracker = createTracker({ writeKey: 'key', autoTrack: false });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.pushState({}, '', '/#slimlytics-ignore');
+    void tracker.flush();
+    expect(isIgnored()).toBe(true);
+    window.localStorage.removeItem(IGNORE_STORAGE_KEY);
+    fail(new Error('network'));
+    await pending;
+    expect(beacon).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    tracker.destroy();
+  });
+
+  it('does not requeue a batch after an opt-out detected by the transport and a later resume', async () => {
+    const settles: Array<(ok: boolean) => void> = [];
+    const send = vi.fn().mockImplementation(() => new Promise<boolean>((resolve) => { settles.push(resolve); }));
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('in-flight');
+    const pending = tracker.flush();
+    history.pushState({}, '', '/#slimlytics-ignore');
+    applyIgnoreToggle(); // as defaultTransport's fallback check would
+    history.pushState({}, '', '/#slimlytics-ignore=off');
+    expect(tracker.event('after-resume')).toBeDefined();
+    settles[0](false);
+    await pending;
+    send.mockResolvedValue(true);
+    await tracker.flush();
+    const names = send.mock.calls.slice(1).flatMap(([, payload]) => payload.events).map((item) => item.name);
+    expect(names).toEqual(['after-resume']);
+    tracker.destroy();
+  });
+
+  it('does not let a delayed hashchange overwrite a newer choice', async () => {
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    history.replaceState(null, '', '/#slimlytics-ignore=off');
+    const staleResume = new HashChangeEvent('hashchange', { newURL: `${location.origin}/#slimlytics-ignore=off` });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    tracker.page();
+    history.pushState({}, '', '/#slimlytics-ignore');
+    tracker.page();
+    expect(isIgnored()).toBe(true);
+    window.dispatchEvent(staleResume);
+    expect(isIgnored()).toBe(true);
+    tracker.destroy();
+  });
+
+  it('discards the queue for a cross-tab opt-out even if that tab already resumed', async () => {
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false, batchSize: 50 });
+    tracker.event('before-opt-out');
+    window.dispatchEvent(new StorageEvent('storage', { key: IGNORE_STORAGE_KEY, newValue: 'true' }));
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('leaves unrelated fragments alone', () => {
+    history.replaceState(null, '', '/docs#install');
+    expect(applyIgnoreToggle()).toBe(false);
+    expect(location.hash).toBe('#install');
+  });
+
+  it('does not send anything while the browser is ignored', async () => {
+    window.localStorage.setItem(IGNORE_STORAGE_KEY, 'true');
+    expect(isIgnored()).toBe(true);
+    const send = vi.fn().mockResolvedValue(true);
+    const tracker = createTracker({ writeKey: 'key', transport: send, autoTrack: false });
+    expect(tracker.page()).toBeUndefined();
+    expect(tracker.event('signup')).toBeUndefined();
+    await tracker.flush();
+    expect(send).not.toHaveBeenCalled();
+    tracker.destroy();
+  });
+
+  it('tracks normally when storage is unavailable', () => {
+    const spy = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => { throw new Error('blocked'); });
+    expect(isIgnored()).toBe(false);
+    spy.mockRestore();
   });
 });

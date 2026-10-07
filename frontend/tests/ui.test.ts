@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyTheme, sparklinePoints } from '../src/lib/ui';
+import { applyTheme, ignoreVisitsLinks, sparklinePoints } from '../src/lib/ui';
 
 describe('UI helpers', () => {
   it('creates bounded SVG points including flat datasets', () => {
@@ -14,5 +14,23 @@ describe('UI helpers', () => {
     expect(document.documentElement.dataset.theme).toBe('light');
     applyTheme('system');
     expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+});
+
+describe('ignoreVisitsLinks', () => {
+  it('builds opt-out and opt-in links for a bare domain', () => {
+    expect(ignoreVisitsLinks('example.com')).toEqual({
+      ignore: 'https://example.com/#slimlytics-ignore',
+      resume: 'https://example.com/#slimlytics-ignore=off'
+    });
+  });
+
+  it('keeps an explicit scheme and drops paths, queries, and fragments', () => {
+    expect(ignoreVisitsLinks('http://localhost:5173/app?x=1#y')?.ignore).toBe('http://localhost:5173/#slimlytics-ignore');
+  });
+
+  it('returns nothing for unusable domains', () => {
+    expect(ignoreVisitsLinks('')).toBeUndefined();
+    expect(ignoreVisitsLinks('javascript:alert(1)')).toBeUndefined();
   });
 });

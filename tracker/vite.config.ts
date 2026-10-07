@@ -5,5 +5,5 @@ export default defineConfig({
     lib: { entry: 'src/index.ts', name: 'Slimlytics', formats: ['es', 'iife'], fileName: (format) => format === 'iife' ? 'slimlytics.js' : 'slimlytics.es.js' },
     minify: 'esbuild'
   },
-  test: { environment: 'jsdom', restoreMocks: true }
+  test: { environment: 'jsdom', environmentOptions: { jsdom: { url: 'https://site.test/' } }, restoreMocks: true }
 });
