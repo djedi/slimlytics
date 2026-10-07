@@ -132,6 +132,14 @@ fn attempt_order(candidates: Vec<Url>) -> Vec<Url> {
     urls
 }
 
+/// Where the icon came from, for reference only: the query and fragment are dropped so
+/// signed URLs or tokens are never persisted.
+fn stored_source_url(mut url: Url) -> String {
+    url.set_query(None);
+    url.set_fragment(None);
+    url.to_string()
+}
+
 /// Finds and downloads the favicon of `https://{domain}/`.
 pub async fn fetch_favicon(domain: &str) -> Result<Favicon, String> {
     let home =
@@ -150,7 +158,7 @@ pub async fn fetch_favicon(domain: &str) -> Result<Favicon, String> {
                     return Ok(Favicon {
                         content_type,
                         body,
-                        source_url: url.to_string(),
+                        source_url: stored_source_url(url),
                     })
                 }
                 None => last_error = format!("{url} is not an image"),
@@ -327,6 +335,12 @@ mod tests {
             .collect();
         assert_eq!(urls.last().unwrap(), "https://example.com/favicon.ico");
         assert_eq!(urls.len(), 5);
+    }
+
+    #[test]
+    fn stored_source_url_drops_query_and_fragment() {
+        let url = Url::parse("https://cdn.example.com/icon.png?access_token=secret#x").unwrap();
+        assert_eq!(stored_source_url(url), "https://cdn.example.com/icon.png");
     }
 
     #[tokio::test]
