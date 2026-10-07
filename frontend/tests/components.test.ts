@@ -48,16 +48,16 @@ describe('analytics components', () => {
     expect(screen.getAllByRole('link')).toHaveLength(1);
   });
 
-  it('shows flags, device icons, and brand logos next to dimension labels', () => {
+  it('shows flags, device icons, and brand logos next to dimension labels', async () => {
     const { container, rerender } = render(ReportTable, {
       title: 'Countries',
       iconDimension: 'countries',
       rows: [{ label: 'us', value: 2 }]
     });
     expect(container.querySelector('.dimension-icon')).toHaveTextContent('🇺🇸');
-    rerender({ title: 'Browsers', iconDimension: 'browsers', rows: [{ label: 'Chrome', value: 1 }] });
+    await rerender({ title: 'Browsers', iconDimension: 'browsers', rows: [{ label: 'Chrome', value: 1 }] });
     expect(container.querySelector('.dimension-icon svg path')).toHaveAttribute('d');
-    rerender({ title: 'Devices', iconDimension: 'devices', rows: [{ label: 'mobile', value: 1 }] });
+    await rerender({ title: 'Devices', iconDimension: 'devices', rows: [{ label: 'mobile', value: 1 }] });
     expect(container.querySelector('.dimension-icon svg')).not.toBeNull();
   });
 
