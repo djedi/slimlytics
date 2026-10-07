@@ -551,9 +551,10 @@
   async function saveSiteIcon(settings: SiteIconSettings) {
     if (!site) return;
     const updated = await api.updateSiteIcon(site.id, settings);
-    const next = { ...updated, overview: site.overview };
-    site = next;
-    sites = sites.map((item) => (item.id === next.id ? { ...next, overview: item.overview } : item));
+    // The user may have switched sites while the favicon was fetched: only replace the active
+    // site if it is still the one saved.
+    sites = sites.map((item) => (item.id === updated.id ? { ...updated, overview: item.overview } : item));
+    if (site?.id === updated.id) site = { ...updated, overview: site.overview };
   }
   async function connectSearchConsole() {
     if (!site) return;

@@ -119,6 +119,18 @@ pub fn icon_candidates(html: &str, page: &Url) -> Vec<Url> {
     urls
 }
 
+/// At most four declared icons, then always the `/favicon.ico` fallback (the last candidate).
+fn attempt_order(candidates: Vec<Url>) -> Vec<Url> {
+    let fallback = candidates.last().cloned();
+    let mut urls: Vec<Url> = Vec::new();
+    for url in candidates.into_iter().take(4).chain(fallback) {
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    }
+    urls
+}
+
 /// Finds and downloads the favicon of `https://{domain}/`.
 pub async fn fetch_favicon(domain: &str) -> Result<Favicon, String> {
     let home =
@@ -128,8 +140,9 @@ pub async fn fetch_favicon(domain: &str) -> Result<Favicon, String> {
         Ok((page, body)) => icon_candidates(&String::from_utf8_lossy(&body), &page),
         Err(_) => icon_candidates("", &home),
     };
+    let attempts = attempt_order(candidates);
     let mut last_error = "no icon found".to_owned();
-    for url in candidates.into_iter().take(5) {
+    for url in attempts {
         match get(url, MAX_ICON_BYTES, false).await {
             Ok((url, body)) => match sniff_image(&body) {
                 Some(content_type) => {
@@ -220,6 +233,8 @@ async fn public_client(url: &Url) -> Result<reqwest::Client, String> {
     }
     reqwest::Client::builder()
         .redirect(Policy::none())
+        // An environment proxy would resolve the host itself and bypass the pinned address.
+        .no_proxy()
         .timeout(Duration::from_secs(8))
         .user_agent("Slimlytics favicon fetcher (+https://slimlytics.com)")
         .resolve(host, addresses[0])
@@ -279,6 +294,21 @@ mod tests {
                 "https://example.com/favicon.ico",
             ]
         );
+    }
+
+    #[test]
+    fn always_tries_favicon_ico_after_declared_icons() {
+        let page = Url::parse("https://example.com/").unwrap();
+        let html: String = (1..=6)
+            .map(|size| format!(r#"<link rel="icon" sizes="{size}x{size}" href="/{size}.png">"#))
+            .collect();
+        let urls: Vec<String> = attempt_order(icon_candidates(&html, &page))
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(urls.len(), 5);
+        assert_eq!(urls[0], "https://example.com/6.png");
+        assert_eq!(urls[4], "https://example.com/favicon.ico");
     }
 
     #[tokio::test]
