@@ -13,6 +13,7 @@ pub mod privacy;
 pub mod reporting;
 pub mod search_console;
 pub mod server_ingest;
+pub mod site_icon;
 pub mod traffic;
 pub mod webhooks;
 

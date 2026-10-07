@@ -156,6 +156,11 @@ mod tests {
             anti_adblock_server: server.into(),
             anti_adblock_js_path: "/ef691dcaa3fd.js".into(),
             anti_adblock_beacon_path: "/9b3c2d1e4f5a".into(),
+            icon_mode: "initials".into(),
+            icon_background: None,
+            icon_background_end: None,
+            icon_foreground: None,
+            icon_updated_at: None,
             created_at: Utc::now(),
         }
     }

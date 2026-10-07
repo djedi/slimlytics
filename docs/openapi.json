@@ -2879,6 +2879,205 @@
         ]
       }
     },
+    "/api/sites/{siteId}/icon": {
+      "get": {
+        "tags": [
+          "Sites"
+        ],
+        "summary": "Get the site's stored favicon",
+        "description": "Public, so an <img> can load it. SVGs are served sandboxed.",
+        "operationId": "getSiteIcon",
+        "security": [],
+        "parameters": [
+          {
+            "name": "siteId",
+            "in": "path",
+            "required": true,
+            "description": "Site UUID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Favicon image",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/x-icon": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/svg+xml": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Sites"
+        ],
+        "summary": "Set the site's dashboard icon",
+        "operationId": "updateSiteIcon",
+        "responses": {
+          "200": {
+            "description": "Updated site",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Site"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Failed to deserialize path parameters"
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required or invalid/expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Credential lacks permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Request Content-Type is not application/json",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "JSON body could not be deserialized",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteIconInput"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "siteId",
+            "in": "path",
+            "required": true,
+            "description": "Site UUID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Initials on a colored tile, or the site's favicon (fetched from https://{domain}/ and stored)."
+      }
+    },
     "/api/sites/{siteId}/anti-adblock": {
       "put": {
         "tags": [
@@ -6286,6 +6485,44 @@
         },
         "additionalProperties": false
       },
+      "SiteIconInput": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "initials",
+              "favicon"
+            ],
+            "description": "favicon fetches the site's icon now and fails with 400 if none can be loaded"
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(#[0-9a-fA-F]{6})?$"
+          },
+          "backgroundEnd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(#[0-9a-fA-F]{6})?$"
+          },
+          "foreground": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^(#[0-9a-fA-F]{6})?$"
+          }
+        },
+        "additionalProperties": false
+      },
       "Site": {
         "type": "object",
         "required": [
@@ -6301,6 +6538,11 @@
           "antiAdblockServer",
           "antiAdblockJsPath",
           "antiAdblockBeaconPath",
+          "iconMode",
+          "iconBackground",
+          "iconBackgroundEnd",
+          "iconForeground",
+          "iconUpdatedAt",
           "createdAt"
         ],
         "properties": {
@@ -6356,6 +6598,47 @@
           "antiAdblockBeaconPath": {
             "type": "string"
           },
+          "iconMode": {
+            "type": "string",
+            "enum": [
+              "initials",
+              "favicon"
+            ],
+            "description": "Dashboard avatar: initials on a colored tile, or the website's favicon"
+          },
+          "iconBackground": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^#[0-9a-f]{6}$",
+            "description": "Tile gradient start; null uses an automatic per-domain hue"
+          },
+          "iconBackgroundEnd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^#[0-9a-f]{6}$",
+            "description": "Tile gradient end; null keeps the background solid"
+          },
+          "iconForeground": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^#[0-9a-f]{6}$",
+            "description": "Initials color; null uses white"
+          },
+          "iconUpdatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the stored favicon last changed; add it to the GET /api/sites/{siteId}/icon URL to bust caches"
+          }
+        ,
           "createdAt": {
             "type": "string",
             "format": "date-time"
