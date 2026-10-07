@@ -46,4 +46,22 @@ describe('spy view', () => {
     expect(totals).toHaveTextContent(/Active now\s*40/);
     expect(screen.getByText('100 events')).toBeInTheDocument();
   });
+
+  it('links page paths to the live site in a new tab from top pages and the stream', () => {
+    render(SpyView, {
+      props: { events, visitors: [], streamState: 'live', pageOrigin: 'https://shop.example.com', onToggle: vi.fn(), onSelect: vi.fn() }
+    });
+    const links = screen.getAllByRole('link', { name: 'Open /pricing in a new tab' });
+    expect(links).toHaveLength(3); // top pages + two stream rows
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', 'https://shop.example.com/pricing');
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    }
+  });
+
+  it('omits page links without a site origin', () => {
+    render(SpyView, { props: { events, visitors: [], streamState: 'live', onToggle: vi.fn(), onSelect: vi.fn() } });
+    expect(screen.queryByRole('link')).toBeNull();
+  });
 });

@@ -127,7 +127,11 @@
 .rank-list b{font-variant-numeric:tabular-nums}
 .spy-stream{position:sticky;top:86px;max-height:calc(100vh - 110px);display:flex;flex-direction:column}
 .spy-stream ol{overflow:auto;margin:0 -18px -18px;padding:0 18px 18px}
-.spy-stream li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.spy-stream li{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.page-open{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--muted);opacity:.55;transition:opacity .15s ease,color .15s ease,background-color .15s ease}
+.rank-list li:hover .page-open,.spy-stream li:hover .page-open,.page-open:focus-visible{opacity:1}
+.page-open:hover,.page-open:focus-visible{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);outline:none}
+.rank-list li .page-open svg{color:inherit}
 .spy-stream li.fresh{animation:stream-in .5s ease-out both}
 .spy-stream li button{min-width:0}
 .spy-stream li button:disabled{cursor:default}
