@@ -47,6 +47,7 @@
     browserSession,
     demoReport,
     type AntiAdblockSettings,
+    type SiteIconSettings,
     type Anomaly,
     type Attribution,
     type CollectionHealth,
@@ -73,12 +74,15 @@
   import TrafficChart from '$lib/components/TrafficChart.svelte';
   import InsightsView from '$lib/components/insights/InsightsView.svelte';
   import type { IconDimension } from '$lib/components/DimensionIcon.svelte';
+  import SiteIcon from '$lib/components/SiteIcon.svelte';
+  import SiteIconSettingsCard from '$lib/components/SiteIconSettings.svelte';
   import SpyView, { type StreamState } from '$lib/components/spy/SpyView.svelte';
   import VisitorDrawer from '$lib/components/spy/VisitorDrawer.svelte';
 
   type View = 'rollup' | SiteView;
   const demo = env.PUBLIC_DEMO_MODE === 'true';
-  const api = new ApiClient(env.PUBLIC_API_BASE_URL || '/api', fetch, demo);
+  const apiBase = env.PUBLIC_API_BASE_URL || '/api';
+  const api = new ApiClient(apiBase, fetch, demo);
   // An expired or revoked session must clear the stored token, or /login would bounce straight back here.
   api.onUnauthorized = () => {
     api.forgetSession();
@@ -544,6 +548,14 @@
     site = next;
     sites = sites.map((item) => (item.id === next.id ? { ...next, overview: item.overview } : item));
   }
+  async function saveSiteIcon(settings: SiteIconSettings) {
+    if (!site) return;
+    const updated = await api.updateSiteIcon(site.id, settings);
+    // The user may have switched sites while the favicon was fetched: only replace the active
+    // site if it is still the one saved.
+    sites = sites.map((item) => (item.id === updated.id ? { ...updated, overview: item.overview } : item));
+    if (site?.id === updated.id) site = { ...updated, overview: site.overview };
+  }
   async function connectSearchConsole() {
     if (!site) return;
     const { authorizationUrl } = await api.connectSearchConsole(site.id);
@@ -679,7 +691,7 @@
         >
       </div>
       <a class="site-picker" href={appHref(null, null, days)} aria-label="All sites">
-        <span class="site-avatar">{site ? site.name.slice(0, 2).toUpperCase() : 'ALL'}</span>
+        {#if site}<SiteIcon {site} {apiBase} />{:else}<span class="site-avatar">ALL</span>{/if}
         <span
           ><small>{site ? 'Current site' : 'Workspace'}</small><strong
             >{site?.name ?? 'All sites'}</strong
@@ -807,7 +819,7 @@
           </div>
           <div class="site-grid rollup-grid">
             {#each sortedSites as item (item.id)}
-              <SiteCard site={item} {days} />
+              <SiteCard site={item} {days} {apiBase} />
             {/each}
             <button class="add-site-card" onclick={() => (newSite = true)}>
               <span><Plus size={20} aria-hidden="true" /></span>
@@ -1096,6 +1108,7 @@
               </div>
             </dl>
           </div>
+          <SiteIconSettingsCard {site} {apiBase} save={saveSiteIcon} />
           <div class="panel settings-card">
             <p class="eyebrow">Collection</p>
             <h2>{collectionHealth?.lastAcceptedAt ? 'Receiving events' : 'Waiting for events'}</h2>

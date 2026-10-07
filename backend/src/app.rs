@@ -29,6 +29,7 @@ use crate::{
         state_hash, SearchConsoleConfig,
     },
     server_ingest::{validate_server_event, ServerEventBatch},
+    site_icon::{fetch_favicon, normalize_color},
     traffic::{
         automation_for, client_metadata, collection_origin_allowed, origin_allowed, traffic_class,
         RateLimiter,
@@ -363,6 +364,10 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/sites/{site_id}",
             get(get_site).put(update_site).delete(delete_site),
+        )
+        .route(
+            "/api/sites/{site_id}/icon",
+            get(get_site_icon).put(update_site_icon),
         )
         .route("/api/sites/{site_id}/rotate-key", post(rotate_key))
         .route(
@@ -965,7 +970,7 @@ async fn list_sites(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> Result<Json<Vec<Site>>, ApiError> {
-    Ok(Json(sqlx::query_as("SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.created_at").bind(user).fetch_all(&state.pool).await?))
+    Ok(Json(sqlx::query_as("SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.icon_mode,s.icon_background,s.icon_background_end,s.icon_foreground,s.icon_updated_at,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.created_at").bind(user).fetch_all(&state.pool).await?))
 }
 async fn create_site(
     State(state): State<AppState>,
@@ -976,7 +981,7 @@ async fn create_site(
     input.domain = canonical_domain(&input.domain)?;
     let mut tx = state.pool.begin().await?;
     billing_routes::ensure_site_allowance(&state, &mut tx, user).await?;
-    let site: Site = sqlx::query_as("INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at")
+    let site: Site = sqlx::query_as("INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,icon_mode,icon_background,icon_background_end,icon_foreground,icon_updated_at,created_at")
         .bind(input.name)
         .bind(input.domain)
         .bind(input.timezone)
@@ -1006,7 +1011,7 @@ async fn ensure_site(
         billing_routes::lock_account_sites(&mut tx, user).await?;
     }
     let inserted: Option<Site> = sqlx::query_as(
-        "INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT (lower(domain)) DO NOTHING RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at",
+        "INSERT INTO sites(name,domain,timezone,allowed_origins,retention_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT (lower(domain)) DO NOTHING RETURNING id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,icon_mode,icon_background,icon_background_end,icon_foreground,icon_updated_at,created_at",
     )
     .bind(&input.name)
     .bind(&input.domain)
@@ -1027,7 +1032,7 @@ async fn ensure_site(
         (true, site)
     } else {
         let site = sqlx::query_as(
-            "SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 AND lower(s.domain)=lower($2)",
+            "SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.icon_mode,s.icon_background,s.icon_background_end,s.icon_foreground,s.icon_updated_at,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 AND lower(s.domain)=lower($2)",
         )
         .bind(user)
         .bind(&input.domain)
@@ -1093,7 +1098,7 @@ async fn get_site(
     Ok(Json(fetch_site(&state.pool, site).await?))
 }
 async fn fetch_site(pool: &PgPool, id: Uuid) -> Result<Site, ApiError> {
-    sqlx::query_as("SELECT id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,created_at FROM sites WHERE id=$1").bind(id).fetch_optional(pool).await?.ok_or(ApiError::NotFound)
+    sqlx::query_as("SELECT id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,icon_mode,icon_background,icon_background_end,icon_foreground,icon_updated_at,created_at FROM sites WHERE id=$1").bind(id).fetch_optional(pool).await?.ok_or(ApiError::NotFound)
 }
 async fn update_site(
     State(state): State<AppState>,
@@ -1115,6 +1120,93 @@ async fn update_site(
         .await
         .map_err(map_conflict)?;
     Ok(Json(fetch_site(&state.pool, site).await?))
+}
+
+async fn update_site_icon(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(site): Path<Uuid>,
+    Json(input): Json<SiteIconInput>,
+) -> Result<Json<Site>, ApiError> {
+    require_site(&state.pool, user, site, true).await?;
+    if !matches!(input.mode.as_str(), "initials" | "favicon") {
+        return Err(ApiError::BadRequest(
+            "mode must be initials or favicon".into(),
+        ));
+    }
+    let color =
+        |value| normalize_color(value).map_err(|message| ApiError::BadRequest(message.into()));
+    let background = color(input.background)?;
+    let background_end = color(input.background_end)?;
+    let foreground = color(input.foreground)?;
+    // Choosing (or re-saving) favicon mode fetches a fresh copy; if no complete image can be
+    // fetched the save fails and the previous icon and settings stay as they were.
+    // Fetch over the network first, then store the icon, its cache version, and the settings
+    // together so a failure never leaves a new image behind an old version (or half a save).
+    let icon = if input.mode == "favicon" {
+        let domain = fetch_site(&state.pool, site).await?.domain;
+        Some(fetch_favicon(&domain).await.map_err(|error| {
+            ApiError::BadRequest(format!("couldn't load a favicon for {domain}: {error}"))
+        })?)
+    } else {
+        None
+    };
+    let mut tx = state.pool.begin().await?;
+    if let Some(icon) = icon {
+        sqlx::query(
+            "INSERT INTO site_icons(site_id,content_type,body,source_url) VALUES($1,$2,$3,$4)
+             ON CONFLICT (site_id) DO UPDATE SET content_type=$2,body=$3,source_url=$4,fetched_at=now()",
+        )
+        .bind(site)
+        .bind(icon.content_type)
+        .bind(icon.body)
+        .bind(icon.source_url)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE sites SET icon_updated_at=now() WHERE id=$1")
+            .bind(site)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query(
+        "UPDATE sites SET icon_mode=$2,icon_background=$3,icon_background_end=$4,icon_foreground=$5,updated_at=now() WHERE id=$1",
+    )
+    .bind(site)
+    .bind(input.mode)
+    .bind(background)
+    .bind(background_end)
+    .bind(foreground)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(fetch_site(&state.pool, site).await?))
+}
+
+/// The stored favicon. Public like the favicon itself, so a plain <img> can load it; SVGs are
+/// sandboxed so they can never run script on this origin.
+async fn get_site_icon(
+    State(state): State<AppState>,
+    Path(site): Path<Uuid>,
+) -> Result<Response, ApiError> {
+    let (content_type, body): (String, Vec<u8>) =
+        sqlx::query_as("SELECT content_type,body FROM site_icons WHERE site_id=$1")
+            .bind(site)
+            .fetch_optional(&state.pool)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=86400".into()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox".into(),
+            ),
+        ],
+        body,
+    )
+        .into_response())
 }
 
 async fn update_anti_adblock(

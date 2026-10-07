@@ -181,6 +181,44 @@ async fn auth_site_goal_and_collection_flow() {
     assert_eq!(updated["antiAdblockJsPath"], "/456bbb63bb86.js");
     assert_eq!(updated["antiAdblockBeaconPath"], "/0d31360a3101");
 
+    assert_eq!(updated["iconMode"], "initials");
+    let icon = router
+        .clone()
+        .oneshot(json_request(
+            "PUT",
+            &format!("/api/sites/{site_id}/icon"),
+            Some(&token),
+            json!({"mode":"initials","background":"#FF6600","backgroundEnd":"","foreground":"#ffffff"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(icon.status(), StatusCode::OK);
+    let icon = body_json(icon.into_body()).await;
+    assert_eq!(icon["iconBackground"], "#ff6600");
+    assert_eq!(icon["iconBackgroundEnd"], serde_json::Value::Null);
+    assert_eq!(icon["iconForeground"], "#ffffff");
+    let bad_color = router
+        .clone()
+        .oneshot(json_request(
+            "PUT",
+            &format!("/api/sites/{site_id}/icon"),
+            Some(&token),
+            json!({"mode":"initials","background":"red"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(bad_color.status(), StatusCode::BAD_REQUEST);
+    let no_icon = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/sites/{site_id}/icon"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_icon.status(), StatusCode::NOT_FOUND);
+
     let mut proxy_test = Request::get(format!("/api/collect/{write_key}"))
         .body(Body::empty())
         .unwrap();

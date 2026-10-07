@@ -3,9 +3,10 @@
   import type { Site } from '$lib/api';
   import { appHref } from '$lib/app-routes';
   import { avatarHue, compactNumber, duration, trendPaths } from '$lib/ui';
+  import SiteIcon from '../SiteIcon.svelte';
   import ChangeBadge from './ChangeBadge.svelte';
 
-  let { site, days }: { site: Site; days: number } = $props();
+  let { site, days, apiBase }: { site: Site; days: number; apiBase?: string } = $props();
 
   const overview = $derived(site.overview);
   const trend = $derived(overview?.trend ?? []);
@@ -32,7 +33,7 @@
 
 <a class="site-card-v2" class:quiet {href} style={`--hue:${avatarHue(site.domain)}`}>
   <header>
-    <span class="avatar" aria-hidden="true">{site.name.slice(0, 2).toUpperCase()}</span>
+    <SiteIcon {site} size={38} {apiBase} />
     <span class="name">
       <strong title={site.name}>{site.name}</strong>
       {#if site.name.toLowerCase() !== site.domain.toLowerCase()}<small>{site.domain}</small>{/if}
@@ -123,19 +124,6 @@
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-  .avatar {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: 38px;
-    height: 38px;
-    border-radius: 11px;
-    background: linear-gradient(140deg, hsl(var(--hue) 65% 52%), hsl(calc(var(--hue) + 40) 60% 40%));
-    color: #fff;
-    font-size: 12px;
-    font-weight: 800;
-    letter-spacing: 0.02em;
   }
   .name {
     display: flex;

@@ -15,7 +15,12 @@ export interface BillingStatus {
   plans?: BillingPlan[];
   checkoutAvailable?: boolean;
 }
-export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; proxyKey?: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; overview?: Overview }
+export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; proxyKey?: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; iconMode?: SiteIconMode; iconBackground?: string | null; iconBackgroundEnd?: string | null; iconForeground?: string | null; iconUpdatedAt?: string | null; overview?: Overview }
+export type SiteIconMode = 'initials' | 'favicon';
+/** Colors are #rrggbb; empty or null means automatic. */
+export interface SiteIconSettings { mode: SiteIconMode; background?: string | null; backgroundEnd?: string | null; foreground?: string | null }
+/** The stored favicon; versioned so a re-fetch shows up despite caching. */
+export function siteIconUrl(base: string, site: Pick<Site, 'id' | 'iconUpdatedAt'>) { return `${base.replace(/\/$/, '')}/sites/${site.id}/icon?v=${encodeURIComponent(site.iconUpdatedAt ?? '')}`; }
 export interface User { id: string; email: string; name?: string; createdAt?: string; isAdmin?: boolean; mfaVerified?: boolean; passkeyCount?: number }
 export interface AuthResponse { token?: string; accessToken?: string; refreshToken?: string; expiresIn?: number; user?: User }
 export interface SessionTokens { token: string; refreshToken: string }
@@ -396,6 +401,7 @@ export class ApiClient {
     return normalizeSite(await this.request<WireSite>('/sites', { method: 'POST', body: JSON.stringify({ ...site, timezone: 'UTC', retentionDays: 365 }) }, () => ({ ...site, id: crypto.randomUUID(), writeKey: `wk_demo_${Date.now()}` })));
   }
   async updateSite(id: string, site: Partial<Site>) { return normalizeSite(await this.request<WireSite>(`/sites/${id}`, { method: 'PUT', body: JSON.stringify(site) }, () => ({ ...demoSites[0], ...site, id }))); }
+  async updateSiteIcon(id: string, settings: SiteIconSettings) { return normalizeSite(await this.request<WireSite>(`/sites/${id}/icon`, { method: 'PUT', body: JSON.stringify(settings) }, () => ({ ...demoSites[0], id, iconMode: settings.mode, iconBackground: settings.background || null, iconBackgroundEnd: settings.backgroundEnd || null, iconForeground: settings.foreground || null }))); }
   async updateAntiAdblock(id: string, settings: AntiAdblockSettings) { return normalizeSite(await this.request<WireSite>(`/sites/${id}/anti-adblock`, { method: 'PUT', body: JSON.stringify(settings) }, () => ({ ...demoSites[0], id, antiAdblockServer: settings.serverType, antiAdblockJsPath: settings.jsPath, antiAdblockBeaconPath: settings.beaconPath }))); }
   rotateProxyKey(id: string) { return this.request<{ proxyKey: string }>(`/sites/${id}/rotate-proxy-key`, { method: 'POST' }); }
   rotateServerKey(id: string) { return this.request<{ serverWriteKey: string }>(`/sites/${id}/rotate-server-key`, { method: 'POST' }); }

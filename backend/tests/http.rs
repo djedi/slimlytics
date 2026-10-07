@@ -79,6 +79,20 @@ async fn anti_adblock_configuration_requires_authentication() {
 }
 
 #[tokio::test]
+async fn site_icon_settings_require_authentication() {
+    let response = app(state())
+        .oneshot(
+            Request::put("/api/sites/00000000-0000-4000-8000-000000000000/icon")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"mode":"initials"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+}
+
+#[tokio::test]
 async fn api_token_management_requires_a_session() {
     let response = app(state())
         .oneshot(
@@ -139,6 +153,8 @@ async fn openapi_document_covers_every_public_backend_route() {
         ("/api/billing/portal", "post"),
         ("/api/billing/webhook", "post"),
         ("/api/sites/{siteId}/anti-adblock", "put"),
+        ("/api/sites/{siteId}/icon", "get"),
+        ("/api/sites/{siteId}/icon", "put"),
         ("/api/sites/{siteId}/collection-health", "get"),
         ("/api/sites/{siteId}/overview", "get"),
         ("/api/sites/{siteId}/reports/{dimension}", "get"),

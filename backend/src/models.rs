@@ -25,6 +25,14 @@ pub struct Site {
     pub anti_adblock_server: String,
     pub anti_adblock_js_path: String,
     pub anti_adblock_beacon_path: String,
+    /// `initials` or `favicon`.
+    pub icon_mode: String,
+    /// `#rrggbb` gradient start; `None` uses the automatic per-domain hue.
+    pub icon_background: Option<String>,
+    pub icon_background_end: Option<String>,
+    pub icon_foreground: Option<String>,
+    /// When the stored favicon last changed; `None` if none has been fetched.
+    pub icon_updated_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -48,6 +56,18 @@ pub struct SiteInput {
     #[serde(default = "retention")]
     #[serde(alias = "retention_days")]
     pub retention_days: i32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteIconInput {
+    pub mode: String,
+    #[serde(default)]
+    pub background: Option<String>,
+    #[serde(default)]
+    pub background_end: Option<String>,
+    #[serde(default)]
+    pub foreground: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
