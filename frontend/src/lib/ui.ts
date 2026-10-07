@@ -154,6 +154,20 @@ export function countryLabel(code: string | null | undefined): string {
   return regionNames.of(code.toUpperCase()) ?? code.toUpperCase();
 }
 
+/**
+ * Absolute URL for a page path on the site's own origin, for "open in a new tab" links.
+ * Labels that aren't paths ("(not set)") or that resolve to another host ("//other.host") get null.
+ */
+export function pageHref(label: string, origin: string | undefined): string | null {
+  if (!origin || !label.startsWith('/')) return null;
+  try {
+    const url = new URL(label, origin);
+    return url.origin === new URL(origin).origin ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export function relativeTime(timestamp: string, now = Date.now()): string {
   const seconds = Math.max(0, (now - new Date(timestamp).getTime()) / 1000);
   if (seconds < 45) return 'just now';

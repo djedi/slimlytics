@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ArrowDown, ArrowRight, ArrowUp, ExternalLink, Minus } from '@lucide/svelte';
   import type { ReportRow } from '../api';
-  import { formatChange } from '../ui';
+  import { formatChange, pageHref } from '../ui';
 
   let {
     title,
@@ -27,17 +27,6 @@
   const hasChange = $derived(rows.some((row) => row.change !== undefined && row.change !== 0));
   const max = $derived(Math.max(1, ...rows.map((row) => row.value)));
 
-  // Only real paths on the site's own origin get a link; "//other.host" or labels like
-  // "(not set)" don't.
-  function pageUrl(label: string): string | null {
-    if (!pageOrigin || !label.startsWith('/')) return null;
-    try {
-      const url = new URL(label, pageOrigin);
-      return url.origin === new URL(pageOrigin).origin ? url.href : null;
-    } catch {
-      return null;
-    }
-  }
 </script>
 
 <section class="panel report">
@@ -63,7 +52,7 @@
         </thead>
         <tbody>
           {#each rows as row}
-            {@const href = pageUrl(row.label)}
+            {@const href = pageHref(row.label, pageOrigin)}
             <tr style={`--share:${row.value / max}`}>
               <th scope="row">
                 <span class="report-cell">

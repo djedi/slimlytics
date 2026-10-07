@@ -924,6 +924,7 @@
           {visitors}
           {streamState}
           bind:filter={spyFilter}
+          pageOrigin={siteOrigin}
           onToggle={toggleSpy}
           onSelect={selectStreamVisitor}
         />
