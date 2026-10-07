@@ -60,6 +60,47 @@ static ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#).unwrap()
 });
 
+/// Decodes the HTML character references that appear in attribute values (`&amp;`, `&quot;`,
+/// numeric `&#38;`/`&#x26;`, ...); anything unrecognised is kept as written.
+fn decode_entities(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(start) = rest.find('&') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let decoded = rest.find(';').filter(|end| *end <= 10).and_then(|end| {
+            let name = &rest[1..end];
+            let character = match name {
+                "amp" => Some('&'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                _ => name
+                    .strip_prefix("#x")
+                    .or_else(|| name.strip_prefix("#X"))
+                    .map(|hex| u32::from_str_radix(hex, 16))
+                    .or_else(|| name.strip_prefix('#').map(str::parse))
+                    .and_then(Result::ok)
+                    .and_then(char::from_u32),
+            };
+            character.map(|character| (character, end))
+        });
+        match decoded {
+            Some((character, end)) => {
+                out.push(character);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Icon URLs declared in the page, best first: apple-touch-icon (usually 180px), then the
 /// largest sized icon, then SVG, then the rest. `/favicon.ico` is always the last resort.
 pub fn icon_candidates(html: &str, page: &Url) -> Vec<Url> {
@@ -77,7 +118,7 @@ pub fn icon_candidates(html: &str, page: &Url) -> Vec<Url> {
                 .map_or("", |value| value.as_str());
             match capture[1].to_ascii_lowercase().as_str() {
                 "rel" => rel = value.to_ascii_lowercase(),
-                "href" => href = Some(value.trim().to_owned()),
+                "href" => href = Some(decode_entities(value.trim())),
                 "sizes" => sizes = value.to_ascii_lowercase(),
                 "type" => kind = value.to_ascii_lowercase(),
                 _ => {}
@@ -341,6 +382,17 @@ mod tests {
     fn stored_source_url_drops_query_and_fragment() {
         let url = Url::parse("https://cdn.example.com/icon.png?access_token=secret#x").unwrap();
         assert_eq!(stored_source_url(url), "https://cdn.example.com/icon.png");
+    }
+
+    #[test]
+    fn decodes_character_references_in_icon_hrefs() {
+        let page = Url::parse("https://example.com/").unwrap();
+        let html =
+            r#"<link rel="icon" href="/icon?size=180&amp;format=png&#38;v=1&#x26;x=&bogus;">"#;
+        assert_eq!(
+            icon_candidates(html, &page)[0].as_str(),
+            "https://example.com/icon?size=180&format=png&v=1&x=&bogus;"
+        );
     }
 
     #[tokio::test]
