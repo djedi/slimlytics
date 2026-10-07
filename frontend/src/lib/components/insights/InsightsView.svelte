@@ -287,7 +287,7 @@
   </div>
   <h3 class="insight-group">Acquisition &amp; content</h3>
   <div class="two-col">
-    <ReportTable title="Traffic sources" rows={sources.slice(0, 10)} />
+    <ReportTable title="Traffic sources" rows={sources.slice(0, 10)} linkHosts />
     <ReportTable title="Content" rows={content.slice(0, 10)} />
   </div>
   <h3 class="insight-group"><Bot size={15} aria-hidden="true" /> AI traffic</h3>
@@ -295,6 +295,7 @@
     <ReportTable
       title="AI referrals"
       rows={aiReferrers.slice(0, 10)}
+      linkHosts
       emptyText="No visits from AI assistants yet."
       emptyHint="Referrals from ChatGPT, Perplexity, Claude, and others appear here."
     />

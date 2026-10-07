@@ -4,9 +4,9 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Activity, Eye, FileText, Pause, Play, Search, Users, Zap } from '@lucide/svelte';
+  import { Activity, ExternalLink, Eye, FileText, Pause, Play, Search, Users, Zap } from '@lucide/svelte';
   import type { LiveEvent, Visitor } from '$lib/api';
-  import { activeVisitorCount, countryLabel, flagEmoji, minuteBuckets, relativeTime } from '$lib/ui';
+  import { activeVisitorCount, countryLabel, flagEmoji, minuteBuckets, pageHref, relativeTime } from '$lib/ui';
 
   let {
     events,
@@ -14,6 +14,7 @@
     visitors,
     streamState,
     filter = $bindable(''),
+    pageOrigin,
     onToggle,
     onSelect
   }: {
@@ -24,6 +25,8 @@
     visitors: Visitor[];
     streamState: StreamState;
     filter?: string;
+    /** Site origin (e.g. https://example.com); page paths get an open-in-new-tab link. */
+    pageOrigin?: string;
     onToggle: () => void;
     onSelect: (visitorId: string) => void;
   } = $props();
@@ -72,6 +75,12 @@
   };
   const isPageview = (item: LiveEvent) => item.type === 'pageview';
 </script>
+
+{#snippet openLink(href: string, page: string)}
+  <a class="page-open" {href} target="_blank" rel="noopener noreferrer" aria-label={`Open ${page} in a new tab`} title="Open in a new tab"
+    ><ExternalLink size={13} aria-hidden="true" /></a
+  >
+{/snippet}
 
 <section class="spy-toolbar">
   <div>
@@ -153,9 +162,11 @@
         {#if pages.length}
           <ul class="rank-list">
             {#each pages as [page, count]}
+              {@const href = pageHref(page, pageOrigin)}
               <li style={`--share:${count / pageMax}`}>
                 <FileText size={14} aria-hidden="true" />
                 <span class="rank-label" title={page}>{page}</span>
+                {#if href}{@render openLink(href, page)}{/if}
                 <b>{count}</b>
               </li>
             {/each}
@@ -175,6 +186,7 @@
     {#if filtered.length}
       <ol aria-live="polite" aria-relevant="additions">
         {#each filtered as item (item.id)}
+          {@const href = pageHref(item.page, pageOrigin)}
           <li class:fresh={now - new Date(item.timestamp).getTime() < 60000}>
             <span class="event-icon" class:custom={!isPageview(item)} aria-hidden="true">
               {#if isPageview(item)}<Eye size={15} />{:else}<Zap size={15} />{/if}
@@ -188,6 +200,7 @@
                 {#if item.referrer}· from {item.referrer}{/if}
               </small>
             </button>
+            {#if href}{@render openLink(href, item.page)}{:else}<span></span>{/if}
             <time datetime={item.timestamp} title={new Date(item.timestamp).toLocaleString()}
               >{relativeTime(item.timestamp, now)}</time
             >

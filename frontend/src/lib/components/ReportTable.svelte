@@ -1,13 +1,16 @@
 <script lang="ts">
   import { ArrowDown, ArrowRight, ArrowUp, ExternalLink, Minus } from '@lucide/svelte';
   import type { ReportRow } from '../api';
-  import { formatChange } from '../ui';
+  import DimensionIcon, { type IconDimension } from './DimensionIcon.svelte';
+  import { formatChange, pageHref, referrerHref } from '../ui';
 
   let {
     title,
     rows,
     moreHref,
     pageOrigin,
+    linkHosts = false,
+    iconDimension,
     emptyText = 'No report data for this period.',
     emptyHint = 'Try a wider date range.'
   }: {
@@ -16,6 +19,10 @@
     moreHref?: string;
     /** Site origin (e.g. https://example.com); rows whose label is a path get an open-in-new-tab link. */
     pageOrigin?: string;
+    /** Rows whose label is a bare hostname (referrers) get an open-in-new-tab link. */
+    linkHosts?: boolean;
+    /** Show a flag, device icon, or brand logo before each label. */
+    iconDimension?: IconDimension;
     emptyText?: string;
     emptyHint?: string;
   } =
@@ -27,17 +34,6 @@
   const hasChange = $derived(rows.some((row) => row.change !== undefined && row.change !== 0));
   const max = $derived(Math.max(1, ...rows.map((row) => row.value)));
 
-  // Only real paths on the site's own origin get a link; "//other.host" or labels like
-  // "(not set)" don't.
-  function pageUrl(label: string): string | null {
-    if (!pageOrigin || !label.startsWith('/')) return null;
-    try {
-      const url = new URL(label, pageOrigin);
-      return url.origin === new URL(pageOrigin).origin ? url.href : null;
-    } catch {
-      return null;
-    }
-  }
 </script>
 
 <section class="panel report">
@@ -63,10 +59,11 @@
         </thead>
         <tbody>
           {#each rows as row}
-            {@const href = pageUrl(row.label)}
+            {@const href = pageHref(row.label, pageOrigin) ?? (linkHosts ? referrerHref(row.label) : null)}
             <tr style={`--share:${row.value / max}`}>
               <th scope="row">
                 <span class="report-cell">
+                  {#if iconDimension}<DimensionIcon dimension={iconDimension} label={row.label} />{/if}
                   <span class="report-label" title={row.label}>{row.label}</span>
                   {#if href}
                     <a class="report-open" {href} target="_blank" rel="noopener noreferrer" aria-label={`Open ${row.label} in a new tab`} title="Open in a new tab"
