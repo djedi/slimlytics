@@ -55,6 +55,7 @@ pub fn sniff_image(body: &[u8]) -> Option<&'static str> {
     }
 }
 
+static BASE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<base\b[^>]*>").unwrap());
 static LINK_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<link\b[^>]*>").unwrap());
 static ATTRIBUTE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?is)([a-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#).unwrap()
@@ -104,6 +105,22 @@ fn decode_entities(value: &str) -> String {
 /// Icon URLs declared in the page, best first: apple-touch-icon (usually 180px), then the
 /// largest sized icon, then SVG, then the rest. `/favicon.ico` is always the last resort.
 pub fn icon_candidates(html: &str, page: &Url) -> Vec<Url> {
+    // Relative hrefs resolve against the first <base href>, as browsers do.
+    let base = BASE_TAG
+        .find_iter(html)
+        .find_map(|tag| {
+            ATTRIBUTE
+                .captures_iter(tag.as_str())
+                .find(|capture| capture[1].eq_ignore_ascii_case("href"))
+                .and_then(|capture| {
+                    let value = capture
+                        .get(2)
+                        .or_else(|| capture.get(3))
+                        .or_else(|| capture.get(4))?;
+                    page.join(&decode_entities(value.as_str().trim())).ok()
+                })
+        })
+        .unwrap_or_else(|| page.clone());
     let mut found: Vec<(u32, Url)> = Vec::new();
     for tag in LINK_TAG.find_iter(html) {
         let mut rel = String::new();
@@ -125,7 +142,7 @@ pub fn icon_candidates(html: &str, page: &Url) -> Vec<Url> {
             }
         }
         let rels: Vec<&str> = rel.split_whitespace().collect();
-        let Some(url) = href.and_then(|href| page.join(&href).ok()) else {
+        let Some(url) = href.and_then(|href| base.join(&href).ok()) else {
             continue;
         };
         let score = if rels.iter().any(|rel| rel.starts_with("apple-touch-icon")) {
@@ -392,6 +409,17 @@ mod tests {
         assert_eq!(
             icon_candidates(html, &page)[0].as_str(),
             "https://example.com/icon?size=180&format=png&v=1&x=&bogus;"
+        );
+    }
+
+    #[test]
+    fn resolves_icons_against_the_base_element() {
+        let page = Url::parse("https://example.com/blog/post").unwrap();
+        let html =
+            r#"<base target="_blank"><base href="/assets/"><link rel="icon" href="icon.png">"#;
+        assert_eq!(
+            icon_candidates(html, &page)[0].as_str(),
+            "https://example.com/assets/icon.png"
         );
     }
 
