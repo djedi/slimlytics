@@ -63,7 +63,7 @@
     type Site,
     type Visitor
   } from '$lib/api';
-  import { applyTheme, compactNumber, duration, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
+  import { applyTheme, compactNumber, duration, flagEmoji, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
   import { appHref, parseDays, parseView, type SiteView } from '$lib/app-routes';
   import ChangeBadge from '$lib/components/rollup/ChangeBadge.svelte';
   import SiteCard from '$lib/components/rollup/SiteCard.svelte';
@@ -72,6 +72,7 @@
   import ReportTable from '$lib/components/ReportTable.svelte';
   import TrafficChart from '$lib/components/TrafficChart.svelte';
   import InsightsView from '$lib/components/insights/InsightsView.svelte';
+  import type { IconDimension } from '$lib/components/DimensionIcon.svelte';
   import SpyView, { type StreamState } from '$lib/components/spy/SpyView.svelte';
   import VisitorDrawer from '$lib/components/spy/VisitorDrawer.svelte';
 
@@ -643,6 +644,7 @@
   }
   let siteSort = $state<'visitors' | 'change' | 'name'>('visitors');
   // Where the measured site lives, for "open page in a new tab" links on path reports.
+  const iconDimensions: IconDimension[] = ['countries', 'devices', 'browsers', 'operating-systems'];
   const siteOrigin = $derived(site ? (site.allowedOrigins?.[0] ?? `https://${site.domain}`) : undefined);
   const totals = $derived(portfolioTotals(sites.map((item) => item.overview)));
   const activeSites = $derived(sites.filter((item) => (item.overview?.visitors ?? 0) > 0).length);
@@ -972,6 +974,7 @@
           rows={report}
           pageOrigin={view === 'pages' ? siteOrigin : undefined}
           linkHosts={view === 'referrers'}
+          iconDimension={iconDimensions.find((dimension) => dimension === view)}
         />
       {:else if view === 'visitors'}
         <section class="panel">
@@ -986,7 +989,8 @@
             <div class="visitor-list">
               {#each visitors as visitor}
                 <button onclick={() => (selectedVisitor = visitor)}
-                  ><span class="country-code">{visitor.country.slice(0, 2).toUpperCase()}</span
+                  ><span class="country-code" title={visitor.country.slice(0, 2).toUpperCase()}
+                    ><span aria-hidden="true">{flagEmoji(visitor.country)}</span></span
                   ><span
                     ><strong>{visitor.city ?? 'Unknown'}, {visitor.country}</strong><small
                       >{visitor.device} · {visitor.browser} · {visitor.page}</small
