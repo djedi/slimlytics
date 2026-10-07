@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it } from 'vitest';
 import ReportTable from '../src/lib/components/ReportTable.svelte';
+import { brandLogo } from '../src/lib/components/DimensionIcon.svelte';
 
 describe('analytics components', () => {
   afterEach(cleanup);
@@ -45,5 +46,26 @@ describe('analytics components', () => {
     expect(link).toHaveAttribute('href', 'https://news.ycombinator.com/');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(screen.getAllByRole('link')).toHaveLength(1);
+  });
+
+  it('shows flags, device icons, and brand logos next to dimension labels', () => {
+    const { container, rerender } = render(ReportTable, {
+      title: 'Countries',
+      iconDimension: 'countries',
+      rows: [{ label: 'us', value: 2 }]
+    });
+    expect(container.querySelector('.dimension-icon')).toHaveTextContent('🇺🇸');
+    rerender({ title: 'Browsers', iconDimension: 'browsers', rows: [{ label: 'Chrome', value: 1 }] });
+    expect(container.querySelector('.dimension-icon svg path')).toHaveAttribute('d');
+    rerender({ title: 'Devices', iconDimension: 'devices', rows: [{ label: 'mobile', value: 1 }] });
+    expect(container.querySelector('.dimension-icon svg')).not.toBeNull();
+  });
+
+  it('matches browser and OS names to brand logos', () => {
+    expect(brandLogo('browsers', 'Chrome')?.title).toBe('Google Chrome');
+    expect(brandLogo('browsers', 'Samsung Internet')?.title).toBe('Samsung');
+    expect(brandLogo('operating-systems', 'Mac OSX')?.title).toBe('Apple');
+    expect(brandLogo('operating-systems', 'iPhone')?.title).toBe('iOS');
+    expect(brandLogo('operating-systems', 'Windows 10')).toBeUndefined();
   });
 });

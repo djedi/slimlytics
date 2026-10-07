@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ArrowDown, ArrowRight, ArrowUp, ExternalLink, Minus } from '@lucide/svelte';
   import type { ReportRow } from '../api';
+  import DimensionIcon, { type IconDimension } from './DimensionIcon.svelte';
   import { formatChange, pageHref, referrerHref } from '../ui';
 
   let {
@@ -9,6 +10,7 @@
     moreHref,
     pageOrigin,
     linkHosts = false,
+    iconDimension,
     emptyText = 'No report data for this period.',
     emptyHint = 'Try a wider date range.'
   }: {
@@ -19,6 +21,8 @@
     pageOrigin?: string;
     /** Rows whose label is a bare hostname (referrers) get an open-in-new-tab link. */
     linkHosts?: boolean;
+    /** Show a flag, device icon, or brand logo before each label. */
+    iconDimension?: IconDimension;
     emptyText?: string;
     emptyHint?: string;
   } =
@@ -59,6 +63,7 @@
             <tr style={`--share:${row.value / max}`}>
               <th scope="row">
                 <span class="report-cell">
+                  {#if iconDimension}<DimensionIcon dimension={iconDimension} label={row.label} />{/if}
                   <span class="report-label" title={row.label}>{row.label}</span>
                   {#if href}
                     <a class="report-open" {href} target="_blank" rel="noopener noreferrer" aria-label={`Open ${row.label} in a new tab`} title="Open in a new tab"

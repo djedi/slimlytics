@@ -25,6 +25,7 @@
     "@testing-library/svelte": "^5.2.8",
     "@types/node": "^24.13.3",
     "jsdom": "^26.1.0",
+    "simple-icons": "^16.34.0",
     "svelte": "^5.33.10",
     "svelte-check": "^4.2.1",
     "typescript": "^5.8.3",
