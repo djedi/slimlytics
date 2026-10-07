@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-.PHONY: help setup env tracker test test-backend test-cli test-frontend test-tracker check build up dev dev-logs sync-account geoip down logs clean deploy
+.PHONY: help setup env tracker test test-backend test-cli test-frontend test-tracker check build up open dev dev-logs sync-account geoip down logs clean deploy
 
 help:
 	@printf '%s\n' \
@@ -11,7 +11,8 @@ help:
 	  'make check          Format/lint/type-check all code' \
 	  'make build          Build backend, CLI, tracker, and frontend' \
 	  'make deploy         Back up, deploy, and verify production' \
-	  'make up             Start the production-like Docker stack' \
+	  'make up             Start the production-like Docker stack and open it (NO_OPEN=1 to skip)' \
+	  'make open           Open the running Docker stack in a browser' \
 	  'make dev            Start the Docker stack with live reload' \
 	  'make dev-logs       Follow live-reload frontend and backend logs' \
 	  'make sync-account   Copy the SYNC_EMAIL account from a remote deployment into local Docker' \
@@ -72,7 +73,17 @@ deploy:
 
 up:
 	@test -f .env || (echo 'Copy .env.example to .env and replace every placeholder first.' >&2; exit 1)
-	docker compose up --build -d
+	docker compose up --build -d --wait
+	@$(MAKE) --no-print-directory open
+
+# Open the stack in the default browser at Caddy's published address. Skip with NO_OPEN=1.
+open:
+	@url="http://$$(docker compose port caddy 80 | sed 's/^0\.0\.0\.0:/localhost:/')"; \
+	echo "Slimlytics running at $$url"; \
+	if [ -z "$(NO_OPEN)" ]; then \
+	  if command -v open >/dev/null; then open "$$url"; \
+	  elif command -v xdg-open >/dev/null; then xdg-open "$$url" >/dev/null 2>&1; fi; \
+	fi
 
 DEV_COMPOSE := docker compose -f compose.yaml -f compose.dev.yaml
 
