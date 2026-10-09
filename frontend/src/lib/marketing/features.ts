@@ -21,7 +21,9 @@ export const productFeatures = [
   },
   {
     title: 'Self-host in minutes',
-    body: 'Ship with Docker Compose, Caddy, PostgreSQL, and a small Rust API built for speed.'
+    body: 'Ship with Docker Compose, Caddy, PostgreSQL, and a small Rust API built for speed.',
+    href: '/docs#self-hosting',
+    linkLabel: 'Self-hosting guide'
   }
 ] as const;
 
