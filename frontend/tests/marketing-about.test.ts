@@ -19,6 +19,8 @@ describe('marketing about page', () => {
     expect(container.querySelector('#contact')).not.toBeNull();
     expect(screen.getByRole('link', { name: /open an issue/i })).toHaveAttribute('href', 'https://github.com/djedi/slimlytics/issues');
     expect(screen.getByRole('link', { name: /security policy/i })).toHaveAttribute('href', 'https://github.com/djedi/slimlytics/blob/main/SECURITY.md');
+    expect(screen.getByRole('link', { name: 'dustin@davis.im' })).toHaveAttribute('href', 'mailto:dustin@davis.im');
+    expect(container.textContent).toMatch(/Red Seam, Inc\./);
     expect(container.textContent).not.toMatch(/TODO/);
   });
 

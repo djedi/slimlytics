@@ -28,5 +28,5 @@
       <a href="/docs/api">API reference</a>
     </nav>
   </div>
-  <p class="mkt-footer-copy">© {new Date().getFullYear()} Slimlytics. Independent analytics for independent teams.</p>
+  <p class="mkt-footer-copy">© {new Date().getFullYear()} Red Seam, Inc. Independent analytics for independent teams.</p>
 </footer>

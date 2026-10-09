@@ -27,8 +27,8 @@
         <Heart size={22} aria-hidden="true" />
         <h2>Who builds it</h2>
         <p>
-          Slimlytics is built and run by Dustin Davis, an independent developer. We use Slimlytics
-          on our own sites, including this one, so we feel every rough edge first.
+          Slimlytics is built by Dustin Davis and operated by Red Seam, Inc. We use Slimlytics on
+          our own sites, including this one, so we feel every rough edge first.
         </p>
       </article>
       <article class="feature-card">
@@ -67,8 +67,10 @@
     <div class="mkt-prose">
       <h2 id="contact-title"><MessageCircle size={22} aria-hidden="true" /> How to reach us</h2>
       <ul>
-        <!-- TODO(dustin): add the public contact email for support, billing, and privacy requests
-             once it is decided, e.g. <li><strong>Email:</strong> <a href="mailto:…">…</a></li> -->
+        <li>
+          <strong>Email:</strong> <a href="mailto:dustin@davis.im">dustin@davis.im</a> for support,
+          billing, privacy, and anything else.
+        </li>
         <li>
           <strong>Bugs and feature requests:</strong>
           <a href="https://github.com/djedi/slimlytics/issues">open an issue on GitHub</a>.
