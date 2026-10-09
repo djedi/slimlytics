@@ -113,3 +113,17 @@ it('forwards the visitor IP with the proxy key on the beacon route only', () => 
   expect(proxyConfig(config, site, 'https://slimlytics.com')).not.toContain('X-Slimlytics-Client-IP');
   expect(() => proxyConfig(config, { ...site, proxyKey: 'nope"; evil' }, 'https://slimlytics.com')).toThrow();
 });
+
+it('references SLIMLYTICS_PROXY_KEY when only the key hint is available', () => {
+  const hinted = { ...site, proxyKeyHint: '…4f31' };
+  const expected = {
+    caddy: 'header_up X-Slimlytics-Proxy-Key {$SLIMLYTICS_PROXY_KEY}',
+    nginx: 'proxy_set_header X-Slimlytics-Proxy-Key ${SLIMLYTICS_PROXY_KEY};',
+    apache: 'RequestHeader set X-Slimlytics-Proxy-Key "${SLIMLYTICS_PROXY_KEY}"'
+  } as const;
+  for (const serverType of ['caddy', 'nginx', 'apache'] as const) {
+    const output = proxyConfig({ ...config, serverType }, hinted, 'https://slimlytics.com');
+    expect(output).toContain(expected[serverType]);
+    expect(output.indexOf('SLIMLYTICS_PROXY_KEY')).toBeGreaterThan(output.indexOf('# BEACON'));
+  }
+});

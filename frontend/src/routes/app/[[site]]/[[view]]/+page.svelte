@@ -1164,16 +1164,25 @@
               </div>
               <div>
                 <dt>Server key</dt>
-                <dd><code>{site.serverWriteKey}</code></dd>
+                <dd>
+                  {#if site.serverWriteKey}
+                    <code>{site.serverWriteKey}</code>
+                  {:else}
+                    <code>{site.serverWriteKeyHint ?? '…'}</code>
+                    <small>Only site owners and admins can view this key.</small>
+                  {/if}
+                </dd>
               </div>
               <div>
                 <dt>Batch limit</dt>
                 <dd>100 requests</dd>
               </div>
             </dl>
-            <div class="test-links">
-              <button class="secondary" onclick={() => void rotateServerKey()}>Rotate key</button>
-            </div>
+            {#if site.canManageKeys !== false}
+              <div class="test-links">
+                <button class="secondary" onclick={() => void rotateServerKey()}>Rotate key</button>
+              </div>
+            {/if}
           </div>
           <div class="panel settings-card brief-settings">
             <p class="eyebrow">Delivery</p>

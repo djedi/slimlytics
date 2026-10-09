@@ -11,6 +11,7 @@ mod tracking_setup;
 use crate::{
     agent::{
         required_scope, validate_idempotency_key, validate_scopes, ANALYTICS_READ, SITES_READ,
+        SITES_WRITE,
     },
     auth::{
         generate_api_token, generate_refresh_token, hash_api_token, hash_password,
@@ -48,6 +49,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::{
+    collections::HashMap,
     convert::Infallible,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -175,6 +177,35 @@ impl FromRequestParts<AppState> for CurrentUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            Caller::from_request_parts(parts, state).await?.user_id,
+        ))
+    }
+}
+
+/// The signed-in user plus, for API tokens, the token's scopes (`None` for a dashboard session).
+#[derive(Clone)]
+struct Caller {
+    user_id: Uuid,
+    token_scopes: Option<Vec<String>>,
+}
+
+impl Caller {
+    /// Whether this credential may receive a site's secret keys: dashboard sessions may, API
+    /// tokens need `sites:write`. Membership role is checked separately.
+    fn may_receive_site_keys(&self) -> bool {
+        self.token_scopes
+            .as_ref()
+            .is_none_or(|scopes| scopes.iter().any(|scope| scope == SITES_WRITE))
+    }
+}
+
+impl FromRequestParts<AppState> for Caller {
+    type Rejection = ApiError;
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let value = parts
             .headers
             .get(header::AUTHORIZATION)
@@ -195,9 +226,15 @@ impl FromRequestParts<AppState> for CurrentUser {
             if !scopes.iter().any(|scope| scope == required) {
                 return Err(ApiError::Forbidden);
             }
-            return Ok(Self(user));
+            return Ok(Self {
+                user_id: user,
+                token_scopes: Some(scopes),
+            });
         }
-        Ok(Self(authenticate_jwt(state, value).await?.user_id))
+        Ok(Self {
+            user_id: authenticate_jwt(state, value).await?.user_id,
+            token_scopes: None,
+        })
     }
 }
 
@@ -369,6 +406,7 @@ pub fn app(state: AppState) -> Router {
             "/api/sites/{site_id}/icon",
             get(get_site_icon).put(update_site_icon),
         )
+        .route("/api/sites/{site_id}/keys", post(site_keys))
         .route("/api/sites/{site_id}/rotate-key", post(rotate_key))
         .route(
             "/api/sites/{site_id}/rotate-server-key",
@@ -968,10 +1006,61 @@ async fn require_site(pool: &PgPool, user: Uuid, site: Uuid, write: bool) -> Res
 }
 async fn list_sites(
     State(state): State<AppState>,
-    CurrentUser(user): CurrentUser,
-) -> Result<Json<Vec<Site>>, ApiError> {
-    Ok(Json(sqlx::query_as("SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.icon_mode,s.icon_background,s.icon_background_end,s.icon_foreground,s.icon_updated_at,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.created_at").bind(user).fetch_all(&state.pool).await?))
+    caller: Caller,
+) -> Result<Json<Vec<Value>>, ApiError> {
+    let user = caller.user_id;
+    let sites: Vec<Site> = sqlx::query_as("SELECT s.id,s.name,s.domain,s.timezone,s.allowed_origins,s.retention_days,s.write_key,s.server_write_key,s.proxy_key,s.anti_adblock_server,s.anti_adblock_js_path,s.anti_adblock_beacon_path,s.icon_mode,s.icon_background,s.icon_background_end,s.icon_foreground,s.icon_updated_at,s.created_at FROM sites s JOIN site_memberships m ON m.site_id=s.id WHERE m.user_id=$1 ORDER BY s.created_at").bind(user).fetch_all(&state.pool).await?;
+    let roles: HashMap<Uuid, String> = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT site_id,role::text FROM site_memberships WHERE user_id=$1",
+    )
+    .bind(user)
+    .fetch_all(&state.pool)
+    .await?
+    .into_iter()
+    .collect();
+    Ok(Json(
+        sites
+            .into_iter()
+            .map(|site| {
+                let admin = roles
+                    .get(&site.id)
+                    .is_some_and(|role| role_manages_site(role));
+                site_response(site, admin && caller.may_receive_site_keys())
+            })
+            .collect(),
+    ))
 }
+
+/// Owners and admins manage a site's keys; viewers only read its analytics.
+fn role_manages_site(role: &str) -> bool {
+    matches!(role, "owner" | "admin")
+}
+
+/// Last four characters of a key, so a key can be recognized without being shown.
+fn key_hint(key: Uuid) -> String {
+    let key = key.to_string();
+    format!("…{}", &key[key.len() - 4..])
+}
+
+/// A site as returned by the read endpoints. `serverWriteKey` and `proxyKey` are included only
+/// when `include_keys` (an owner or admin, and for API tokens the `sites:write` scope); the
+/// hints are always present.
+fn site_response(site: Site, include_keys: bool) -> Value {
+    let server_hint = key_hint(site.server_write_key);
+    let proxy_hint = key_hint(site.proxy_key);
+    let mut value = serde_json::to_value(site).unwrap_or_else(|_| json!({}));
+    if let Some(object) = value.as_object_mut() {
+        if !include_keys {
+            object.remove("serverWriteKey");
+            object.remove("proxyKey");
+        }
+        object.insert("serverWriteKeyHint".into(), json!(server_hint));
+        object.insert("proxyKeyHint".into(), json!(proxy_hint));
+        object.insert("canManageKeys".into(), json!(include_keys));
+    }
+    value
+}
+
 async fn create_site(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
@@ -1091,11 +1180,44 @@ fn canonical_domain(value: &str) -> Result<String, ApiError> {
 
 async fn get_site(
     State(state): State<AppState>,
+    caller: Caller,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let role = site_role(&state.pool, caller.user_id, site).await?;
+    let include_keys = role_manages_site(&role) && caller.may_receive_site_keys();
+    Ok(Json(site_response(
+        fetch_site(&state.pool, site).await?,
+        include_keys,
+    )))
+}
+
+async fn site_role(pool: &PgPool, user: Uuid, site: Uuid) -> Result<String, ApiError> {
+    sqlx::query_scalar("SELECT role::text FROM site_memberships WHERE site_id=$1 AND user_id=$2")
+        .bind(site)
+        .bind(user)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(ApiError::NotFound)
+}
+
+/// A site's keys for its owners and admins (API tokens need `sites:write`, as for any POST).
+/// The read endpoints omit the secret ones for everyone else.
+async fn site_keys(
+    State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(site): Path<Uuid>,
-) -> Result<Json<Site>, ApiError> {
-    require_site(&state.pool, user, site, false).await?;
-    Ok(Json(fetch_site(&state.pool, site).await?))
+) -> Result<Json<Value>, ApiError> {
+    require_site(&state.pool, user, site, true).await?;
+    let (write_key, server_write_key, proxy_key): (Uuid, Uuid, Uuid) =
+        sqlx::query_as("SELECT write_key,server_write_key,proxy_key FROM sites WHERE id=$1")
+            .bind(site)
+            .fetch_one(&state.pool)
+            .await?;
+    Ok(Json(json!({
+        "writeKey": write_key,
+        "serverWriteKey": server_write_key,
+        "proxyKey": proxy_key,
+    })))
 }
 async fn fetch_site(pool: &PgPool, id: Uuid) -> Result<Site, ApiError> {
     sqlx::query_as("SELECT id,name,domain,timezone,allowed_origins,retention_days,write_key,server_write_key,proxy_key,anti_adblock_server,anti_adblock_js_path,anti_adblock_beacon_path,icon_mode,icon_background,icon_background_end,icon_foreground,icon_updated_at,created_at FROM sites WHERE id=$1").bind(id).fetch_optional(pool).await?.ok_or(ApiError::NotFound)
