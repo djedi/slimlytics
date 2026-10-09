@@ -3080,8 +3080,8 @@ fn mcp_tool_result(data: Value, is_error: bool) -> Value {
 
 fn mcp_tools() -> Value {
     json!([
-      {"name":"setup_site","description":"Create or reuse a site by domain and return first-party tracker installation configuration. Install the returned proxy routes and script in the website, preserving consent and DNT.","inputSchema":{"type":"object","required":["name","domain"],"additionalProperties":false,"properties":{"name":{"type":"string"},"domain":{"type":"string"},"timezone":{"type":"string","default":"UTC"},"allowedOrigins":{"type":"array","items":{"type":"string"}},"retentionDays":{"type":"integer","default":365},"serverType":{"type":"string","enum":["caddy","nginx","apache"]}}},"annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true}},
-      {"name":"tracking_setup","description":"Get first-party script, reverse proxy configuration and verification URLs for an existing site.","inputSchema":{"type":"object","required":["siteId"],"additionalProperties":false,"properties":{"siteId":{"type":"string","format":"uuid"}}},"annotations":{"readOnlyHint":true}},
+      {"name":"setup_site","description":"Create or reuse a site by domain and return first-party tracker installation configuration. Install the returned proxy routes and script in the website, preserving consent and DNT. The proxy configuration reads the proxy key from the SLIMLYTICS_PROXY_KEY environment variable; proxyKey is returned only when the site is newly created, so store it in private deployment config, never in the repository.","inputSchema":{"type":"object","required":["name","domain"],"additionalProperties":false,"properties":{"name":{"type":"string"},"domain":{"type":"string"},"timezone":{"type":"string","default":"UTC"},"allowedOrigins":{"type":"array","items":{"type":"string"}},"retentionDays":{"type":"integer","default":365},"serverType":{"type":"string","enum":["caddy","nginx","apache"]}}},"annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true}},
+      {"name":"tracking_setup","description":"Get first-party script, reverse proxy configuration and verification URLs for an existing site. The proxy configuration reads the proxy key from the SLIMLYTICS_PROXY_KEY environment variable; the key itself is not returned (only its last four characters), so ask the site owner to copy it from the dashboard.","inputSchema":{"type":"object","required":["siteId"],"additionalProperties":false,"properties":{"siteId":{"type":"string","format":"uuid"}}},"annotations":{"readOnlyHint":true}},
       {
         "name":"list_sites",
         "description":"List analytics sites available to this account. Does not expose collection write keys.",
@@ -3505,7 +3505,14 @@ async fn mcp(
                     .await?;
                     site = updated;
                 }
-                let setup = tracking_setup::tracking_setup(&site, &state.public_url)
+                // The proxy key is only returned for a site this call just created; a reused
+                // site's key stays in the dashboard.
+                let reveal = if ensured.created {
+                    tracking_setup::ProxyKey::Include
+                } else {
+                    tracking_setup::ProxyKey::Redact
+                };
+                let setup = tracking_setup::tracking_setup(&site, &state.public_url, reveal)
                     .map_err(|_| ApiError::Internal)?;
                 Ok((
                     Some(site.id),
@@ -3520,8 +3527,12 @@ async fn mcp(
                 Ok((
                     Some(id),
                     serde_json::to_value(
-                        tracking_setup::tracking_setup(&site, &state.public_url)
-                            .map_err(|_| ApiError::Internal)?,
+                        tracking_setup::tracking_setup(
+                            &site,
+                            &state.public_url,
+                            tracking_setup::ProxyKey::Redact,
+                        )
+                        .map_err(|_| ApiError::Internal)?,
                     )
                     .map_err(|_| ApiError::Internal)?,
                 ))
