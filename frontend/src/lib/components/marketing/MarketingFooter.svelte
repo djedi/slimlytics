@@ -13,6 +13,8 @@
       <a href="/#features">Features</a>
       <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
+      <a href="/about">About</a>
+      <a href="/about#contact">Contact</a>
       <a href="/register">Create account</a>
       <a href="/login">Sign in</a>
     </nav>
