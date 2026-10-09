@@ -18,8 +18,7 @@
     <h1>Every feature. Every plan.</h1>
     <p class="mkt-lead">
       Self-host the open-source product for free, or let us run it for you. Plans differ only in
-      sites, page views, and support — nothing is held back. Creating an account never requires a
-      card today.
+      sites, page views, and support — nothing is held back. The Free plan never requires a card.
     </p>
   </header>
 
