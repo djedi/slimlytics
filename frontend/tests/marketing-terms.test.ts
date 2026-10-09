@@ -14,6 +14,8 @@ describe('terms of service and data processing note', () => {
       expect(screen.getByRole('heading', { name })).toBeInTheDocument();
     }
     expect(screen.getByRole('link', { name: /data processing and hosting/i })).toHaveAttribute('href', '/privacy#data-processing');
+    expect(screen.getByText(/laws of the State of Utah/)).toBeInTheDocument();
+    expect(screen.getByText(/end of the current billing\s+period/)).toBeInTheDocument();
   });
 
   it('adds a data processing and hosting section to the privacy page', () => {
@@ -21,6 +23,8 @@ describe('terms of service and data processing note', () => {
     expect(container.querySelector('#data-processing')).not.toBeNull();
     expect(screen.getByRole('heading', { name: /data processing and hosting/i })).toBeInTheDocument();
     expect(screen.getByText(/Stripe: payment processing/)).toBeInTheDocument();
+    expect(container.textContent).toMatch(/HostRush \(ServerCheap\)/);
+    expect(container.textContent).toMatch(/signed data processing agreement/);
   });
 
   it('links the terms from the marketing footer', () => {

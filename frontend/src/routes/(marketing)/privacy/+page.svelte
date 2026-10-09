@@ -92,7 +92,7 @@
 
   <section id="data-processing" class="mkt-section mkt-section-alt" aria-labelledby="processing-title">
     <div class="mkt-prose">
-      <!-- DRAFT: every "[TODO: …]" is a fact only Dustin can supply. Do not merge until resolved. -->
+      <!-- DRAFT: the "[TODO: …]" is a fact only Dustin can supply. Do not merge until resolved. -->
       <h2 id="processing-title">Data processing and hosting</h2>
       <p>
         This section covers the hosted service at slimlytics.com. Self-hosted installs keep all
@@ -112,13 +112,13 @@
       </ul>
       <h3>Where it is hosted</h3>
       <p>
-        The application and its PostgreSQL database run on a server in [TODO: hosting provider,
-        country/region]. Visitor location lookups use a local DB-IP database on that server, so
+        The application and its PostgreSQL database run on a virtual private server from HostRush
+        (ServerCheap) in the United States. Visitor location lookups use a local DB-IP database on that server, so
         visitor IP addresses are never sent to a geolocation provider.
       </p>
       <h3>Service providers</h3>
       <ul>
-        <li>[TODO: hosting provider]: infrastructure for the application and database.</li>
+        <li>HostRush (ServerCheap), United States: the server that runs the application and database.</li>
         <li>Stripe: payment processing for paid plans. Card details go to Stripe, never to us.</li>
         <li>Google: only if you connect Search Console, using read-only access you can disconnect at any time.</li>
       </ul>
@@ -130,8 +130,8 @@
       </p>
       <h3>Data processing agreement</h3>
       <p>
-        [TODO: confirm DPA availability, e.g. “Need a signed data processing agreement (DPA) for
-        GDPR? Email [contact email] and we will send one.”] See also our
+        Need a signed data processing agreement (DPA), for example for GDPR? Email
+        <a href="mailto:dustin@davis.im">dustin@davis.im</a> and we will send one. See also our
         <a href="/terms">Terms of Service</a>.
       </p>
     </div>
