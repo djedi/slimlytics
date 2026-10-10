@@ -8,7 +8,7 @@ const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[
 
 describe('sitemap.xml', () => {
   it('lists the public marketing and docs pages', () => {
-    for (const path of ['/', '/pricing', '/privacy', '/docs', '/docs/mcp', '/docs/cli', '/docs/api']) {
+    for (const path of ['/', '/pricing', '/privacy', '/about', '/docs', '/docs/mcp', '/docs/cli', '/docs/api']) {
       expect(locs).toContain(`https://slimlytics.com${path}`);
     }
   });
