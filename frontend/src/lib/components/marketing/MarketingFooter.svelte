@@ -13,6 +13,8 @@
       <a href="/#features">Features</a>
       <a href="/pricing">Pricing</a>
       <a href="/privacy">Privacy</a>
+      <a href="/about">About</a>
+      <a href="/about#contact">Contact</a>
       <a href="/register">Create account</a>
       <a href="/login">Sign in</a>
     </nav>
@@ -26,5 +28,5 @@
       <a href="/docs/api">API reference</a>
     </nav>
   </div>
-  <p class="mkt-footer-copy">© {new Date().getFullYear()} Slimlytics. Independent analytics for independent teams.</p>
+  <p class="mkt-footer-copy">© {new Date().getFullYear()} Red Seam, Inc. Independent analytics for independent teams.</p>
 </footer>
