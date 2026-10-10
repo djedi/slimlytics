@@ -15,7 +15,8 @@ export interface BillingStatus {
   plans?: BillingPlan[];
   checkoutAvailable?: boolean;
 }
-export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey: string; proxyKey?: string; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; iconMode?: SiteIconMode; iconBackground?: string | null; iconBackgroundEnd?: string | null; iconForeground?: string | null; iconUpdatedAt?: string | null; overview?: Overview }
+/** `serverWriteKey` and `proxyKey` are only returned to site owners and admins (`canManageKeys`); everyone gets the `…abcd` hints. */
+export interface Site { id: string; name: string; domain: string; writeKey: string; serverWriteKey?: string; proxyKey?: string; serverWriteKeyHint?: string; proxyKeyHint?: string; canManageKeys?: boolean; timezone?: string; allowedOrigins?: string[]; retentionDays?: number; antiAdblockServer: AntiAdblockServer; antiAdblockJsPath: string; antiAdblockBeaconPath: string; iconMode?: SiteIconMode; iconBackground?: string | null; iconBackgroundEnd?: string | null; iconForeground?: string | null; iconUpdatedAt?: string | null; overview?: Overview }
 export type SiteIconMode = 'initials' | 'favicon';
 /** Colors are #rrggbb; empty or null means automatic. */
 export interface SiteIconSettings { mode: SiteIconMode; background?: string | null; backgroundEnd?: string | null; foreground?: string | null }
@@ -174,7 +175,7 @@ function dates(days: number) {
   return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
 }
 function dateQuery(days: number) { const range = dates(days); return `from=${range.from}&to=${range.to}`; }
-function normalizeSite(site: WireSite): Site { return { ...site, writeKey: site.writeKey ?? site.write_key ?? '', serverWriteKey: site.serverWriteKey ?? site.server_write_key ?? '', antiAdblockServer: site.antiAdblockServer ?? site.anti_adblock_server ?? 'caddy', antiAdblockJsPath: site.antiAdblockJsPath ?? site.anti_adblock_js_path ?? '/slimlytics.js', antiAdblockBeaconPath: site.antiAdblockBeaconPath ?? site.anti_adblock_beacon_path ?? '/slimlytics-event' }; }
+function normalizeSite(site: WireSite): Site { return { ...site, writeKey: site.writeKey ?? site.write_key ?? '', serverWriteKey: site.serverWriteKey ?? site.server_write_key, antiAdblockServer: site.antiAdblockServer ?? site.anti_adblock_server ?? 'caddy', antiAdblockJsPath: site.antiAdblockJsPath ?? site.anti_adblock_js_path ?? '/slimlytics.js', antiAdblockBeaconPath: site.antiAdblockBeaconPath ?? site.anti_adblock_beacon_path ?? '/slimlytics-event' }; }
 const trend = Array.from({ length: 28 }, (_, index) => ({ date: new Date(Date.now() - (27 - index) * 864e5).toISOString().slice(0, 10), visitors: 84 + ((index * 17) % 71), pageViews: 151 + ((index * 29) % 129) }));
 const baseOverview: Overview = { visitors: 3421, sessions: 3892, pageViews: 8754, bounceRate: 38.4, avgDuration: 164, change: 12.8, currentOnline: 14, trend };
 export const demoSites: Site[] = [
@@ -403,6 +404,7 @@ export class ApiClient {
   async updateSite(id: string, site: Partial<Site>) { return normalizeSite(await this.request<WireSite>(`/sites/${id}`, { method: 'PUT', body: JSON.stringify(site) }, () => ({ ...demoSites[0], ...site, id }))); }
   async updateSiteIcon(id: string, settings: SiteIconSettings) { return normalizeSite(await this.request<WireSite>(`/sites/${id}/icon`, { method: 'PUT', body: JSON.stringify(settings) }, () => ({ ...demoSites[0], id, iconMode: settings.mode, iconBackground: settings.background || null, iconBackgroundEnd: settings.backgroundEnd || null, iconForeground: settings.foreground || null }))); }
   async updateAntiAdblock(id: string, settings: AntiAdblockSettings) { return normalizeSite(await this.request<WireSite>(`/sites/${id}/anti-adblock`, { method: 'PUT', body: JSON.stringify(settings) }, () => ({ ...demoSites[0], id, antiAdblockServer: settings.serverType, antiAdblockJsPath: settings.jsPath, antiAdblockBeaconPath: settings.beaconPath }))); }
+  siteKeys(id: string) { return this.request<{ writeKey: string; serverWriteKey: string; proxyKey: string }>(`/sites/${id}/keys`, { method: 'POST' }); }
   rotateProxyKey(id: string) { return this.request<{ proxyKey: string }>(`/sites/${id}/rotate-proxy-key`, { method: 'POST' }); }
   rotateServerKey(id: string) { return this.request<{ serverWriteKey: string }>(`/sites/${id}/rotate-server-key`, { method: 'POST' }); }
   collectionHealth(id: string) { return this.request<CollectionHealth>(`/sites/${id}/collection-health`, {}, () => ({ acceptedTotal: 0, rejectedTotal: 0 })); }

@@ -5315,6 +5315,22 @@
         }
       }
     },
+    "/api/sites/{siteId}/keys": {
+      "post": {
+        "tags": ["Sites"],
+        "summary": "Get the site's collection and proxy keys",
+        "description": "Returns writeKey, serverWriteKey, and proxyKey for site owners and admins. API tokens need sites:write. The site read endpoints omit serverWriteKey and proxyKey for other callers.",
+        "operationId": "getSiteKeys",
+        "parameters": [{"$ref": "#/components/parameters/SiteId"}],
+        "responses": {
+          "200": {"description": "Site keys", "content": {"application/json": {"schema": {"type": "object", "required": ["writeKey", "serverWriteKey", "proxyKey"], "properties": {"writeKey": {"type": "string", "format": "uuid"}, "serverWriteKey": {"type": "string", "format": "uuid"}, "proxyKey": {"type": "string", "format": "uuid"}}}}}},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
     "/api/sites/{siteId}/rotate-proxy-key": {
       "post": {
         "tags": ["Sites"],
@@ -6533,8 +6549,6 @@
           "allowedOrigins",
           "retentionDays",
           "writeKey",
-          "serverWriteKey",
-          "proxyKey",
           "antiAdblockServer",
           "antiAdblockJsPath",
           "antiAdblockBeaconPath",
@@ -6577,12 +6591,24 @@
           "serverWriteKey": {
             "type": "string",
             "format": "uuid",
-            "description": "Rotatable collection-only secret for trusted server request batches"
+            "description": "Rotatable collection-only secret for trusted server request batches. Included only for site owners and admins (API tokens also need sites:write); otherwise use serverWriteKeyHint, or POST /api/sites/{siteId}/keys as an owner or admin"
           },
           "proxyKey": {
             "type": "string",
             "format": "uuid",
-            "description": "Server-side secret sent by the site's first-party proxy as X-Slimlytics-Proxy-Key with X-Slimlytics-Client-IP so locations and visitor IDs use the real visitor IP. Keep it out of public repositories; rotate with POST /api/sites/{siteId}/rotate-proxy-key if exposed"
+            "description": "Server-side secret sent by the site's first-party proxy as X-Slimlytics-Proxy-Key with X-Slimlytics-Client-IP so locations and visitor IDs use the real visitor IP. Included only for site owners and admins (API tokens also need sites:write). Keep it out of public repositories; rotate with POST /api/sites/{siteId}/rotate-proxy-key if exposed"
+          },
+          "serverWriteKeyHint": {
+            "type": "string",
+            "description": "Last four characters of serverWriteKey, prefixed with an ellipsis. Returned by the site read endpoints"
+          },
+          "proxyKeyHint": {
+            "type": "string",
+            "description": "Last four characters of proxyKey, prefixed with an ellipsis. Returned by the site read endpoints"
+          },
+          "canManageKeys": {
+            "type": "boolean",
+            "description": "Returned by the site read endpoints: whether serverWriteKey and proxyKey are included (owner or admin, and for API tokens the sites:write scope)"
           },
           "antiAdblockServer": {
             "type": "string",

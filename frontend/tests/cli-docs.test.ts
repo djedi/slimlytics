@@ -13,6 +13,7 @@ const requiredCommands = [
   'slimlytics token revoke',
   'slimlytics site list',
   'slimlytics site show',
+  'slimlytics site keys',
   'slimlytics site add',
   'slimlytics site ensure',
   'slimlytics site delete',

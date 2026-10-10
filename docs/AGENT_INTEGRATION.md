@@ -49,7 +49,7 @@ Webhook destinations are DNS-resolved immediately before delivery, pinned for th
 
 ## Server collection
 
-Authenticated site responses include a separate `serverWriteKey`. Use it only with the batched server request endpoint documented in [SERVER_INGESTION.md](SERVER_INGESTION.md). Supply a stable per-request `idempotencyKey`; raw client IPs are transformed and discarded rather than persisted.
+Site responses include a separate `serverWriteKey` for owners and admins (API tokens need `sites:write`); others see `serverWriteKeyHint`, and `POST /api/sites/{siteId}/keys` returns it to owners and admins. Use it only with the batched server request endpoint documented in [SERVER_INGESTION.md](SERVER_INGESTION.md). Supply a stable per-request `idempotencyKey`; raw client IPs are transformed and discarded rather than persisted.
 
 ## Reliable writes
 

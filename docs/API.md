@@ -63,9 +63,12 @@ API tokens and JWTs use the same Bearer header. Revoked or expired tokens return
 - `GET /api/sites/{siteId}`
 - `PUT /api/sites/{siteId}`
 - `PUT /api/sites/{siteId}/anti-adblock`
+- `POST /api/sites/{siteId}/keys` — the site's `writeKey`, `serverWriteKey`, and `proxyKey` (owners and admins; API tokens need `sites:write`)
 - `DELETE /api/sites/{siteId}`
 
 A site has a display name, canonical URL, timezone, allowed origins, retention policy, status, independently rotatable collection write key, and a persisted anti-adblock server type, JavaScript path, and beacon path. New sites receive random neutral path defaults. Domains are canonicalized case-insensitively and globally unique; an account cannot claim a domain already managed by another account. `ensure` returns `{ "created": boolean, "site": {...} }` and is safe for retrying agents. The anti-adblock update body is `{ "serverType": "caddy|nginx|apache", "jsPath": "/...js", "beaconPath": "/..." }`.
+
+`GET /api/sites` and `GET /api/sites/{siteId}` include the secret `serverWriteKey` and `proxyKey` only when the caller is an owner or admin of that site and, for API tokens, the token has `sites:write`. Every response includes `serverWriteKeyHint` and `proxyKeyHint` (the last four characters) and `canManageKeys` (whether the keys were included). Viewers and read-only tokens still get the public browser `writeKey`. Owners and admins can always fetch the keys with `POST /api/sites/{siteId}/keys`. Create, ensure, and update responses still return the full site to the owners and admins who make them.
 
 ## Collection
 
