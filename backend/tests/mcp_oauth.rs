@@ -342,6 +342,28 @@ async fn login_pkce_single_use_scopes_and_site_setup() {
         first["result"]["structuredContent"]["setup"]["siteId"],
         second["result"]["structuredContent"]["setup"]["siteId"]
     );
+    let site_id = first["result"]["structuredContent"]["setup"]["siteId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let proxy_key: uuid::Uuid = sqlx::query_scalar("SELECT proxy_key FROM sites WHERE id=$1")
+        .bind(uuid::Uuid::parse_str(&site_id).unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let proxy_key = proxy_key.to_string();
+    // A newly created site returns its proxy key once; the config references the environment.
+    let created = &first["result"]["structuredContent"]["setup"];
+    assert_eq!(created["proxyKey"], proxy_key.as_str());
+    let created_config = created["serverConfig"].as_str().unwrap();
+    assert!(!created_config.contains(&proxy_key));
+    assert!(created_config.contains("${SLIMLYTICS_PROXY_KEY}"));
+    // Reusing the site, or reading its setup, never returns the key.
+    assert!(!second.to_string().contains(&proxy_key));
+    assert_eq!(
+        second["result"]["structuredContent"]["setup"]["proxyKeyHint"],
+        format!("…{}", &proxy_key[proxy_key.len() - 4..])
+    );
     sqlx::query(
         "UPDATE api_tokens SET scopes=ARRAY['sites:read','analytics:read'] WHERE token_hash=$1",
     )
@@ -351,6 +373,24 @@ async fn login_pkce_single_use_scopes_and_site_setup() {
     .unwrap();
     let readonly = json_post(&router,"/api/mcp",json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"setup_site","arguments":{"name":"Read only","domain":"readonly.example.com"}}}),Some(token)).await;
     assert_eq!(readonly.status(), 403);
+    let read = value(
+        json_post(
+            &router,
+            "/api/mcp",
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tracking_setup","arguments":{"siteId":site_id}}}),
+            Some(token),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(read["result"]["isError"], false);
+    let read_setup = &read["result"]["structuredContent"];
+    assert!(read_setup["serverConfig"]
+        .as_str()
+        .unwrap()
+        .contains("X-Slimlytics-Proxy-Key ${SLIMLYTICS_PROXY_KEY}"));
+    assert!(read_setup.get("proxyKey").is_none());
+    assert!(!read.to_string().contains(&proxy_key));
     sqlx::query("UPDATE api_tokens SET revoked_at=now() WHERE token_hash=$1")
         .bind(slimlytics_backend::auth::hash_api_token(token))
         .execute(&pool)

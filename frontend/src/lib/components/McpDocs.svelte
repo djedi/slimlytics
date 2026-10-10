@@ -229,10 +229,14 @@ hermes mcp test slimlytics`;
           routes. Forward to the fixed Slimlytics origin, preserve the method, body, content type,
           Origin, Referer, and User-Agent, strip Cookie and Authorization, and remove upstream
           Set-Cookie. On the collection route, send the visitor’s IP as
-          <code>X-Slimlytics-Client-IP</code> and the setup’s <code>proxyKey</code> as
+          <code>X-Slimlytics-Client-IP</code> and the site’s proxy key as
           <code>X-Slimlytics-Proxy-Key</code>, or locations and visitor counts will reflect your web
-          server instead of your visitors. Keep the proxy key out of public repositories; it is a
-          server-side secret. Avoid caching collection responses or accepting arbitrary
+          server instead of your visitors. The returned configuration reads the key from the
+          <code>SLIMLYTICS_PROXY_KEY</code> environment variable; copy the key from the site’s
+          Anti-adblock tracking settings into your server’s private environment.
+          <code>tracking_setup</code> never returns the key itself, and <code>setup_site</code>
+          returns it only once, for a site it has just created. Keep the proxy key out of
+          repositories; it is a server-side secret. Avoid caching collection responses or accepting arbitrary
           upstream URLs.
         </p>
         <h3 id="prompts">Prompt library</h3>
@@ -270,7 +274,7 @@ hermes mcp test slimlytics`;
             <thead><tr><th scope="col">Tool</th><th scope="col">Use</th></tr></thead>
             <tbody>
               <tr><td><code>setup_site</code></td><td>Create or reuse a site and get installation artifacts. Accepts name, domain, timezone, allowedOrigins, retentionDays, and serverType.</td></tr>
-              <tr><td><code>tracking_setup</code></td><td>Get the current installation configuration for an existing siteId.</td></tr>
+              <tr><td><code>tracking_setup</code></td><td>Get the current installation configuration for an existing siteId. The proxy key is referenced as <code>SLIMLYTICS_PROXY_KEY</code>, not returned.</td></tr>
               <tr><td><code>list_sites</code></td><td>Find the sites your account can access.</td></tr>
               <tr><td><code>analytics_summary</code></td><td>Inspect metrics and comparisons with an explicit siteId and inclusive from/to dates.</td></tr>
               <tr><td><code>dimension_report</code></td><td>Inspect pages, referrers, countries, devices, and campaigns.</td></tr>
