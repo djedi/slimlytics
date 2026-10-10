@@ -29,8 +29,9 @@
 </div>
 {#if !compact}
   <p class="pricing-disclaimer muted">
-    Hosted plan limits are draft defaults; page views are counted across all of an account’s
-    sites. Checkout is not required to create an account today — self-hosted always includes the
-    full product.
+    Daily page views count human traffic across all of an account’s sites and reset at midnight
+    UTC. Going over never stops collection; the dashboard just asks you to upgrade. The Free plan
+    needs no card, paid plans check out securely through Stripe, and self-hosted always includes
+    the full product.
   </p>
 {/if}
