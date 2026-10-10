@@ -63,12 +63,14 @@
       </div>
     </section>
 
-    <section class="mkt-section mkt-section-alt">
+    <section id="self-hosting" class="mkt-section mkt-section-alt">
       <div class="mkt-prose">
         <h2>Self-hosting</h2>
         <p>
           Generate a private <code>.env</code>, run <code>make up</code>, and open the app. Full
-          deployment steps — including the production TLS overlay — live in the project README.
+          deployment steps — including the production TLS overlay — live in the
+          <a href="https://github.com/djedi/slimlytics#self-hosting-quick-start">self-hosting quick start</a>
+          on GitHub.
         </p>
         <pre class="docs-snippet"><code>./scripts/generate-env.sh
 make up

@@ -181,7 +181,7 @@ The tracker never captures form values. Cookieless tracking, Do Not Track, and G
 Install the `slimlytics` binary with Rust's Cargo:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/djedi/slimlytics/cli-v0.2.0/scripts/install-cli.sh | sh
+cargo install --locked --git https://github.com/djedi/slimlytics --tag cli-v0.2.0 slimlytics-cli
 slimlytics auth login --email you@example.com
 ```
 

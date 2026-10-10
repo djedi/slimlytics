@@ -5,8 +5,8 @@ export interface CliCommandDoc {
   options?: string[];
 }
 
-export const installCommand = `curl --proto '=https' --tlsv1.2 -fsSL \\
-  https://raw.githubusercontent.com/djedi/slimlytics-next/cli-v0.2.0/scripts/install-cli.sh | sh`;
+export const installCommand = `cargo install --locked \\
+  --git https://github.com/djedi/slimlytics --tag cli-v0.2.0 slimlytics-cli`;
 
 export const cliCommands: CliCommandDoc[] = [
   {

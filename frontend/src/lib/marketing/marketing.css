@@ -300,6 +300,8 @@ a:hover > .mkt-arrow { transform: translateX(3px); }
 .feature-card h2, .feature-card h3 { font: 750 19px / 1.3 var(--m-display); letter-spacing: -0.015em; margin: 18px 0 8px; }
 .feature-card p { margin: 0; color: var(--m-muted); line-height: 1.6; }
 .feature-card > svg { color: var(--m-accent); }
+.mkt-feature-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; font-weight: 650; color: var(--m-accent); }
+.feature-grid > .feature-card:nth-child(6) .mkt-feature-link { grid-column: 2; justify-self: start; }
 
 /* Agent split */
 .mkt-dark { background: var(--m-ink); color: var(--m-ink-text); position: relative; isolation: isolate; overflow: hidden; }

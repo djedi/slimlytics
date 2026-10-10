@@ -63,4 +63,9 @@ describe('marketing landing page', () => {
     expect(screen.getByRole('button', { name: 'Play the 30-second tour' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /watch the 30-second tour/i })).toHaveAttribute('href', '#tour');
   });
+
+  it('links the self-hosting feature to the self-hosting docs', () => {
+    render(Page);
+    expect(screen.getByRole('link', { name: /self-hosting guide/i })).toHaveAttribute('href', '/docs#self-hosting');
+  });
 });

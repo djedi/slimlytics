@@ -4,14 +4,14 @@ The `slimlytics` CLI authenticates to a Slimlytics account, manages personal API
 
 ## Install
 
-Requirements: `cargo`, `curl`, and `tar`. The installer downloads this repository and performs a locked Cargo build:
+Requirements: a recent stable Rust toolchain with `cargo`. Cargo builds the pinned `cli-v0.2.0` release tag straight from GitHub with a locked release build:
 
 ```bash
-curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/djedi/slimlytics-next/cli-v0.2.0/scripts/install-cli.sh | sh
+cargo install --locked --git https://github.com/djedi/slimlytics --tag cli-v0.2.0 slimlytics-cli
 slimlytics --version
 ```
 
-Cargo installs the binary under `${CARGO_HOME:-$HOME/.cargo}/bin`. The installer defaults to the pinned `cli-v0.2.0` release tag; set `SLIMLYTICS_CLI_REF` to intentionally install another release tag. The canonical command remains `slimlytics`: the shorter `slim` command is already owned by the popular 23,000-star SlimToolkit project and would create a real installation collision.
+Cargo installs the binary under `${CARGO_HOME:-$HOME/.cargo}/bin`. Change `--tag` to intentionally install another release tag. The canonical command remains `slimlytics`: the shorter `slim` command is already owned by the popular 23,000-star SlimToolkit project and would create a real installation collision.
 
 Developers can install directly from a checkout:
 

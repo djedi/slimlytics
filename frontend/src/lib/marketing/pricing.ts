@@ -25,7 +25,7 @@ export const pricingPlans: PricingPlan[] = [
     price: '$0',
     priceNote: 'free forever',
     ctaLabel: 'Read the setup guide',
-    ctaHref: '/docs',
+    ctaHref: '/docs#self-hosting',
     features: [
       'Unlimited sites and page views',
       'Every feature included',

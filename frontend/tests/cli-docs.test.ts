@@ -27,6 +27,8 @@ describe('CLI documentation', () => {
       expect(documented.some((usage) => usage.startsWith(command))).toBe(true);
     }
     expect(installCommand).toContain('cli-v0.2.0');
+    expect(installCommand).toContain('github.com/djedi/slimlytics ');
+    expect(installCommand).not.toContain('slimlytics-next');
     const useToken = cliCommands.find((command: CliCommandDoc) => command.usage.startsWith('slimlytics auth use-token'));
     expect(useToken?.details).toMatch(/piped standard input/i);
     expect(useToken?.details).toMatch(/does not prompt/i);

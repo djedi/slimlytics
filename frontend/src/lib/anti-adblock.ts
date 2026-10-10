@@ -65,7 +65,7 @@ export function proxyConfig(config: AntiAdblockConfig, site: ProxySite, analytic
     : '';
 
   if (config.serverType === 'caddy') {
-    return `### SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics-next/blob/main/docs/FIRST_PARTY_PROXY.md
+    return `### SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics/blob/main/docs/FIRST_PARTY_PROXY.md
 ### COPY INTO YOUR WEBSITE'S CADDYFILE
 
 # TRACKING CODE
@@ -94,7 +94,7 @@ handle ${config.beaconPath} {
   }
 
   if (config.serverType === 'nginx') {
-    return `# SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics-next/blob/main/docs/FIRST_PARTY_PROXY.md
+    return `# SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics/blob/main/docs/FIRST_PARTY_PROXY.md
 # Add these locations inside your website's server block.
 
 # TRACKING CODE
@@ -122,7 +122,7 @@ location = ${config.beaconPath} {
 }`;
   }
 
-  return `# SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics-next/blob/main/docs/FIRST_PARTY_PROXY.md
+  return `# SLIMLYTICS ANTI-ADBLOCK PROXY - https://github.com/djedi/slimlytics/blob/main/docs/FIRST_PARTY_PROXY.md
 # Requires mod_proxy, mod_proxy_http, mod_ssl, and mod_headers.
 
 SSLProxyEngine On
