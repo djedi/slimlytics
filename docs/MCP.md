@@ -117,7 +117,7 @@ More example prompts (any client):
 - "Compare search_console_report queries with the pages report for 28 days and flag high-impression, low-CTR queries."
 - "List every site I can access, fetch tracking_setup for each, and check scriptTestUrl and beaconTestUrl."
 
-`setup_site` returns whether the site was created and a `setup` object containing `siteId`, `serverType`, `serverConfig`, `snippet`, the JavaScript and beacon paths, and verification URLs. Repeating it for the same domain reuses the site. Existing timezone, retention, and origin settings are preserved; an explicit `serverType` changes only the proxy type, retaining its paths. Existing sites require administrator or owner access for setup.
+`setup_site` returns whether the site was created and a `setup` object containing `siteId`, `serverType`, `serverConfig`, `snippet`, the JavaScript and beacon paths, verification URLs, and the proxy key fields described under [Proxy key](#proxy-key). Repeating it for the same domain reuses the site. Existing timezone, retention, and origin settings are preserved; an explicit `serverType` changes only the proxy type, retaining its paths. Existing sites require administrator or owner access for setup.
 
 The default proxy type is Caddy. Choose `serverType: "nginx"` or `"apache"` when applicable. `tracking_setup` retrieves the current installation for a known `siteId`; `list_sites` finds accessible sites. Reporting tools remain available after installation.
 
@@ -127,7 +127,18 @@ The MCP server configures Slimlytics and returns installation artifacts. Your co
 
 Install **both** routes in `serverConfig` on the measured website before adding `snippet`. One serves the initialized tracker from `/p/{writeKey}/{beacon}`; the other forwards collection to `/api/collect/{writeKey}`. Both browser requests stay on the measured website's origin. Caddy routes must precede a broad application fallback; Nginx exact locations belong inside the website's server block; Apache needs the listed modules. Validate the configuration before reloading.
 
-For framework or edge hosting without these proxies, implement equivalent exact server routes for the returned paths. Forward to the fixed Slimlytics origin and the specified bootstrap/collection paths, preserve method/body/content type/Origin/Referer/User-Agent, strip Cookie and Authorization, and remove upstream Set-Cookie. On the collection route, send the visitor IP as `X-Slimlytics-Client-IP` and the setup's `proxyKey` as `X-Slimlytics-Proxy-Key`, or locations and visitor counts will reflect the website's server. `proxyKey` is a server-side secret: load it from private deployment config rather than committing it to a public repository, and rotate it with `POST /api/sites/{siteId}/rotate-proxy-key` if it is exposed. Do not expose an arbitrary upstream URL or forward a browser-supplied X-Forwarded-For. Avoid caching collection responses. See [FIRST_PARTY_PROXY.md](FIRST_PARTY_PROXY.md) for routing and verification details.
+For framework or edge hosting without these proxies, implement equivalent exact server routes for the returned paths. Forward to the fixed Slimlytics origin and the specified bootstrap/collection paths, preserve method/body/content type/Origin/Referer/User-Agent, strip Cookie and Authorization, and remove upstream Set-Cookie. On the collection route, send the visitor IP as `X-Slimlytics-Client-IP` and the site's proxy key (from the `SLIMLYTICS_PROXY_KEY` environment variable) as `X-Slimlytics-Proxy-Key`, or locations and visitor counts will reflect the website's server. Do not expose an arbitrary upstream URL or forward a browser-supplied X-Forwarded-For. Avoid caching collection responses. See [FIRST_PARTY_PROXY.md](FIRST_PARTY_PROXY.md) for routing and verification details.
+
+### Proxy key
+
+The collection route vouches for the forwarded visitor IP with the site's proxy key, a server-side secret. MCP output keeps it out of the generated configuration and out of agent transcripts:
+
+- `serverConfig` reads the key from the `SLIMLYTICS_PROXY_KEY` environment variable, in the server's own syntax (`proxyKeyPlaceholder`): Caddy `{$SLIMLYTICS_PROXY_KEY}`, Apache `${SLIMLYTICS_PROXY_KEY}`, and Nginx `${SLIMLYTICS_PROXY_KEY}`. Nginx does not read environment variables itself, so render its config with `envsubst '${SLIMLYTICS_PROXY_KEY}'` (or the official image's `/etc/nginx/templates`) so that Nginx variables such as `$remote_addr` are left alone.
+- `proxyKeyEnv` names the variable and `proxyKeyHint` shows the key's last four characters, so the operator can confirm which key is installed.
+- `tracking_setup` never returns the key itself. Copy it from the site's **Anti-adblock tracking** settings in the dashboard and set it in the web server's private environment or secrets store.
+- `setup_site` returns the full key as `proxyKey` only when it has just created the site (this requires the `sites:write` scope). Reusing an existing site returns only the hint.
+
+Never commit the key to a repository. If it is exposed, rotate it from the dashboard or with `POST /api/sites/{siteId}/rotate-proxy-key` and update the environment variable.
 
 Anti-adblock here means reliable first-party delivery. It remains cookieless and preserves the tracker's consent, DNT, and GPC behavior. It cannot guarantee that every blocker permits tracking. A consent-controlled website should insert the script only after consent, following its existing consent mechanism.
 

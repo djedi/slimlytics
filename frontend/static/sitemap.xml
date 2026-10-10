@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Public marketing and documentation pages. Add new public pages here; keep /app, /api,
+     /login, /register, and /p/ out (robots.txt disallows them). -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://slimlytics.com/</loc></url>
+  <url><loc>https://slimlytics.com/pricing</loc></url>
+  <url><loc>https://slimlytics.com/privacy</loc></url>
+  <url><loc>https://slimlytics.com/docs</loc></url>
+  <url><loc>https://slimlytics.com/docs/mcp</loc></url>
+  <url><loc>https://slimlytics.com/docs/cli</loc></url>
+  <url><loc>https://slimlytics.com/docs/api</loc></url>
+</urlset>
