@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 description = "Command-line client for managing Slimlytics accounts and tracking"
 license = "MIT"
-repository = "https://github.com/djedi/slimlytics-next"
+repository = "https://github.com/djedi/slimlytics"
 rust-version = "1.85"
 
 [lib]
