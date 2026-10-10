@@ -54,4 +54,13 @@ describe('marketing pricing page', () => {
     expect(screen.getByRole('heading', { name: 'MCP server for AI agents' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Business' })).toBeInTheDocument();
   });
+
+  it('reads as final pricing, without draft or temporary wording', () => {
+    const { container } = render(Page);
+    const text = container.textContent ?? '';
+    expect(text).not.toMatch(/draft defaults/i);
+    expect(text).not.toMatch(/\btoday\b/i);
+    expect(text).toMatch(/Free plan never requires a card/);
+    expect(text).toMatch(/through Stripe/);
+  });
 });

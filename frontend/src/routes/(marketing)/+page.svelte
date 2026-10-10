@@ -187,6 +187,11 @@
           <span class="feature-icon"><Icon size={22} aria-hidden="true" /></span>
           <h3>{feature.title}</h3>
           <p>{feature.body}</p>
+          {#if 'href' in feature}
+            <a class="mkt-feature-link" href={feature.href}
+              >{feature.linkLabel} <ArrowRight class="mkt-arrow" size={15} aria-hidden="true" /></a
+            >
+          {/if}
         </article>
       {/each}
     </div>

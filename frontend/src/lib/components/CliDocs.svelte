@@ -76,8 +76,8 @@
         <section id="install">
           <h2>Install</h2>
           <p>
-            The installer defaults to the pinned <code>cli-v0.2.0</code> release tag and performs a locked
-            Cargo release build. Requirements: Rust/Cargo, curl, tar, and a supported Unix shell.
+            Cargo builds the pinned <code>cli-v0.2.0</code> release tag straight from GitHub with a locked
+            release build. Requirements: a recent stable Rust toolchain with Cargo.
           </p>
           <CodeBlock code={installCommand} label="install command" />
           <CodeBlock code={'slimlytics --version\nslimlytics --help'} label="version check" />
