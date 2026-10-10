@@ -5,3 +5,5 @@ Disallow: /api/
 Disallow: /p/
 Disallow: /login
 Disallow: /register
+
+Sitemap: https://slimlytics.com/sitemap.xml
