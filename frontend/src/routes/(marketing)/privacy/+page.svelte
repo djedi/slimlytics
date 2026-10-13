@@ -86,6 +86,21 @@
         consent API only after the visitor grants analytics consent. Revocation stops new events
         immediately; deleting prior data is a separate server-side operation.
       </p>
+      <h2>Google API Services</h2>
+      <p>
+        If you connect Google Search Console, Slimlytics requests read-only access
+        (<code>webmasters.readonly</code>) and uses it only to show your own search performance data
+        inside your account. We do not sell this data, use it for advertising, or share it with third
+        parties except as needed to provide the feature or comply with law. You can disconnect at any
+        time in Slimlytics settings or at
+        <a href="https://myaccount.google.com/permissions" rel="noopener noreferrer"
+          >myaccount.google.com/permissions</a
+        >. Slimlytics' use and transfer of information received from Google APIs adheres to the
+        <a
+          href="https://developers.google.com/terms/api-services-user-data-policy"
+          rel="noopener noreferrer">Google API Services User Data Policy</a
+        >, including the Limited Use requirements. See also our <a href="/terms">Terms of Service</a>.
+      </p>
     </div>
   </section>
 
