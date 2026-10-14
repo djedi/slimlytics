@@ -9,8 +9,18 @@ export interface AntiAdblockConfig {
 interface ProxySite {
   domain: string;
   writeKey: string;
-  /** Vouches for the visitor IP the beacon route forwards; omitted by older API versions. */
+  /** Vouches for the visitor IP the beacon route forwards; only returned to site owners and admins. */
   proxyKey?: string;
+  /** Last four characters of the proxy key; present when the key itself is withheld. */
+  proxyKeyHint?: string;
+}
+
+/** Environment variable the configuration reads the proxy key from when the key is withheld. */
+export const PROXY_KEY_ENV = 'SLIMLYTICS_PROXY_KEY';
+
+/** `SLIMLYTICS_PROXY_KEY` in each server's environment-variable syntax. */
+export function proxyKeyPlaceholder(server: AntiAdblockServer): string {
+  return server === 'caddy' ? `{$${PROXY_KEY_ENV}}` : `\${${PROXY_KEY_ENV}}`;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -52,8 +62,9 @@ export function proxyConfig(config: AntiAdblockConfig, site: ProxySite, analytic
 
   // The beacon route forwards the visitor's IP, vouched for by the site's proxy key, so
   // locations and visitor IDs reflect the visitor rather than this web server.
-  const key = site.proxyKey;
-  if (key !== undefined && !UUID.test(key)) throw new Error('Invalid proxy key');
+  if (site.proxyKey !== undefined && !UUID.test(site.proxyKey)) throw new Error('Invalid proxy key');
+  // Without the key (viewers), reference it from the server's environment instead.
+  const key = site.proxyKey ?? (site.proxyKeyHint ? proxyKeyPlaceholder(config.serverType) : undefined);
   const caddyClientIp = key
     ? `\n\t\theader_up X-Slimlytics-Client-IP {client_ip}\n\t\theader_up X-Slimlytics-Proxy-Key ${key}`
     : '';

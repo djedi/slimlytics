@@ -27,10 +27,20 @@ pub struct Site {
     pub allowed_origins: Vec<String>,
     pub retention_days: i32,
     pub write_key: Uuid,
-    pub server_write_key: Uuid,
-    /// Vouches for the visitor IP the beacon route forwards. Absent on older servers.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Secret server ingestion key. Only returned to site owners and admins whose token has
+    /// `sites:write`; never printed by `site list`/`site show` (use `site keys`).
+    #[serde(default, skip_serializing)]
+    pub server_write_key: Option<Uuid>,
+    /// Vouches for the visitor IP the beacon route forwards. Returned under the same rules as
+    /// `server_write_key`, and absent on older servers. Never printed with the site.
+    #[serde(default, skip_serializing)]
     pub proxy_key: Option<Uuid>,
+    /// Last four characters of the server key (newer servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_write_key_hint: Option<String>,
+    /// Last four characters of the proxy key (newer servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_key_hint: Option<String>,
     pub anti_adblock_server: String,
     pub anti_adblock_js_path: String,
     pub anti_adblock_beacon_path: String,
@@ -60,6 +70,15 @@ pub struct AntiAdblockInput {
     pub server_type: String,
     pub js_path: String,
     pub beacon_path: String,
+}
+
+/// A site's keys from `POST /api/sites/{id}/keys` (owners and admins with `sites:write`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteKeys {
+    pub write_key: Uuid,
+    pub server_write_key: Uuid,
+    pub proxy_key: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,9 +124,39 @@ pub struct TrackingSetup {
     pub script_test_url: String,
     pub beacon_test_url: String,
     pub server_ingest_url: String,
+    /// Environment variable `server_config` reads the proxy key from.
+    pub proxy_key_env: &'static str,
+    /// How `server_config` references the proxy key, or the key itself with
+    /// [`ProxyKey::Include`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_key_placeholder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_key_hint: Option<String>,
+    /// Only with [`ProxyKey::Include`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_key: Option<Uuid>,
     pub next_steps: Vec<String>,
+}
+
+/// Environment variable generated proxy configurations read the proxy key from.
+pub const PROXY_KEY_ENV: &str = "SLIMLYTICS_PROXY_KEY";
+
+/// Whether generated proxy configuration embeds the proxy key or references [`PROXY_KEY_ENV`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyKey {
+    /// Reference `SLIMLYTICS_PROXY_KEY` in the server's own syntax (the default).
+    Placeholder,
+    /// Write the site's key into the configuration (`--include-proxy-key`).
+    Include,
+}
+
+/// `SLIMLYTICS_PROXY_KEY` in each server's environment-variable syntax: Caddyfile reads
+/// `{$VAR}` and Apache `${VAR}` when loading; render Nginx with `envsubst '${VAR}'`.
+pub fn proxy_key_placeholder(server: &str) -> String {
+    match server {
+        "caddy" => format!("{{${PROXY_KEY_ENV}}}"),
+        _ => format!("${{{PROXY_KEY_ENV}}}"),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,6 +332,16 @@ impl ApiClient {
             .await
     }
 
+    pub async fn site_keys(&self, id: Uuid) -> Result<SiteKeys> {
+        self.request::<SiteKeys, serde_json::Value>(
+            Method::POST,
+            &format!("/api/sites/{id}/keys"),
+            None,
+            None,
+        )
+        .await
+    }
+
     pub async fn sites(&self) -> Result<Vec<Site>> {
         self.request::<Vec<Site>, serde_json::Value>(Method::GET, "/api/sites", None, None)
             .await
@@ -443,7 +502,13 @@ pub fn load_auth(path: &Path) -> Result<StoredAuth> {
     .context("invalid Slimlytics auth file")
 }
 
-pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSetup> {
+/// Builds the first-party proxy configuration. With [`ProxyKey::Placeholder`] the collection
+/// route reads the key from `SLIMLYTICS_PROXY_KEY`; [`ProxyKey::Include`] needs `site.proxy_key`.
+pub fn tracking_setup(
+    site: &Site,
+    analytics_origin: &str,
+    proxy_key: ProxyKey,
+) -> Result<TrackingSetup> {
     if !valid_proxy_path(&site.anti_adblock_js_path, true)
         || !valid_proxy_path(&site.anti_adblock_beacon_path, false)
         || site.anti_adblock_js_path == site.anti_adblock_beacon_path
@@ -460,7 +525,22 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
     );
     // The beacon route forwards the visitor's IP, vouched for by the site's proxy key, so
     // locations and visitor IDs reflect the visitor rather than the website's server.
-    let (caddy_client_ip, nginx_client_ip, apache_client_ip) = match site.proxy_key {
+    // Servers without proxy keys return neither the key nor its hint; leave those configs as-is.
+    let keyed = site.proxy_key.is_some() || site.proxy_key_hint.is_some();
+    let key = match proxy_key {
+        _ if !keyed => None,
+        ProxyKey::Placeholder => Some(proxy_key_placeholder(&site.anti_adblock_server)),
+        ProxyKey::Include => Some(
+            site.proxy_key
+                .ok_or_else(|| {
+                    anyhow!(
+                        "the proxy key is only available to site owners and admins with a sites:write token"
+                    )
+                })?
+                .to_string(),
+        ),
+    };
+    let (caddy_client_ip, nginx_client_ip, apache_client_ip) = match &key {
         Some(key) => (
             format!("\n\t\theader_up X-Slimlytics-Client-IP {{client_ip}}\n\t\theader_up X-Slimlytics-Proxy-Key {key}"),
             format!("\n    proxy_set_header X-Slimlytics-Client-IP $remote_addr;\n    proxy_set_header X-Slimlytics-Proxy-Key {key};"),
@@ -518,17 +598,48 @@ pub fn tracking_setup(site: &Site, analytics_origin: &str) -> Result<TrackingSet
         javascript_path: site.anti_adblock_js_path.clone(),
         beacon_path: site.anti_adblock_beacon_path.clone(),
         server_config,
-        snippet: format!(r#"<script async src="{}"></script>"#, site.anti_adblock_js_path),
+        snippet: format!(
+            r#"<script async src="{}"></script>"#,
+            site.anti_adblock_js_path
+        ),
         script_test_url: format!("{website}{}", site.anti_adblock_js_path),
         beacon_test_url: format!("{website}{}", site.anti_adblock_beacon_path),
         server_ingest_url: format!("{analytics}/api/ingest"),
-        proxy_key: site.proxy_key,
-        next_steps: vec![
-            "Install serverConfig in the website's Caddy, Nginx, or Apache configuration and reload the server.".into(),
-            "Add snippet to every page before the closing </body> tag.".into(),
-            "Open scriptTestUrl and beaconTestUrl; both must return HTTP 200.".into(),
-        ],
+        proxy_key_env: PROXY_KEY_ENV,
+        proxy_key_placeholder: key.clone(),
+        proxy_key_hint: site
+            .proxy_key_hint
+            .clone()
+            .or_else(|| site.proxy_key.map(|key| key_hint(&key.to_string()))),
+        proxy_key: if proxy_key == ProxyKey::Include {
+            site.proxy_key
+        } else {
+            None
+        },
+        next_steps: {
+            let mut steps = Vec::new();
+            if keyed && proxy_key == ProxyKey::Placeholder {
+                let placeholder = proxy_key_placeholder(&site.anti_adblock_server);
+                steps.push(format!(
+                    "Set {PROXY_KEY_ENV} in the web server's private environment to the site's proxy key (`slimlytics site keys {}` or the dashboard's Anti-adblock tracking settings). Keep it out of the repository.",
+                    site.domain
+                ));
+                steps.push(match site.anti_adblock_server.as_str() {
+                    "nginx" => format!("Nginx does not read environment variables: render serverConfig with envsubst '{placeholder}' (or the official image's /etc/nginx/templates) before loading it."),
+                    "caddy" => format!("Caddy reads {placeholder} from the environment when the Caddyfile loads."),
+                    _ => format!("Apache substitutes {placeholder} from the environment at startup."),
+                });
+            }
+            steps.push("Install serverConfig in the website's Caddy, Nginx, or Apache configuration and reload the server.".into());
+            steps.push("Add snippet to every page before the closing </body> tag.".into());
+            steps.push("Open scriptTestUrl and beaconTestUrl; both must return HTTP 200.".into());
+            steps
+        },
     })
+}
+
+fn key_hint(key: &str) -> String {
+    format!("…{}", &key[key.len().saturating_sub(4)..])
 }
 
 fn regex_escape(value: &str) -> String {

@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use slimlytics_cli::{
     default_auth_path, find_site, load_auth, normalize_api_url, normalize_domain, save_auth,
-    tracking_setup, AntiAdblockInput, ApiClient, SiteInput, StoredAuth, DEFAULT_API_URL,
+    tracking_setup, AntiAdblockInput, ApiClient, ProxyKey, SiteInput, StoredAuth, DEFAULT_API_URL,
 };
 use std::{
     fs,
@@ -100,6 +100,10 @@ enum SiteCommand {
     Show {
         site: String,
     },
+    #[command(about = "Print a site's write, server, and proxy keys (owners and admins)")]
+    Keys {
+        site: String,
+    },
     Add(AddSiteArgs),
     #[command(about = "Create a domain if absent, then return tracking setup")]
     Ensure(AddSiteArgs),
@@ -123,11 +127,35 @@ struct AddSiteArgs {
     allowed_origins: Vec<String>,
     #[arg(long, value_enum, default_value_t = Server::Caddy)]
     server: Server,
+    #[command(flatten)]
+    proxy_key: ProxyKeyArgs,
+}
+
+#[derive(Args, Clone, Copy)]
+struct ProxyKeyArgs {
+    #[arg(
+        long,
+        help = "Write the real proxy key into serverConfig instead of ${SLIMLYTICS_PROXY_KEY} (owners and admins)"
+    )]
+    include_proxy_key: bool,
+}
+impl ProxyKeyArgs {
+    fn mode(self) -> ProxyKey {
+        if self.include_proxy_key {
+            ProxyKey::Include
+        } else {
+            ProxyKey::Placeholder
+        }
+    }
 }
 
 #[derive(Subcommand)]
 enum TrackingCommand {
-    Show { site: String },
+    Show {
+        site: String,
+        #[command(flatten)]
+        proxy_key: ProxyKeyArgs,
+    },
     Configure(ConfigureTrackingArgs),
 }
 
@@ -140,6 +168,8 @@ struct ConfigureTrackingArgs {
     js_path: Option<String>,
     #[arg(long)]
     beacon_path: Option<String>,
+    #[command(flatten)]
+    proxy_key: ProxyKeyArgs,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -322,6 +352,16 @@ async fn site_command(client: &ApiClient, command: SiteCommand, json: bool) -> R
                 )
             })
         }
+        SiteCommand::Keys { site } => {
+            let sites = client.sites().await?;
+            let selected = find_site(&sites, &site)?;
+            print_value(&client.site_keys(selected.id).await?, json, |keys| {
+                format!(
+                    "{}\nWrite key: {}\nServer key: {}\nProxy key: {}",
+                    selected.domain, keys.write_key, keys.server_write_key, keys.proxy_key
+                )
+            })
+        }
         SiteCommand::Add(args) => provision_site(client, args, false, json).await,
         SiteCommand::Ensure(args) => provision_site(client, args, true, json).await,
         SiteCommand::Delete { site, yes } => {
@@ -380,7 +420,7 @@ async fn provision_site(
     } else {
         site
     };
-    let setup = tracking_setup(&configured, client.base_url())?;
+    let setup = setup_for(client, &configured, args.proxy_key.mode()).await?;
     if json {
         println!(
             "{}",
@@ -404,8 +444,8 @@ async fn provision_site(
 async fn tracking_command(client: &ApiClient, command: TrackingCommand, json: bool) -> Result<()> {
     let sites = client.sites().await?;
     match command {
-        TrackingCommand::Show { site } => {
-            let setup = tracking_setup(find_site(&sites, &site)?, client.base_url())?;
+        TrackingCommand::Show { site, proxy_key } => {
+            let setup = setup_for(client, find_site(&sites, &site)?, proxy_key.mode()).await?;
             print_value(&setup, json, human_setup)
         }
         TrackingCommand::Configure(args) => {
@@ -424,10 +464,25 @@ async fn tracking_command(client: &ApiClient, command: TrackingCommand, json: bo
                     },
                 )
                 .await?;
-            let setup = tracking_setup(&updated, client.base_url())?;
+            let setup = setup_for(client, &updated, args.proxy_key.mode()).await?;
             print_value(&setup, json, human_setup)
         }
     }
+}
+
+/// Tracking setup for `site`; with `--include-proxy-key`, fetches the key when the site
+/// response did not carry it.
+async fn setup_for(
+    client: &ApiClient,
+    site: &slimlytics_cli::Site,
+    mode: ProxyKey,
+) -> Result<slimlytics_cli::TrackingSetup> {
+    if mode == ProxyKey::Include && site.proxy_key.is_none() {
+        let mut keyed = site.clone();
+        keyed.proxy_key = Some(client.site_keys(site.id).await?.proxy_key);
+        return tracking_setup(&keyed, client.base_url(), mode);
+    }
+    tracking_setup(site, client.base_url(), mode)
 }
 
 fn effective_auth(path: &Path, api_override: Option<&str>) -> Result<StoredAuth> {
