@@ -165,6 +165,8 @@
   let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
   let searchConsoleBusy = $state(false);
   let searchConsoleNotice = $state('');
+  // The site the pending DNS record and notice belong to; switching sites clears them.
+  let searchConsoleSetupSite: string | null = null;
   // Bumped by each search load, so a slower, older load never overwrites a newer one.
   let searchLoadGeneration = 0;
   // Bumped by each add, verify, or disconnect, so only the latest one applies its result.
@@ -521,10 +523,11 @@
       searchConsole = status;
       searchReports = reports;
     } else if (view === 'settings') {
-      // A pending DNS record belongs to the site it was issued for.
-      if (searchConsoleProperty?.dnsRecord.name !== site.domain) {
+      // A pending DNS record and notice belong to the site they were issued for.
+      if (searchConsoleSetupSite !== site.id) {
         searchConsoleProperty = null;
         searchConsoleNotice = '';
+        searchConsoleSetupSite = site.id;
       }
       const id = site.id;
       const changes = searchConsoleChanges;
