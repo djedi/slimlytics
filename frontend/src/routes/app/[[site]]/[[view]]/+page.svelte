@@ -165,9 +165,10 @@
   let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
   let searchConsoleBusy = $state(false);
   let searchConsoleNotice = $state('');
-  // Bumped by each search load and each change to the integration, so a slower, older load
-  // never overwrites newer Search Console state.
+  // Bumped by each search load, so a slower, older load never overwrites a newer one.
   let searchLoadGeneration = 0;
+  // Bumped by each add, verify, or disconnect, so only the latest one applies its result.
+  let searchConsoleOp = 0;
   // Bumped when an integration change starts and when it finishes; a load that overlapped one may
   // hold an older status, so it must not overwrite the status the change left behind.
   let searchConsoleChanges = 0;
@@ -641,8 +642,8 @@
   async function addSearchConsoleProperty() {
     if (!site) return;
     const id = site.id;
-    const generation = ++searchLoadGeneration;
-    const current = () => site?.id === id && generation === searchLoadGeneration;
+    const op = ++searchConsoleOp;
+    const current = () => site?.id === id && op === searchConsoleOp;
     searchConsoleChanges++;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
@@ -656,58 +657,57 @@
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
     } finally {
-      searchConsoleChanges++;
-      searchConsoleBusy = false;
+      finishSearchConsoleChange(current());
     }
   }
   async function verifySearchConsoleProperty() {
     if (!site) return;
     const id = site.id;
     const range = days;
-    const generation = ++searchLoadGeneration;
-    const current = () => site?.id === id && generation === searchLoadGeneration;
+    const op = ++searchConsoleOp;
+    const current = () => site?.id === id && op === searchConsoleOp;
     searchConsoleChanges++;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
-    let verified: { propertyUrl: string };
     try {
-      verified = await api.verifySearchConsoleProperty(id);
-    } catch (reason) {
-      if (current())
-        searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
-      searchConsoleChanges++;
-      searchConsoleBusy = false;
-      return;
-    }
-    // Verification is saved; a failed first sync must not leave the card in the setup state.
-    if (current()) {
-      searchConsoleProperty = null;
-      if (searchConsole) searchConsole = { ...searchConsole, propertyUrl: verified.propertyUrl, lastError: null };
-      searchConsoleNotice = 'Verified. Syncing search data…';
-    }
-    try {
-      await api.syncSearchConsole(id, range);
-      if (current())
-        searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
-    } catch (reason) {
-      if (current())
-        searchConsoleNotice = `Verified, but the first sync failed: ${
-          reason instanceof Error ? reason.message : 'unknown error'
-        }. Try Sync now.`;
-    }
-    try {
-      const status = await api.searchConsoleStatus(id);
-      if (current()) searchConsole = status;
-    } catch {
-      /* the next settings load refreshes status */
+      let verified: { propertyUrl: string };
+      try {
+        verified = await api.verifySearchConsoleProperty(id);
+      } catch (reason) {
+        if (current())
+          searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+        return;
+      }
+      // Verification is saved; a failed first sync must not leave the card in the setup state.
+      if (current()) {
+        searchConsoleProperty = null;
+        if (searchConsole) searchConsole = { ...searchConsole, propertyUrl: verified.propertyUrl, lastError: null };
+        searchConsoleNotice = 'Verified. Syncing search data…';
+      }
+      try {
+        await api.syncSearchConsole(id, range);
+        if (current())
+          searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
+      } catch (reason) {
+        if (current())
+          searchConsoleNotice = `Verified, but the first sync failed: ${
+            reason instanceof Error ? reason.message : 'unknown error'
+          }. Try Sync now.`;
+      }
     } finally {
-      searchConsoleChanges++;
-      searchConsoleBusy = false;
+      finishSearchConsoleChange(current());
     }
+  }
+  /** Ends an integration change; loads that overlapped it are discarded, so reload what is shown. */
+  function finishSearchConsoleChange(stillCurrent: boolean) {
+    searchConsoleChanges++;
+    searchConsoleBusy = false;
+    if (stillCurrent && (view === 'search' || view === 'settings'))
+      void refreshViewQuietly().catch(() => {});
   }
   async function disconnectSearchConsole() {
     if (!site || !confirm('Disconnect Search Console and remove its cached metrics?')) return;
-    searchLoadGeneration++;
+    searchConsoleOp++;
     searchConsoleChanges++;
     await api.disconnectSearchConsole(site.id);
     searchConsoleChanges++;
