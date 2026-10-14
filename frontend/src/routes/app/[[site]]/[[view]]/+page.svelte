@@ -488,15 +488,22 @@
     } else if (view === 'goals') goals = await api.goals(site.id);
     else if (view === 'search') {
       const id = site.id;
-      searchConsole = await api.searchConsoleStatus(id);
-      if (searchConsole.connected && searchConsole.propertyUrl) {
+      const range = days;
+      // Never show one site's or range's reports under another's status.
+      searchReports = emptySearchReports();
+      const status = await api.searchConsoleStatus(id);
+      let reports = emptySearchReports();
+      if (status.connected && status.propertyUrl) {
         const rows = await Promise.all(
-          searchDimensions.map((dimension) => api.searchConsoleReport(id, dimension, days))
+          searchDimensions.map((dimension) => api.searchConsoleReport(id, dimension, range))
         );
-        searchReports = Object.fromEntries(
+        reports = Object.fromEntries(
           searchDimensions.map((dimension, index) => [dimension, rows[index]])
         ) as Record<SearchConsoleDimension, SearchConsoleRow[]>;
-      } else searchReports = emptySearchReports();
+      }
+      if (site?.id !== id || days !== range) return;
+      searchConsole = status;
+      searchReports = reports;
     } else if (view === 'settings') {
       // A pending DNS record belongs to the site it was issued for.
       if (searchConsoleProperty?.dnsRecord.name !== site.domain) {
@@ -610,32 +617,46 @@
       loading = false;
     }
   }
+  // Property operations outlive navigation; only the site that started one may show its result.
   async function addSearchConsoleProperty() {
     if (!site) return;
+    const id = site.id;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     try {
-      searchConsoleProperty = await api.addSearchConsoleProperty(site.id);
-      searchConsole = await api.searchConsoleStatus(site.id);
+      const property = await api.addSearchConsoleProperty(id);
+      const status = await api.searchConsoleStatus(id);
+      if (site?.id !== id) return;
+      searchConsoleProperty = property;
+      searchConsole = status;
     } catch (reason) {
-      searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
+      if (site?.id === id)
+        searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
     } finally {
       searchConsoleBusy = false;
     }
   }
   async function verifySearchConsoleProperty() {
     if (!site) return;
+    const id = site.id;
+    const range = days;
+    const current = () => site?.id === id;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     try {
-      await api.verifySearchConsoleProperty(site.id);
-      searchConsoleProperty = null;
-      searchConsoleNotice = 'Verified. Syncing search data…';
-      await api.syncSearchConsole(site.id, days);
+      await api.verifySearchConsoleProperty(id);
+      if (current()) {
+        searchConsoleProperty = null;
+        searchConsoleNotice = 'Verified. Syncing search data…';
+      }
+      await api.syncSearchConsole(id, range);
+      const status = await api.searchConsoleStatus(id);
+      if (!current()) return;
       searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
-      searchConsole = await api.searchConsoleStatus(site.id);
+      searchConsole = status;
     } catch (reason) {
-      searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+      if (current())
+        searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
     } finally {
       searchConsoleBusy = false;
     }
