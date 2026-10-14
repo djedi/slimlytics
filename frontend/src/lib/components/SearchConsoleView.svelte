@@ -77,7 +77,12 @@
   {/if}
 </section>
 
-{#if !ready}
+{#if !status}
+  <section class="panel empty large" aria-busy="true">
+    <Search size={26} aria-hidden="true" />
+    <p class="muted">Loading Search Console…</p>
+  </section>
+{:else if !ready}
   <section class="panel empty large">
     <Search size={26} aria-hidden="true" />
     <h2>

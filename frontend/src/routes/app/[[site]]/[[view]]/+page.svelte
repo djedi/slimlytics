@@ -151,7 +151,12 @@
   let aiReferrers = $state<ReportRow[]>([]);
   let aiCrawlers = $state<ReportRow[]>([]);
   let collectionHealth = $state<CollectionHealth | null>(null);
-  let searchConsole = $state<SearchConsoleStatus | null>(null);
+  // Status and reports are keyed by site (and range), so one site's data can never render
+  // under another; the page only ever reads the selected site's entry.
+  let searchConsoleBySite = $state<Record<string, SearchConsoleStatus>>({});
+  const searchConsole = $derived(site ? (searchConsoleBySite[site.id] ?? null) : null);
+  const setSearchConsole = (id: string, status: SearchConsoleStatus) =>
+    (searchConsoleBySite = { ...searchConsoleBySite, [id]: status });
   const searchDimensions: SearchConsoleDimension[] = ['query', 'page', 'country', 'device', 'date'];
   const emptySearchReports = (): Record<SearchConsoleDimension, SearchConsoleRow[]> => ({
     query: [],
@@ -160,7 +165,10 @@
     device: [],
     date: []
   });
-  let searchReports = $state(emptySearchReports());
+  let searchReportsByKey = $state<Record<string, Record<SearchConsoleDimension, SearchConsoleRow[]>>>({});
+  const searchReports = $derived(
+    (site && searchReportsByKey[`${site.id}:${days}`]) || emptySearchReports()
+  );
   // The DNS record Google needs before a property Slimlytics added can be verified.
   let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
   let searchConsoleBusy = $state(false);
@@ -500,8 +508,6 @@
       const range = days;
       const generation = ++searchLoadGeneration;
       const changes = searchConsoleChanges;
-      // Never show one site's or range's reports under another's status.
-      searchReports = emptySearchReports();
       const status = await api.searchConsoleStatus(id);
       let reports = emptySearchReports();
       if (status.connected && status.propertyUrl) {
@@ -512,16 +518,9 @@
           searchDimensions.map((dimension, index) => [dimension, rows[index]])
         ) as Record<SearchConsoleDimension, SearchConsoleRow[]>;
       }
-      if (
-        generation !== searchLoadGeneration ||
-        changes !== searchConsoleChanges ||
-        view !== 'search' ||
-        site?.id !== id ||
-        days !== range
-      )
-        return;
-      searchConsole = status;
-      searchReports = reports;
+      if (generation !== searchLoadGeneration || changes !== searchConsoleChanges) return;
+      setSearchConsole(id, status);
+      searchReportsByKey = { ...searchReportsByKey, [`${id}:${range}`]: reports };
     } else if (view === 'settings') {
       // A pending DNS record and notice belong to the site they were issued for.
       if (searchConsoleSetupSite !== site.id) {
@@ -537,7 +536,7 @@
         api.searchConsoleStatus(id),
         api.reportSubscriptions(id)
       ]);
-      if (changes === searchConsoleChanges && site?.id === id) searchConsole = status;
+      if (changes === searchConsoleChanges) setSearchConsole(id, status);
     }
   }
   function connectSpy() {
@@ -628,12 +627,13 @@
   }
   async function syncSearchConsole() {
     if (!site) return;
+    const id = site.id;
     loading = true;
     error = '';
     try {
-      await api.syncSearchConsole(site.id, days);
+      await api.syncSearchConsole(id, days);
       if (view === 'search') await refreshViewQuietly();
-      else searchConsole = await api.searchConsoleStatus(site.id);
+      else setSearchConsole(id, await api.searchConsoleStatus(id));
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not sync Search Console.';
     } finally {
@@ -655,7 +655,7 @@
       const status = await api.searchConsoleStatus(id);
       if (!current()) return;
       searchConsoleProperty = property;
-      searchConsole = status;
+      setSearchConsole(id, status);
     } catch (reason) {
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
@@ -684,7 +684,8 @@
       // Verification is saved; a failed first sync must not leave the card in the setup state.
       if (current()) {
         searchConsoleProperty = null;
-        if (searchConsole) searchConsole = { ...searchConsole, propertyUrl: verified.propertyUrl, lastError: null };
+        const previous = searchConsoleBySite[id];
+        if (previous) setSearchConsole(id, { ...previous, propertyUrl: verified.propertyUrl, lastError: null });
         searchConsoleNotice = 'Verified. Syncing search data…';
       }
       try {

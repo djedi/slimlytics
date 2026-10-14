@@ -68,4 +68,15 @@ describe('Search Console view', () => {
     expect(screen.getByRole('link', { name: /Set up in settings/ })).toHaveAttribute('href', '/app/s1/settings');
     expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
   });
+
+  it('shows a loading state until the selected site’s status arrives', () => {
+    render(SearchConsoleView, {
+      status: null,
+      reports: { query: [], page: [], country: [], device: [], date: [] },
+      settingsHref: '/settings',
+      onSync: vi.fn()
+    });
+    expect(screen.getByText('Loading Search Console…')).toBeInTheDocument();
+    expect(screen.queryByText(/isn’t configured/)).not.toBeInTheDocument();
+  });
 });
