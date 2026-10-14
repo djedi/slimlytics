@@ -165,6 +165,9 @@
   let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
   let searchConsoleBusy = $state(false);
   let searchConsoleNotice = $state('');
+  // Bumped by each search load and each change to the integration, so a slower, older load
+  // never overwrites newer Search Console state.
+  let searchLoadGeneration = 0;
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -489,6 +492,7 @@
     else if (view === 'search') {
       const id = site.id;
       const range = days;
+      const generation = ++searchLoadGeneration;
       // Never show one site's or range's reports under another's status.
       searchReports = emptySearchReports();
       const status = await api.searchConsoleStatus(id);
@@ -501,7 +505,8 @@
           searchDimensions.map((dimension, index) => [dimension, rows[index]])
         ) as Record<SearchConsoleDimension, SearchConsoleRow[]>;
       }
-      if (site?.id !== id || days !== range) return;
+      if (generation !== searchLoadGeneration || view !== 'search' || site?.id !== id || days !== range)
+        return;
       searchConsole = status;
       searchReports = reports;
     } else if (view === 'settings') {
@@ -621,6 +626,7 @@
   async function addSearchConsoleProperty() {
     if (!site) return;
     const id = site.id;
+    searchLoadGeneration++;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     try {
@@ -641,6 +647,7 @@
     const id = site.id;
     const range = days;
     const current = () => site?.id === id;
+    searchLoadGeneration++;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     let verified: { propertyUrl: string };
@@ -679,6 +686,7 @@
   }
   async function disconnectSearchConsole() {
     if (!site || !confirm('Disconnect Search Console and remove its cached metrics?')) return;
+    searchLoadGeneration++;
     await api.disconnectSearchConsole(site.id);
     searchConsoleProperty = null;
     searchConsoleNotice = '';
