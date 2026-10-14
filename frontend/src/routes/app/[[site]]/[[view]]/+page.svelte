@@ -168,6 +168,9 @@
   // Bumped by each search load and each change to the integration, so a slower, older load
   // never overwrites newer Search Console state.
   let searchLoadGeneration = 0;
+  // Bumped when an integration change starts and when it finishes; a load that overlapped one may
+  // hold an older status, so it must not overwrite the status the change left behind.
+  let searchConsoleChanges = 0;
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -493,6 +496,7 @@
       const id = site.id;
       const range = days;
       const generation = ++searchLoadGeneration;
+      const changes = searchConsoleChanges;
       // Never show one site's or range's reports under another's status.
       searchReports = emptySearchReports();
       const status = await api.searchConsoleStatus(id);
@@ -505,7 +509,13 @@
           searchDimensions.map((dimension, index) => [dimension, rows[index]])
         ) as Record<SearchConsoleDimension, SearchConsoleRow[]>;
       }
-      if (generation !== searchLoadGeneration || view !== 'search' || site?.id !== id || days !== range)
+      if (
+        generation !== searchLoadGeneration ||
+        changes !== searchConsoleChanges ||
+        view !== 'search' ||
+        site?.id !== id ||
+        days !== range
+      )
         return;
       searchConsole = status;
       searchReports = reports;
@@ -515,11 +525,15 @@
         searchConsoleProperty = null;
         searchConsoleNotice = '';
       }
-      [collectionHealth, searchConsole, reportSubscriptions] = await Promise.all([
-        api.collectionHealth(site.id),
-        api.searchConsoleStatus(site.id),
-        api.reportSubscriptions(site.id)
+      const id = site.id;
+      const changes = searchConsoleChanges;
+      let status: SearchConsoleStatus;
+      [collectionHealth, status, reportSubscriptions] = await Promise.all([
+        api.collectionHealth(id),
+        api.searchConsoleStatus(id),
+        api.reportSubscriptions(id)
       ]);
+      if (changes === searchConsoleChanges && site?.id === id) searchConsole = status;
     }
   }
   function connectSpy() {
@@ -629,6 +643,7 @@
     const id = site.id;
     const generation = ++searchLoadGeneration;
     const current = () => site?.id === id && generation === searchLoadGeneration;
+    searchConsoleChanges++;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     try {
@@ -641,6 +656,7 @@
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
     } finally {
+      searchConsoleChanges++;
       searchConsoleBusy = false;
     }
   }
@@ -650,6 +666,7 @@
     const range = days;
     const generation = ++searchLoadGeneration;
     const current = () => site?.id === id && generation === searchLoadGeneration;
+    searchConsoleChanges++;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     let verified: { propertyUrl: string };
@@ -658,6 +675,7 @@
     } catch (reason) {
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+      searchConsoleChanges++;
       searchConsoleBusy = false;
       return;
     }
@@ -683,13 +701,16 @@
     } catch {
       /* the next settings load refreshes status */
     } finally {
+      searchConsoleChanges++;
       searchConsoleBusy = false;
     }
   }
   async function disconnectSearchConsole() {
     if (!site || !confirm('Disconnect Search Console and remove its cached metrics?')) return;
     searchLoadGeneration++;
+    searchConsoleChanges++;
     await api.disconnectSearchConsole(site.id);
+    searchConsoleChanges++;
     searchConsoleProperty = null;
     searchConsoleNotice = '';
     searchConsole = await api.searchConsoleStatus(site.id);
