@@ -169,12 +169,16 @@
   const searchReports = $derived(
     (site && searchReportsByKey[`${site.id}:${days}`]) || emptySearchReports()
   );
-  // The DNS record Google needs before a property Slimlytics added can be verified.
-  let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
+  // The DNS record awaiting verification and the latest setup notice, per site like the status.
+  let searchConsolePropertyBySite = $state<Record<string, SearchConsoleProperty | null>>({});
+  let searchConsoleNoticeBySite = $state<Record<string, string>>({});
+  const searchConsoleProperty = $derived(site ? (searchConsolePropertyBySite[site.id] ?? null) : null);
+  const searchConsoleNotice = $derived(site ? (searchConsoleNoticeBySite[site.id] ?? '') : '');
   let searchConsoleBusy = $state(false);
-  let searchConsoleNotice = $state('');
-  // The site the pending DNS record and notice belong to; switching sites clears them.
-  let searchConsoleSetupSite: string | null = null;
+  const setSearchConsoleProperty = (id: string, property: SearchConsoleProperty | null) =>
+    (searchConsolePropertyBySite = { ...searchConsolePropertyBySite, [id]: property });
+  const setSearchConsoleNotice = (id: string, notice: string) =>
+    (searchConsoleNoticeBySite = { ...searchConsoleNoticeBySite, [id]: notice });
   // Bumped by each search load, so a slower, older load never overwrites a newer one.
   let searchLoadGeneration = 0;
   // Bumped by each add, verify, or disconnect, so only the latest one applies its result.
@@ -522,12 +526,6 @@
       setSearchConsole(id, status);
       searchReportsByKey = { ...searchReportsByKey, [`${id}:${range}`]: reports };
     } else if (view === 'settings') {
-      // A pending DNS record and notice belong to the site they were issued for.
-      if (searchConsoleSetupSite !== site.id) {
-        searchConsoleProperty = null;
-        searchConsoleNotice = '';
-        searchConsoleSetupSite = site.id;
-      }
       const id = site.id;
       const changes = searchConsoleChanges;
       let status: SearchConsoleStatus;
@@ -640,25 +638,25 @@
       loading = false;
     }
   }
-  // Property operations outlive navigation and integration changes; only the latest operation on the
-  // still-selected site may show its result.
+  // Property operations outlive navigation; their results are stored under the site they ran for.
   async function addSearchConsoleProperty() {
     if (!site) return;
     const id = site.id;
     const op = ++searchConsoleOp;
-    const current = () => site?.id === id && op === searchConsoleOp;
+    // Results are stored per site, so only a newer operation or a disconnect supersedes this one.
+    const current = () => op === searchConsoleOp;
     searchConsoleChanges++;
     searchConsoleBusy = true;
-    searchConsoleNotice = '';
+    setSearchConsoleNotice(id, '');
     try {
       const property = await api.addSearchConsoleProperty(id);
       const status = await api.searchConsoleStatus(id);
       if (!current()) return;
-      searchConsoleProperty = property;
+      setSearchConsoleProperty(id, property);
       setSearchConsole(id, status);
     } catch (reason) {
       if (current())
-        searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
+        setSearchConsoleNotice(id, reason instanceof Error ? reason.message : 'Could not add the property.');
     } finally {
       finishSearchConsoleChange(op);
     }
@@ -668,35 +666,36 @@
     const id = site.id;
     const range = days;
     const op = ++searchConsoleOp;
-    const current = () => site?.id === id && op === searchConsoleOp;
+    // Results are stored per site, so only a newer operation or a disconnect supersedes this one.
+    const current = () => op === searchConsoleOp;
     searchConsoleChanges++;
     searchConsoleBusy = true;
-    searchConsoleNotice = '';
+    setSearchConsoleNotice(id, '');
     try {
       let verified: { propertyUrl: string };
       try {
         verified = await api.verifySearchConsoleProperty(id);
       } catch (reason) {
         if (current())
-          searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+          setSearchConsoleNotice(id, reason instanceof Error ? reason.message : 'Could not verify the property.');
         return;
       }
       // Verification is saved; a failed first sync must not leave the card in the setup state.
       if (current()) {
-        searchConsoleProperty = null;
+        setSearchConsoleProperty(id, null);
         const previous = searchConsoleBySite[id];
         if (previous) setSearchConsole(id, { ...previous, propertyUrl: verified.propertyUrl, lastError: null });
-        searchConsoleNotice = 'Verified. Syncing search data…';
+        setSearchConsoleNotice(id, 'Verified. Syncing search data…');
       }
       try {
         await api.syncSearchConsole(id, range);
         if (current())
-          searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
+          setSearchConsoleNotice(id, 'Verified and synced. New properties can take a few days to show data.');
       } catch (reason) {
         if (current())
-          searchConsoleNotice = `Verified, but the first sync failed: ${
+          setSearchConsoleNotice(id, `Verified, but the first sync failed: ${
             reason instanceof Error ? reason.message : 'unknown error'
-          }. Try Sync now.`;
+          }. Try Sync now.`);
       }
     } finally {
       finishSearchConsoleChange(op);
@@ -718,10 +717,8 @@
     searchConsoleChanges++;
     try {
       await api.disconnectSearchConsole(id);
-      if (site?.id === id) {
-        searchConsoleProperty = null;
-        searchConsoleNotice = '';
-      }
+      setSearchConsoleProperty(id, null);
+      setSearchConsoleNotice(id, '');
     } finally {
       finishSearchConsoleChange();
     }
