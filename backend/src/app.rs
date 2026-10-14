@@ -2902,8 +2902,12 @@ async fn refresh_google_access_token(
     .access_token)
 }
 
-/// The site's domain and a fresh Google access token for its Search Console connection.
-async fn search_console_access(state: &AppState, site: Uuid) -> Result<(String, String), ApiError> {
+/// The site's domain, a fresh Google access token for its Search Console connection, and the
+/// stored token ciphertext, which identifies that connection (each connect re-encrypts it).
+async fn search_console_access(
+    state: &AppState,
+    site: Uuid,
+) -> Result<(String, String, String), ApiError> {
     let row: Option<(String, String)> = sqlx::query_as(
         "SELECT s.domain,i.refresh_token_encrypted
          FROM search_console_integrations i JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
@@ -2913,10 +2917,8 @@ async fn search_console_access(state: &AppState, site: Uuid) -> Result<(String, 
     .await?;
     let (domain, encrypted) =
         row.ok_or_else(|| ApiError::BadRequest("Connect Search Console first".into()))?;
-    Ok((
-        domain,
-        refresh_google_access_token(state, &encrypted).await?,
-    ))
+    let access_token = refresh_google_access_token(state, &encrypted).await?;
+    Ok((domain, access_token, encrypted))
 }
 
 /// Maps a rejected Google API call to a message the user can act on. Connections made before
@@ -2955,7 +2957,7 @@ async fn add_search_console_property(
     Path(site): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     require_site(&s.pool, u, site, true).await?;
-    let (domain, access_token) = search_console_access(&s, site).await?;
+    let (domain, access_token, _) = search_console_access(&s, site).await?;
     let property = domain_property(&domain);
     google_api_response(
         s.http
@@ -3004,7 +3006,7 @@ async fn verify_search_console_property(
     Path(site): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     require_site(&s.pool, u, site, true).await?;
-    let (domain, access_token) = search_console_access(&s, site).await?;
+    let (domain, access_token, connection) = search_console_access(&s, site).await?;
     let request = verification_request(&domain);
     google_api_response(
         s.http
@@ -3019,14 +3021,27 @@ async fn verify_search_console_property(
     )
     .await?;
     let property = domain_property(&domain);
-    sqlx::query(
-        "UPDATE search_console_integrations
-         SET property_url=$2,last_error=NULL,updated_at=now() WHERE site_id=$1",
+    // Only the connection that was verified may take the property: a disconnect, reconnect, or
+    // domain change while Google was checking leaves it untouched.
+    let updated = sqlx::query(
+        "UPDATE search_console_integrations i
+         SET property_url=$2,last_error=NULL,updated_at=now()
+         FROM sites s
+         WHERE i.site_id=$1 AND s.id=i.site_id AND i.refresh_token_encrypted=$3 AND s.domain=$4",
     )
     .bind(site)
     .bind(&property)
+    .bind(&connection)
+    .bind(&domain)
     .execute(&s.pool)
-    .await?;
+    .await?
+    .rows_affected();
+    if updated == 0 {
+        return Err(ApiError::BadRequest(
+            "Search Console was reconnected or the site changed during verification; verify again"
+                .into(),
+        ));
+    }
     Ok(Json(json!({"propertyUrl":property,"verified":true})))
 }
 
