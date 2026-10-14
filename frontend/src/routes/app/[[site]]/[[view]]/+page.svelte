@@ -643,20 +643,36 @@
     const current = () => site?.id === id;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
+    let verified: { propertyUrl: string };
     try {
-      await api.verifySearchConsoleProperty(id);
-      if (current()) {
-        searchConsoleProperty = null;
-        searchConsoleNotice = 'Verified. Syncing search data…';
-      }
-      await api.syncSearchConsole(id, range);
-      const status = await api.searchConsoleStatus(id);
-      if (!current()) return;
-      searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
-      searchConsole = status;
+      verified = await api.verifySearchConsoleProperty(id);
     } catch (reason) {
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+      searchConsoleBusy = false;
+      return;
+    }
+    // Verification is saved; a failed first sync must not leave the card in the setup state.
+    if (current()) {
+      searchConsoleProperty = null;
+      if (searchConsole) searchConsole = { ...searchConsole, propertyUrl: verified.propertyUrl, lastError: null };
+      searchConsoleNotice = 'Verified. Syncing search data…';
+    }
+    try {
+      await api.syncSearchConsole(id, range);
+      if (current())
+        searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
+    } catch (reason) {
+      if (current())
+        searchConsoleNotice = `Verified, but the first sync failed: ${
+          reason instanceof Error ? reason.message : 'unknown error'
+        }. Try Sync now.`;
+    }
+    try {
+      const status = await api.searchConsoleStatus(id);
+      if (current()) searchConsole = status;
+    } catch {
+      /* the next settings load refreshes status */
     } finally {
       searchConsoleBusy = false;
     }
