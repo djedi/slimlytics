@@ -22,8 +22,8 @@ describe('ApiClient', () => {
     expect(sites[0].overview?.trend).toHaveLength(28);
     await expect(api.journeys('northstar')).resolves.toEqual([]);
     await expect(api.searchConsoleStatus('northstar')).resolves.toMatchObject({
-      configured: false,
-      connected: false
+      configured: true,
+      connected: true
     });
   });
 
@@ -157,6 +157,33 @@ describe('ApiClient', () => {
 
     expect(fetcher.mock.calls[2][0]).toMatch(/^\/api\/sites\/s1\/integrations\/search-console\/sync\?from=/);
     expect(fetcher.mock.calls[3][0]).toContain('dimension=query');
+  });
+
+  it('adds and verifies the site as a Search Console domain property', async () => {
+    const added = {
+      propertyUrl: 'sc-domain:example.com',
+      verificationMethod: 'DNS_TXT',
+      dnsRecord: { type: 'TXT', name: 'example.com', value: 'google-site-verification=abc' }
+    };
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(added), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ propertyUrl: 'sc-domain:example.com', verified: true }), { status: 200 }));
+    const api = new ApiClient('/api', fetcher, false);
+
+    await expect(api.addSearchConsoleProperty('s1')).resolves.toEqual(added);
+    await expect(api.verifySearchConsoleProperty('s1')).resolves.toMatchObject({ verified: true });
+
+    expect(fetcher.mock.calls[0][0]).toBe('/api/sites/s1/integrations/search-console/property');
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+    expect(fetcher.mock.calls[1][0]).toBe('/api/sites/s1/integrations/search-console/property/verify');
+    expect(fetcher.mock.calls[1][1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('shows sample Search Console data in demo mode', async () => {
+    const api = new ApiClient('/api', vi.fn().mockRejectedValue(new Error('offline')), true);
+    const queries = await api.searchConsoleReport('northstar', 'query', 28);
+    expect(queries.length).toBeGreaterThan(0);
+    expect(queries[0]).toEqual(expect.objectContaining({ clicks: expect.any(Number), impressions: expect.any(Number) }));
   });
 
   it('manages signed scheduled marketing briefs', async () => {

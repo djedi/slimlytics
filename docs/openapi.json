@@ -3849,6 +3849,40 @@
         }
       }
     },
+    "/api/sites/{siteId}/integrations/search-console/property": {
+      "post": {
+        "tags": ["Reporting"],
+        "summary": "Add the site to Search Console as a domain property",
+        "description": "Adds `sc-domain:{domain}` to the connected Google account and returns the DNS TXT record Google needs to verify it.",
+        "operationId": "addSearchConsoleProperty",
+        "parameters": [{"$ref": "#/components/parameters/SiteId"}],
+        "responses": {
+          "200": {"description": "Added property and its DNS TXT verification record"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
+    "/api/sites/{siteId}/integrations/search-console/property/verify": {
+      "post": {
+        "tags": ["Reporting"],
+        "summary": "Verify the site's Search Console domain property",
+        "description": "Asks Google to check the DNS TXT record and, once verified, uses the property for syncs.",
+        "operationId": "verifySearchConsoleProperty",
+        "parameters": [{"$ref": "#/components/parameters/SiteId"}],
+        "responses": {
+          "200": {"description": "Verified property"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "500": {"$ref": "#/components/responses/InternalError"}
+        }
+      }
+    },
     "/api/sites/{siteId}/reports/search-console": {
       "get": {
         "tags": ["Reporting"],

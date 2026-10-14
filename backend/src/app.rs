@@ -25,8 +25,9 @@ use crate::{
     privacy::sanitize_url,
     reporting::{date_bounds, DateBounds},
     search_console::{
-        authorization_url, decrypt_token, encrypt_token, oauth_state, preferred_property,
-        state_hash, SearchConsoleConfig,
+        authorization_url, decrypt_token, domain_property, encrypt_token, oauth_state,
+        preferred_property, site_resource_url, state_hash, verification_request,
+        verified_property_urls, SearchConsoleConfig,
     },
     server_ingest::{validate_server_event, ServerEventBatch},
     site_icon::{fetch_favicon, normalize_color},
@@ -444,6 +445,14 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/sites/{site_id}/integrations/search-console/sync",
             post(sync_search_console),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/search-console/property",
+            post(add_search_console_property),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/search-console/property/verify",
+            post(verify_search_console_property),
         )
         .route(
             "/api/sites/{site_id}/reports/search-console",
@@ -2698,6 +2707,8 @@ struct GoogleSitesResponse {
 #[serde(rename_all = "camelCase")]
 struct GoogleSiteEntry {
     site_url: String,
+    #[serde(default)]
+    permission_level: String,
 }
 
 async fn google_token_request(
@@ -2787,11 +2798,12 @@ async fn search_console_callback(
         .bind(site)
         .fetch_one(&s.pool)
         .await?;
-    let property_urls: Vec<String> = sites
-        .site_entry
-        .into_iter()
-        .map(|entry| entry.site_url)
-        .collect();
+    let property_urls = verified_property_urls(
+        sites
+            .site_entry
+            .into_iter()
+            .map(|entry| (entry.site_url, entry.permission_level)),
+    );
     let property = preferred_property(&domain, &property_urls);
     let encrypted =
         encrypt_token(&config.encryption_key, &refresh_token).map_err(|_| ApiError::Internal)?;
@@ -2888,6 +2900,149 @@ async fn refresh_google_access_token(
     )
     .await?
     .access_token)
+}
+
+/// The site's domain, a fresh Google access token for its Search Console connection, and the
+/// stored token ciphertext, which identifies that connection (each connect re-encrypts it).
+async fn search_console_access(
+    state: &AppState,
+    site: Uuid,
+) -> Result<(String, String, String), ApiError> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT s.domain,i.refresh_token_encrypted
+         FROM search_console_integrations i JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (domain, encrypted) =
+        row.ok_or_else(|| ApiError::BadRequest("Connect Search Console first".into()))?;
+    let access_token = refresh_google_access_token(state, &encrypted).await?;
+    Ok((domain, access_token, encrypted))
+}
+
+/// Maps a rejected Google API call to a message the user can act on. Connections made before
+/// Slimlytics could add properties hold a read-only grant, which Google answers with 403.
+async fn google_api_response(
+    result: Result<reqwest::Response, reqwest::Error>,
+    action: &str,
+    rejected: &str,
+) -> Result<reqwest::Response, ApiError> {
+    let response = result.map_err(|error| {
+        tracing::warn!(%error, action, "Google API request failed");
+        ApiError::Internal
+    })?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(response);
+    }
+    tracing::warn!(%status, action, "Google API request rejected");
+    Err(ApiError::BadRequest(if status == StatusCode::FORBIDDEN {
+        "Google denied permission. Reconnect Search Console to let Slimlytics add and verify properties."
+            .into()
+    } else {
+        rejected.into()
+    }))
+}
+
+#[derive(Deserialize)]
+struct GoogleVerificationToken {
+    token: String,
+}
+
+#[axum::debug_handler]
+async fn add_search_console_property(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let (domain, access_token, _) = search_console_access(&s, site).await?;
+    let property = domain_property(&domain);
+    google_api_response(
+        s.http
+            .put(site_resource_url(&property))
+            .bearer_auth(&access_token)
+            .header(header::CONTENT_LENGTH, "0")
+            .send()
+            .await,
+        "add property",
+        "Google Search Console did not accept the property",
+    )
+    .await?;
+    let verification: GoogleVerificationToken = google_api_response(
+        s.http
+            .post("https://www.googleapis.com/siteVerification/v1/token")
+            .bearer_auth(&access_token)
+            .json(&verification_request(&domain))
+            .send()
+            .await,
+        "verification token",
+        "Google did not issue a verification token",
+    )
+    .await?
+    .json()
+    .await
+    .map_err(|_| ApiError::Internal)?;
+    sqlx::query(
+        "UPDATE search_console_integrations
+         SET last_error='Add the DNS TXT record, then verify the property',updated_at=now()
+         WHERE site_id=$1 AND property_url IS NULL",
+    )
+    .bind(site)
+    .execute(&s.pool)
+    .await?;
+    Ok(Json(json!({
+        "propertyUrl":property,
+        "verificationMethod":"DNS_TXT",
+        "dnsRecord":{"type":"TXT","name":domain,"value":verification.token}
+    })))
+}
+
+#[axum::debug_handler]
+async fn verify_search_console_property(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let (domain, access_token, connection) = search_console_access(&s, site).await?;
+    let request = verification_request(&domain);
+    google_api_response(
+        s.http
+            .post("https://www.googleapis.com/siteVerification/v1/webResource")
+            .query(&[("verificationMethod", "DNS_TXT")])
+            .bearer_auth(&access_token)
+            .json(&json!({"site":request["site"]}))
+            .send()
+            .await,
+        "verify property",
+        "Google could not find the DNS TXT record yet. DNS changes can take a while to appear; try again shortly.",
+    )
+    .await?;
+    let property = domain_property(&domain);
+    // Only the connection that was verified may take the property: a disconnect, reconnect, or
+    // domain change while Google was checking leaves it untouched.
+    let updated = sqlx::query(
+        "UPDATE search_console_integrations i
+         SET property_url=$2,last_error=NULL,updated_at=now()
+         FROM sites s
+         WHERE i.site_id=$1 AND s.id=i.site_id AND i.refresh_token_encrypted=$3 AND s.domain=$4",
+    )
+    .bind(site)
+    .bind(&property)
+    .bind(&connection)
+    .bind(&domain)
+    .execute(&s.pool)
+    .await?
+    .rows_affected();
+    if updated == 0 {
+        return Err(ApiError::BadRequest(
+            "Search Console was reconnected or the site changed during verification; verify again"
+                .into(),
+        ));
+    }
+    Ok(Json(json!({"propertyUrl":property,"verified":true})))
 }
 
 #[derive(Deserialize)]

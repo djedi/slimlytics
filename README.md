@@ -30,7 +30,7 @@ Plan limits and current prices are on the [pricing page](https://slimlytics.com/
 - **Private by default.** No tracking cookies, no cross-site profiles, no form capture. Sensitive query parameters are redacted before storage, and Do Not Track and Global Privacy Control are respected.
 - **Real-time Spy.** Watch visitors arrive and move through your site as it happens.
 - **Reports that matter.** Pages, referrers, countries, devices, campaigns, visitors, and custom events, ranked and exportable to CSV.
-- **Goals and marketing insights.** Goals, UTM attribution, journeys, sequential funnels, revenue, anomalies, AI referrals and crawlers, and optional Google Search Console sync.
+- **Goals and marketing insights.** Goals, UTM attribution, journeys, sequential funnels, revenue, anomalies, AI referrals and crawlers, and optional Google Search Console sync with a dashboard view of queries, pages, countries, and devices. Slimlytics can add and DNS-verify a site's Search Console property for you.
 - **First-party delivery.** Serve the tracker from your own domain with generated Caddy, Nginx, or Apache routes, so ad blockers break it less often.
 - **Agent-native.** A remote MCP server with browser OAuth lets Claude Code, Codex, Hermes, or any MCP client create your site, wire up tracking, and verify it.
 - **Fast and small.** A Rust API, PostgreSQL, and a Svelte dashboard with light, dark, and system themes.

@@ -59,6 +59,9 @@
     type Overview,
     type ReportRow,
     type ReportSubscription,
+    type SearchConsoleDimension,
+    type SearchConsoleProperty,
+    type SearchConsoleRow,
     type SearchConsoleStatus,
     type BillingStatus,
     type Site,
@@ -73,6 +76,7 @@
   import ReportTable from '$lib/components/ReportTable.svelte';
   import TrafficChart from '$lib/components/TrafficChart.svelte';
   import InsightsView from '$lib/components/insights/InsightsView.svelte';
+  import SearchConsoleView from '$lib/components/SearchConsoleView.svelte';
   import type { IconDimension } from '$lib/components/DimensionIcon.svelte';
   import SiteIcon from '$lib/components/SiteIcon.svelte';
   import SiteIconSettingsCard from '$lib/components/SiteIconSettings.svelte';
@@ -102,6 +106,7 @@
     { id: 'browsers', label: 'Browsers', icon: Compass },
     { id: 'operating-systems', label: 'Operating systems', icon: Smartphone },
     { id: 'campaigns', label: 'Campaigns', icon: Zap },
+    { id: 'search', label: 'Search Console', icon: Search },
     { id: 'visitors', label: 'Visitors', icon: Users },
     { id: 'goals', label: 'Goals', icon: GoalIcon },
     { id: 'settings', label: 'Settings', icon: Settings }
@@ -146,7 +151,37 @@
   let aiReferrers = $state<ReportRow[]>([]);
   let aiCrawlers = $state<ReportRow[]>([]);
   let collectionHealth = $state<CollectionHealth | null>(null);
-  let searchConsole = $state<SearchConsoleStatus | null>(null);
+  // Status and reports are keyed by site (and range), so one site's data can never render
+  // under another; the page only ever reads the selected site's entry.
+  let searchConsoleBySite = $state<Record<string, SearchConsoleStatus>>({});
+  const searchConsole = $derived(site ? (searchConsoleBySite[site.id] ?? null) : null);
+  const setSearchConsole = (id: string, status: SearchConsoleStatus) =>
+    (searchConsoleBySite = { ...searchConsoleBySite, [id]: status });
+  const searchDimensions: SearchConsoleDimension[] = ['query', 'page', 'country', 'device', 'date'];
+  const emptySearchReports = (): Record<SearchConsoleDimension, SearchConsoleRow[]> => ({
+    query: [],
+    page: [],
+    country: [],
+    device: [],
+    date: []
+  });
+  let searchReportsByKey = $state<Record<string, Record<SearchConsoleDimension, SearchConsoleRow[]>>>({});
+  const searchReports = $derived(
+    (site && searchReportsByKey[`${site.id}:${days}`]) || emptySearchReports()
+  );
+  // The DNS record Google needs before a property Slimlytics added can be verified.
+  let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
+  let searchConsoleBusy = $state(false);
+  let searchConsoleNotice = $state('');
+  // The site the pending DNS record and notice belong to; switching sites clears them.
+  let searchConsoleSetupSite: string | null = null;
+  // Bumped by each search load, so a slower, older load never overwrites a newer one.
+  let searchLoadGeneration = 0;
+  // Bumped by each add, verify, or disconnect, so only the latest one applies its result.
+  let searchConsoleOp = 0;
+  // Bumped when an integration change starts and when it finishes; a load that overlapped one may
+  // hold an older status, so it must not overwrite the status the change left behind.
+  let searchConsoleChanges = 0;
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -194,7 +229,7 @@
         void refreshSitesQuietly().catch(() => {});
         void refreshBillingQuietly();
       }
-      else if (view !== 'settings') void refreshViewQuietly().catch(() => {});
+      else if (view !== 'settings' && view !== 'search') void refreshViewQuietly().catch(() => {});
     };
     const interval = window.setInterval(refresh, 15_000);
     const onFocus = () => refresh();
@@ -468,12 +503,41 @@
       visitors = await api.visitors(site.id);
       if (resetStream || !source || source.readyState === EventSource.CLOSED) connectSpy();
     } else if (view === 'goals') goals = await api.goals(site.id);
-    else if (view === 'settings')
-      [collectionHealth, searchConsole, reportSubscriptions] = await Promise.all([
-        api.collectionHealth(site.id),
-        api.searchConsoleStatus(site.id),
-        api.reportSubscriptions(site.id)
+    else if (view === 'search') {
+      const id = site.id;
+      const range = days;
+      const generation = ++searchLoadGeneration;
+      const changes = searchConsoleChanges;
+      const status = await api.searchConsoleStatus(id);
+      let reports = emptySearchReports();
+      if (status.connected && status.propertyUrl) {
+        const rows = await Promise.all(
+          searchDimensions.map((dimension) => api.searchConsoleReport(id, dimension, range))
+        );
+        reports = Object.fromEntries(
+          searchDimensions.map((dimension, index) => [dimension, rows[index]])
+        ) as Record<SearchConsoleDimension, SearchConsoleRow[]>;
+      }
+      if (generation !== searchLoadGeneration || changes !== searchConsoleChanges) return;
+      setSearchConsole(id, status);
+      searchReportsByKey = { ...searchReportsByKey, [`${id}:${range}`]: reports };
+    } else if (view === 'settings') {
+      // A pending DNS record and notice belong to the site they were issued for.
+      if (searchConsoleSetupSite !== site.id) {
+        searchConsoleProperty = null;
+        searchConsoleNotice = '';
+        searchConsoleSetupSite = site.id;
+      }
+      const id = site.id;
+      const changes = searchConsoleChanges;
+      let status: SearchConsoleStatus;
+      [collectionHealth, status, reportSubscriptions] = await Promise.all([
+        api.collectionHealth(id),
+        api.searchConsoleStatus(id),
+        api.reportSubscriptions(id)
       ]);
+      if (changes === searchConsoleChanges) setSearchConsole(id, status);
+    }
   }
   function connectSpy() {
     if (!site || paused || demo || typeof EventSource === 'undefined') {
@@ -563,18 +627,104 @@
   }
   async function syncSearchConsole() {
     if (!site) return;
+    const id = site.id;
     loading = true;
+    error = '';
     try {
-      await api.syncSearchConsole(site.id, days);
-      searchConsole = await api.searchConsoleStatus(site.id);
+      await api.syncSearchConsole(id, days);
+      if (view === 'search') await refreshViewQuietly();
+      else setSearchConsole(id, await api.searchConsoleStatus(id));
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not sync Search Console.';
     } finally {
       loading = false;
     }
   }
+  // Property operations outlive navigation and integration changes; only the latest operation on the
+  // still-selected site may show its result.
+  async function addSearchConsoleProperty() {
+    if (!site) return;
+    const id = site.id;
+    const op = ++searchConsoleOp;
+    const current = () => site?.id === id && op === searchConsoleOp;
+    searchConsoleChanges++;
+    searchConsoleBusy = true;
+    searchConsoleNotice = '';
+    try {
+      const property = await api.addSearchConsoleProperty(id);
+      const status = await api.searchConsoleStatus(id);
+      if (!current()) return;
+      searchConsoleProperty = property;
+      setSearchConsole(id, status);
+    } catch (reason) {
+      if (current())
+        searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
+    } finally {
+      finishSearchConsoleChange(op);
+    }
+  }
+  async function verifySearchConsoleProperty() {
+    if (!site) return;
+    const id = site.id;
+    const range = days;
+    const op = ++searchConsoleOp;
+    const current = () => site?.id === id && op === searchConsoleOp;
+    searchConsoleChanges++;
+    searchConsoleBusy = true;
+    searchConsoleNotice = '';
+    try {
+      let verified: { propertyUrl: string };
+      try {
+        verified = await api.verifySearchConsoleProperty(id);
+      } catch (reason) {
+        if (current())
+          searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+        return;
+      }
+      // Verification is saved; a failed first sync must not leave the card in the setup state.
+      if (current()) {
+        searchConsoleProperty = null;
+        const previous = searchConsoleBySite[id];
+        if (previous) setSearchConsole(id, { ...previous, propertyUrl: verified.propertyUrl, lastError: null });
+        searchConsoleNotice = 'Verified. Syncing search data…';
+      }
+      try {
+        await api.syncSearchConsole(id, range);
+        if (current())
+          searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
+      } catch (reason) {
+        if (current())
+          searchConsoleNotice = `Verified, but the first sync failed: ${
+            reason instanceof Error ? reason.message : 'unknown error'
+          }. Try Sync now.`;
+      }
+    } finally {
+      finishSearchConsoleChange(op);
+    }
+  }
+  /**
+   * Ends an integration change. Loads that overlapped it are discarded, whichever site they were
+   * for, so always reload what is shown. `op` is omitted by disconnect, which supersedes every op.
+   */
+  function finishSearchConsoleChange(op?: number) {
+    searchConsoleChanges++;
+    if (op === undefined || op === searchConsoleOp) searchConsoleBusy = false;
+    if (site && (view === 'search' || view === 'settings')) void refreshViewQuietly().catch(() => {});
+  }
   async function disconnectSearchConsole() {
     if (!site || !confirm('Disconnect Search Console and remove its cached metrics?')) return;
-    await api.disconnectSearchConsole(site.id);
-    searchConsole = await api.searchConsoleStatus(site.id);
+    const id = site.id;
+    searchConsoleOp++;
+    searchConsoleChanges++;
+    try {
+      await api.disconnectSearchConsole(id);
+      if (site?.id === id) {
+        searchConsoleProperty = null;
+        searchConsoleNotice = '';
+      }
+    } finally {
+      finishSearchConsoleChange();
+    }
   }
   async function createBrief(event: SubmitEvent) {
     event.preventDefault();
@@ -988,6 +1138,14 @@
           linkHosts={view === 'referrers'}
           iconDimension={iconDimensions.find((dimension) => dimension === view)}
         />
+      {:else if view === 'search'}
+        <SearchConsoleView
+          status={searchConsole}
+          reports={searchReports}
+          settingsHref={appHref(site.id, 'settings', days)}
+          onSync={() => void syncSearchConsole()}
+          syncing={loading}
+        />
       {:else if view === 'visitors'}
         <section class="panel">
           <div class="panel-head">
@@ -1207,7 +1365,10 @@
             {#if !searchConsole?.configured}
               <p class="muted">OAuth credentials are not configured on this deployment.</p>
             {:else if !searchConsole.connected}
-              <p class="muted">Connect verified search properties for query and page performance.</p>
+              <p class="muted">
+                Connect your Google account to show query and page performance. Slimlytics asks for
+                permission to add and verify this site in Search Console if it isn’t there yet.
+              </p>
               <div class="test-links">
                 <button class="primary" onclick={() => void connectSearchConsole()}>Connect</button>
               </div>
@@ -1224,9 +1385,42 @@
                   <div><dt>Status</dt><dd>{searchConsole.lastError}</dd></div>
                 {/if}
               </dl>
+              {#if !searchConsole.propertyUrl}
+                {#if searchConsoleProperty}
+                  <p class="muted">
+                    Added <code>{searchConsoleProperty.propertyUrl}</code>. Add this DNS record at your
+                    domain’s DNS provider, then verify. DNS changes can take a few minutes to appear.
+                  </p>
+                  <dl aria-label="DNS verification record">
+                    <div><dt>Type</dt><dd><code>{searchConsoleProperty.dnsRecord.type}</code></dd></div>
+                    <div><dt>Name</dt><dd><code>{searchConsoleProperty.dnsRecord.name}</code></dd></div>
+                  </dl>
+                  <pre>{searchConsoleProperty.dnsRecord.value}</pre>
+                {:else}
+                  <p class="muted">
+                    No verified property in this Google account matches {site.domain}. Slimlytics can
+                    add it as a domain property and verify it with a DNS record.
+                  </p>
+                {/if}
+              {/if}
+              {#if searchConsoleNotice}<p class="muted" role="status">{searchConsoleNotice}</p>{/if}
               <div class="test-links">
-                <button class="primary" onclick={() => void syncSearchConsole()}>Sync now</button>
-                <button class="secondary" onclick={() => void disconnectSearchConsole()}
+                {#if !searchConsole.propertyUrl}
+                  {#if searchConsoleProperty}
+                    <button class="primary" disabled={searchConsoleBusy} onclick={() => void verifySearchConsoleProperty()}
+                      >{searchConsoleBusy ? 'Checking…' : 'Verify'}</button
+                    >
+                  {:else}
+                    <button class="primary" disabled={searchConsoleBusy} onclick={() => void addSearchConsoleProperty()}
+                      >{searchConsoleBusy ? 'Adding…' : 'Add to Search Console'}</button
+                    >
+                  {/if}
+                  <button class="secondary" onclick={() => void connectSearchConsole()}>Reconnect</button>
+                {:else}
+                  <a class="primary button" href={appHref(site.id, 'search', days)}>View data</a>
+                  <button class="secondary" onclick={() => void syncSearchConsole()}>Sync now</button>
+                {/if}
+                <button class="secondary" disabled={searchConsoleBusy} onclick={() => void disconnectSearchConsole()}
                   >Disconnect</button
                 >
               </div>

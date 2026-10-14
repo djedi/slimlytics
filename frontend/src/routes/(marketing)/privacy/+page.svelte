@@ -88,9 +88,10 @@
       </p>
       <h2>Google API Services</h2>
       <p>
-        If you connect Google Search Console, Slimlytics requests read-only access
-        (<code>webmasters.readonly</code>) and uses it only to show your own search performance data
-        inside your account. We do not sell this data, use it for advertising, or share it with third
+        If you connect Google Search Console, Slimlytics requests Search Console access
+        (<code>webmasters</code>) and site verification access (<code>siteverification</code>). It
+        uses them only to show your own search performance data inside your account and, when you
+        ask, to add your site to Search Console and verify it. We do not sell this data, use it for advertising, or share it with third
         parties except as needed to provide the feature or comply with law. You can disconnect at any
         time in Slimlytics settings or at
         <a href="https://myaccount.google.com/permissions" rel="noopener noreferrer"

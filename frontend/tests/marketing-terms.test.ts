@@ -12,7 +12,9 @@ describe('terms of service', () => {
     expect(screen.getByRole('heading', { level: 1, name: /terms of service/i })).toBeInTheDocument();
     expect(screen.getByText(/effective october 13, 2026/i)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /google search console/i })).toBeInTheDocument();
-    expect(screen.getAllByText(/webmasters\.readonly/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^webmasters$/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/^siteverification$/i).length).toBeGreaterThan(0);
+    expect(document.body).not.toHaveTextContent(/webmasters\.readonly/i);
     expect(screen.getAllByText(/limited use/i).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('link', { name: /dustin@redseam\.com/i })[0]).toHaveAttribute(
       'href',
@@ -23,6 +25,8 @@ describe('terms of service', () => {
   it('privacy page includes the Google API Limited Use disclosure', () => {
     render(PrivacyPage);
     expect(screen.getByRole('heading', { name: /google api services/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/^siteverification$/i).length).toBeGreaterThan(0);
+    expect(document.body).not.toHaveTextContent(/webmasters\.readonly/i);
     expect(screen.getAllByText(/limited use/i).length).toBeGreaterThan(0);
   });
 
