@@ -59,6 +59,9 @@
     type Overview,
     type ReportRow,
     type ReportSubscription,
+    type SearchConsoleDimension,
+    type SearchConsoleProperty,
+    type SearchConsoleRow,
     type SearchConsoleStatus,
     type BillingStatus,
     type Site,
@@ -73,6 +76,7 @@
   import ReportTable from '$lib/components/ReportTable.svelte';
   import TrafficChart from '$lib/components/TrafficChart.svelte';
   import InsightsView from '$lib/components/insights/InsightsView.svelte';
+  import SearchConsoleView from '$lib/components/SearchConsoleView.svelte';
   import type { IconDimension } from '$lib/components/DimensionIcon.svelte';
   import SiteIcon from '$lib/components/SiteIcon.svelte';
   import SiteIconSettingsCard from '$lib/components/SiteIconSettings.svelte';
@@ -102,6 +106,7 @@
     { id: 'browsers', label: 'Browsers', icon: Compass },
     { id: 'operating-systems', label: 'Operating systems', icon: Smartphone },
     { id: 'campaigns', label: 'Campaigns', icon: Zap },
+    { id: 'search', label: 'Search Console', icon: Search },
     { id: 'visitors', label: 'Visitors', icon: Users },
     { id: 'goals', label: 'Goals', icon: GoalIcon },
     { id: 'settings', label: 'Settings', icon: Settings }
@@ -147,6 +152,19 @@
   let aiCrawlers = $state<ReportRow[]>([]);
   let collectionHealth = $state<CollectionHealth | null>(null);
   let searchConsole = $state<SearchConsoleStatus | null>(null);
+  const searchDimensions: SearchConsoleDimension[] = ['query', 'page', 'country', 'device', 'date'];
+  const emptySearchReports = (): Record<SearchConsoleDimension, SearchConsoleRow[]> => ({
+    query: [],
+    page: [],
+    country: [],
+    device: [],
+    date: []
+  });
+  let searchReports = $state(emptySearchReports());
+  // The DNS record Google needs before a property Slimlytics added can be verified.
+  let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
+  let searchConsoleBusy = $state(false);
+  let searchConsoleNotice = $state('');
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -194,7 +212,7 @@
         void refreshSitesQuietly().catch(() => {});
         void refreshBillingQuietly();
       }
-      else if (view !== 'settings') void refreshViewQuietly().catch(() => {});
+      else if (view !== 'settings' && view !== 'search') void refreshViewQuietly().catch(() => {});
     };
     const interval = window.setInterval(refresh, 15_000);
     const onFocus = () => refresh();
@@ -468,12 +486,29 @@
       visitors = await api.visitors(site.id);
       if (resetStream || !source || source.readyState === EventSource.CLOSED) connectSpy();
     } else if (view === 'goals') goals = await api.goals(site.id);
-    else if (view === 'settings')
+    else if (view === 'search') {
+      const id = site.id;
+      searchConsole = await api.searchConsoleStatus(id);
+      if (searchConsole.connected && searchConsole.propertyUrl) {
+        const rows = await Promise.all(
+          searchDimensions.map((dimension) => api.searchConsoleReport(id, dimension, days))
+        );
+        searchReports = Object.fromEntries(
+          searchDimensions.map((dimension, index) => [dimension, rows[index]])
+        ) as Record<SearchConsoleDimension, SearchConsoleRow[]>;
+      } else searchReports = emptySearchReports();
+    } else if (view === 'settings') {
+      // A pending DNS record belongs to the site it was issued for.
+      if (searchConsoleProperty?.dnsRecord.name !== site.domain) {
+        searchConsoleProperty = null;
+        searchConsoleNotice = '';
+      }
       [collectionHealth, searchConsole, reportSubscriptions] = await Promise.all([
         api.collectionHealth(site.id),
         api.searchConsoleStatus(site.id),
         api.reportSubscriptions(site.id)
       ]);
+    }
   }
   function connectSpy() {
     if (!site || paused || demo || typeof EventSource === 'undefined') {
@@ -564,16 +599,52 @@
   async function syncSearchConsole() {
     if (!site) return;
     loading = true;
+    error = '';
     try {
       await api.syncSearchConsole(site.id, days);
-      searchConsole = await api.searchConsoleStatus(site.id);
+      if (view === 'search') await refreshViewQuietly();
+      else searchConsole = await api.searchConsoleStatus(site.id);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not sync Search Console.';
     } finally {
       loading = false;
+    }
+  }
+  async function addSearchConsoleProperty() {
+    if (!site) return;
+    searchConsoleBusy = true;
+    searchConsoleNotice = '';
+    try {
+      searchConsoleProperty = await api.addSearchConsoleProperty(site.id);
+      searchConsole = await api.searchConsoleStatus(site.id);
+    } catch (reason) {
+      searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
+    } finally {
+      searchConsoleBusy = false;
+    }
+  }
+  async function verifySearchConsoleProperty() {
+    if (!site) return;
+    searchConsoleBusy = true;
+    searchConsoleNotice = '';
+    try {
+      await api.verifySearchConsoleProperty(site.id);
+      searchConsoleProperty = null;
+      searchConsoleNotice = 'Verified. Syncing search data…';
+      await api.syncSearchConsole(site.id, days);
+      searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
+      searchConsole = await api.searchConsoleStatus(site.id);
+    } catch (reason) {
+      searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
+    } finally {
+      searchConsoleBusy = false;
     }
   }
   async function disconnectSearchConsole() {
     if (!site || !confirm('Disconnect Search Console and remove its cached metrics?')) return;
     await api.disconnectSearchConsole(site.id);
+    searchConsoleProperty = null;
+    searchConsoleNotice = '';
     searchConsole = await api.searchConsoleStatus(site.id);
   }
   async function createBrief(event: SubmitEvent) {
@@ -988,6 +1059,14 @@
           linkHosts={view === 'referrers'}
           iconDimension={iconDimensions.find((dimension) => dimension === view)}
         />
+      {:else if view === 'search'}
+        <SearchConsoleView
+          status={searchConsole}
+          reports={searchReports}
+          settingsHref={appHref(site.id, 'settings', days)}
+          onSync={() => void syncSearchConsole()}
+          syncing={loading}
+        />
       {:else if view === 'visitors'}
         <section class="panel">
           <div class="panel-head">
@@ -1207,7 +1286,10 @@
             {#if !searchConsole?.configured}
               <p class="muted">OAuth credentials are not configured on this deployment.</p>
             {:else if !searchConsole.connected}
-              <p class="muted">Connect verified search properties for query and page performance.</p>
+              <p class="muted">
+                Connect your Google account to show query and page performance. Slimlytics asks for
+                permission to add and verify this site in Search Console if it isn’t there yet.
+              </p>
               <div class="test-links">
                 <button class="primary" onclick={() => void connectSearchConsole()}>Connect</button>
               </div>
@@ -1224,8 +1306,41 @@
                   <div><dt>Status</dt><dd>{searchConsole.lastError}</dd></div>
                 {/if}
               </dl>
+              {#if !searchConsole.propertyUrl}
+                {#if searchConsoleProperty}
+                  <p class="muted">
+                    Added <code>{searchConsoleProperty.propertyUrl}</code>. Add this DNS record at your
+                    domain’s DNS provider, then verify. DNS changes can take a few minutes to appear.
+                  </p>
+                  <dl aria-label="DNS verification record">
+                    <div><dt>Type</dt><dd><code>{searchConsoleProperty.dnsRecord.type}</code></dd></div>
+                    <div><dt>Name</dt><dd><code>{searchConsoleProperty.dnsRecord.name}</code></dd></div>
+                  </dl>
+                  <pre>{searchConsoleProperty.dnsRecord.value}</pre>
+                {:else}
+                  <p class="muted">
+                    No verified property in this Google account matches {site.domain}. Slimlytics can
+                    add it as a domain property and verify it with a DNS record.
+                  </p>
+                {/if}
+              {/if}
+              {#if searchConsoleNotice}<p class="muted" role="status">{searchConsoleNotice}</p>{/if}
               <div class="test-links">
-                <button class="primary" onclick={() => void syncSearchConsole()}>Sync now</button>
+                {#if !searchConsole.propertyUrl}
+                  {#if searchConsoleProperty}
+                    <button class="primary" disabled={searchConsoleBusy} onclick={() => void verifySearchConsoleProperty()}
+                      >{searchConsoleBusy ? 'Checking…' : 'Verify'}</button
+                    >
+                  {:else}
+                    <button class="primary" disabled={searchConsoleBusy} onclick={() => void addSearchConsoleProperty()}
+                      >{searchConsoleBusy ? 'Adding…' : 'Add to Search Console'}</button
+                    >
+                  {/if}
+                  <button class="secondary" onclick={() => void connectSearchConsole()}>Reconnect</button>
+                {:else}
+                  <a class="primary button" href={appHref(site.id, 'search', days)}>View data</a>
+                  <button class="secondary" onclick={() => void syncSearchConsole()}>Sync now</button>
+                {/if}
                 <button class="secondary" onclick={() => void disconnectSearchConsole()}
                   >Disconnect</button
                 >

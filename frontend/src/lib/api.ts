@@ -139,6 +139,12 @@ export interface SearchConsoleRow {
   ctr: number;
   position: number;
 }
+export type SearchConsoleDimension = 'query' | 'page' | 'country' | 'device' | 'date';
+export interface SearchConsoleProperty {
+  propertyUrl: string;
+  verificationMethod: 'DNS_TXT';
+  dnsRecord: { type: 'TXT'; name: string; value: string };
+}
 export interface ReportSubscription {
   id: string; siteId: string; name: string; webhookUrl: string; frequency: 'daily' | 'weekly';
   anomalyOnly: boolean; enabled: boolean; nextRunAt: string; lastSentAt?: string | null;
@@ -194,6 +200,22 @@ const reportLabels: Record<string, string[]> = {
   'operating-systems': ['Windows', 'Mac OSX', 'iOS', 'Android', 'Linux'],
   campaigns: ['spring_launch / email', 'docs_sidebar / referral', 'brand / search', 'july_digest / email', '(not set)']
 };
+const searchConsoleLabels: Record<Exclude<SearchConsoleDimension, 'date'>, string[]> = {
+  query: ['privacy friendly analytics', 'cookieless analytics', 'google analytics alternative', 'self hosted analytics', 'gdpr analytics'],
+  page: ['https://docs.northstar.dev/', 'https://docs.northstar.dev/guides/install', 'https://docs.northstar.dev/pricing', 'https://docs.northstar.dev/blog/cookieless'],
+  country: ['usa', 'gbr', 'deu', 'can', 'fra'],
+  device: ['DESKTOP', 'MOBILE', 'TABLET']
+};
+const demoSearchRow = (value: string, i: number, scale = 1): SearchConsoleRow => {
+  const impressions = Math.round((4200 - i * 640) * scale);
+  const clicks = Math.round(impressions * (0.062 - i * 0.008));
+  return { value, clicks, impressions, ctr: clicks / impressions, position: 3.4 + i * 2.1 };
+};
+const demoSearchConsole = (dimension: SearchConsoleDimension, days: number): SearchConsoleRow[] =>
+  dimension === 'date'
+    ? Array.from({ length: days }, (_, i) =>
+        demoSearchRow(new Date(Date.now() - (days - 1 - i) * 864e5).toISOString().slice(0, 10), 0, 0.03 + ((i * 7) % 11) / 400))
+    : searchConsoleLabels[dimension].map((label, i) => demoSearchRow(label, i));
 export const demoReport = (type: string): ReportRow[] => (reportLabels[type] ?? []).map((label, i) => ({ label, value: 1420 - i * 219, secondary: `${Math.max(5, 38 - i * 6)}%`, change: i % 2 ? -2.1 : 8.4 }));
 
 export class ApiClient {
@@ -439,11 +461,13 @@ export class ApiClient {
   createFunnel(id: string, funnel: Pick<Funnel, 'name' | 'steps'>) { return this.request<Funnel>(`/sites/${id}/funnels`, { method: 'POST', body: JSON.stringify(funnel) }); }
   deleteFunnel(id: string, funnelId: string) { return this.request<void>(`/sites/${id}/funnels/${funnelId}`, { method: 'DELETE' }); }
   funnelReport(id: string, funnelId: string, days = 28) { return this.request<FunnelReport>(`/sites/${id}/funnels/${funnelId}/report?${dateQuery(days)}`, {}, () => ({ id: funnelId, name: 'Funnel', from: dates(days).from, to: dates(days).to, steps: [] })); }
-  searchConsoleStatus(id: string) { return this.request<SearchConsoleStatus>(`/sites/${id}/integrations/search-console`, {}, () => ({ configured: false, connected: false })); }
+  searchConsoleStatus(id: string) { return this.request<SearchConsoleStatus>(`/sites/${id}/integrations/search-console`, {}, () => ({ configured: true, connected: true, propertyUrl: 'sc-domain:docs.northstar.dev', lastSyncedAt: new Date().toISOString() })); }
   connectSearchConsole(id: string) { return this.request<{ authorizationUrl: string }>(`/sites/${id}/integrations/search-console/connect`, { method: 'POST' }); }
   disconnectSearchConsole(id: string) { return this.request<void>(`/sites/${id}/integrations/search-console`, { method: 'DELETE' }); }
   syncSearchConsole(id: string, days = 28) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/search-console/sync?${dateQuery(days)}`, { method: 'POST' }); }
-  searchConsoleReport(id: string, dimension: 'query' | 'page' | 'country' | 'device' | 'date' = 'query', days = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(days)}&dimension=${dimension}`, {}, () => []); }
+  addSearchConsoleProperty(id: string) { return this.request<SearchConsoleProperty>(`/sites/${id}/integrations/search-console/property`, { method: 'POST' }); }
+  verifySearchConsoleProperty(id: string) { return this.request<{ propertyUrl: string; verified: boolean }>(`/sites/${id}/integrations/search-console/property/verify`, { method: 'POST' }); }
+  searchConsoleReport(id: string, dimension: SearchConsoleDimension = 'query', days = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(days)}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, days)); }
   reportSubscriptions(id: string) { return this.request<ReportSubscription[]>(`/sites/${id}/report-subscriptions`, {}, () => []); }
   createReportSubscription(id: string, subscription: Omit<ReportSubscription, 'id' | 'siteId' | 'nextRunAt' | 'createdAt' | 'lastSentAt' | 'lastStatus' | 'lastError' | 'signingSecret'>) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions`, { method: 'POST', body: JSON.stringify(subscription) }); }
   updateReportSubscription(id: string, subscription: ReportSubscription) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions/${subscription.id}`, { method: 'PUT', body: JSON.stringify(subscription) }); }

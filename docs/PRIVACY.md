@@ -47,6 +47,6 @@ Initialize the tracker with collection disabled when consent is legally or contr
 
 ## Connected services
 
-Google Search Console is optional and requests only the `webmasters.readonly` scope. Refresh tokens are encrypted with the deployment's integration key. Disconnecting deletes the token and all cached Search Console metrics for that site.
+Google Search Console is optional and requests the `webmasters` and `siteverification` scopes: Search Console access to read search performance and, when the user asks, add the site as a domain property; Site Verification access to verify that property after the user publishes the DNS TXT record Google issues. Slimlytics never adds or verifies a property on its own. Refresh tokens are encrypted with the deployment's integration key. Disconnecting deletes the token and all cached Search Console metrics for that site.
 
 Scheduled-report webhook URLs and delivery outcomes are stored as site configuration. Payloads contain aggregate marketing evidence, not raw IP addresses or form values. Webhook bodies are signed, redirects are refused, and private network destinations are blocked.

@@ -4,8 +4,16 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::{rngs::OsRng, RngCore};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use url::Url;
+
+/// Full Search Console access lets Slimlytics add a site's property for the user, and Site
+/// Verification lets it verify that property once the user has published the DNS record.
+pub const GOOGLE_SCOPES: [&str; 2] = [
+    "https://www.googleapis.com/auth/webmasters",
+    "https://www.googleapis.com/auth/siteverification",
+];
 
 #[derive(Clone)]
 pub struct SearchConsoleConfig {
@@ -35,10 +43,7 @@ pub fn authorization_url(config: &SearchConsoleConfig, state: &str) -> String {
         .append_pair("client_id", &config.client_id)
         .append_pair("redirect_uri", &config.redirect_uri)
         .append_pair("response_type", "code")
-        .append_pair(
-            "scope",
-            "https://www.googleapis.com/auth/webmasters.readonly",
-        )
+        .append_pair("scope", &GOOGLE_SCOPES.join(" "))
         .append_pair("access_type", "offline")
         .append_pair("prompt", "consent")
         .append_pair("include_granted_scopes", "true")
@@ -79,4 +84,32 @@ pub fn preferred_property(domain: &str, properties: &[String]) -> Option<String>
     }
     let prefix = format!("https://{domain}/");
     properties.iter().find(|value| *value == &prefix).cloned()
+}
+
+/// Property URLs the account can read data for; properties added but not yet verified are skipped.
+pub fn verified_property_urls(entries: impl IntoIterator<Item = (String, String)>) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|(_, permission)| permission != "siteUnverifiedUser")
+        .map(|(url, _)| url)
+        .collect()
+}
+
+pub fn domain_property(domain: &str) -> String {
+    format!("sc-domain:{}", domain.to_ascii_lowercase())
+}
+
+pub fn site_resource_url(property: &str) -> String {
+    format!(
+        "https://www.googleapis.com/webmasters/v3/sites/{}",
+        url::form_urlencoded::byte_serialize(property.as_bytes()).collect::<String>()
+    )
+}
+
+/// Body for Site Verification token and verify requests for a domain property.
+pub fn verification_request(domain: &str) -> Value {
+    json!({
+        "site":{"type":"INET_DOMAIN","identifier":domain.to_ascii_lowercase()},
+        "verificationMethod":"DNS_TXT"
+    })
 }

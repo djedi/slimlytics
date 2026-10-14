@@ -17,6 +17,7 @@ export const siteViews = [
   'browsers',
   'operating-systems',
   'campaigns',
+  'search',
   'visitors',
   'goals',
   'settings'

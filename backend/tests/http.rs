@@ -196,6 +196,14 @@ async fn openapi_document_covers_every_public_backend_route() {
             "/api/sites/{siteId}/integrations/search-console/sync",
             "post",
         ),
+        (
+            "/api/sites/{siteId}/integrations/search-console/property",
+            "post",
+        ),
+        (
+            "/api/sites/{siteId}/integrations/search-console/property/verify",
+            "post",
+        ),
         ("/api/sites/{siteId}/reports/search-console", "get"),
         ("/api/integrations/search-console/callback", "get"),
         ("/api/mcp", "post"),

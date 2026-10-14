@@ -66,10 +66,11 @@
       <h2>5. Google Search Console integration</h2>
       <p>
         You may optionally connect a Google account to show Google Search Console data alongside your
-        analytics. When you connect, Slimlytics requests read-only access using the
-        <code>webmasters.readonly</code> scope. We use this access only to retrieve and display search
+        analytics. When you connect, Slimlytics requests the <code>webmasters</code> and
+        <code>siteverification</code> scopes. We use this access only to retrieve and display search
         performance data for properties you own or have access to, within your own Slimlytics
-        account. We never modify your Search Console settings, and we do not use this data for
+        account, and to add and verify a site's Search Console property when you ask us to. We do not
+        otherwise change your Search Console settings, and we do not use this data for
         advertising, sell it, or share it with third parties except as needed to provide the feature
         or comply with law.
       </p>

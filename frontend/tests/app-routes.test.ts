@@ -19,6 +19,7 @@ describe('dashboard routes', () => {
   it('parses views, treating a missing view as overview', () => {
     expect(parseView(undefined)).toBe('overview');
     expect(parseView('referrers')).toBe('referrers');
+    expect(parseView('search')).toBe('search');
     expect(parseView('rollup')).toBeNull();
     expect(parseView('nope')).toBeNull();
   });
