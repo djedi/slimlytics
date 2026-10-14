@@ -622,21 +622,23 @@
       loading = false;
     }
   }
-  // Property operations outlive navigation; only the site that started one may show its result.
+  // Property operations outlive navigation and integration changes; only the latest operation on the
+  // still-selected site may show its result.
   async function addSearchConsoleProperty() {
     if (!site) return;
     const id = site.id;
-    searchLoadGeneration++;
+    const generation = ++searchLoadGeneration;
+    const current = () => site?.id === id && generation === searchLoadGeneration;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     try {
       const property = await api.addSearchConsoleProperty(id);
       const status = await api.searchConsoleStatus(id);
-      if (site?.id !== id) return;
+      if (!current()) return;
       searchConsoleProperty = property;
       searchConsole = status;
     } catch (reason) {
-      if (site?.id === id)
+      if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
     } finally {
       searchConsoleBusy = false;
@@ -646,8 +648,8 @@
     if (!site) return;
     const id = site.id;
     const range = days;
-    const current = () => site?.id === id;
-    searchLoadGeneration++;
+    const generation = ++searchLoadGeneration;
+    const current = () => site?.id === id && generation === searchLoadGeneration;
     searchConsoleBusy = true;
     searchConsoleNotice = '';
     let verified: { propertyUrl: string };
@@ -1386,7 +1388,7 @@
                   <a class="primary button" href={appHref(site.id, 'search', days)}>View data</a>
                   <button class="secondary" onclick={() => void syncSearchConsole()}>Sync now</button>
                 {/if}
-                <button class="secondary" onclick={() => void disconnectSearchConsole()}
+                <button class="secondary" disabled={searchConsoleBusy} onclick={() => void disconnectSearchConsole()}
                   >Disconnect</button
                 >
               </div>
