@@ -657,7 +657,7 @@
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
     } finally {
-      finishSearchConsoleChange(current());
+      finishSearchConsoleChange(op);
     }
   }
   async function verifySearchConsoleProperty() {
@@ -695,25 +695,32 @@
           }. Try Sync now.`;
       }
     } finally {
-      finishSearchConsoleChange(current());
+      finishSearchConsoleChange(op);
     }
   }
-  /** Ends an integration change; loads that overlapped it are discarded, so reload what is shown. */
-  function finishSearchConsoleChange(stillCurrent: boolean) {
+  /**
+   * Ends an integration change. Loads that overlapped it are discarded, whichever site they were
+   * for, so always reload what is shown. `op` is omitted by disconnect, which supersedes every op.
+   */
+  function finishSearchConsoleChange(op?: number) {
     searchConsoleChanges++;
-    searchConsoleBusy = false;
-    if (stillCurrent && (view === 'search' || view === 'settings'))
-      void refreshViewQuietly().catch(() => {});
+    if (op === undefined || op === searchConsoleOp) searchConsoleBusy = false;
+    if (site && (view === 'search' || view === 'settings')) void refreshViewQuietly().catch(() => {});
   }
   async function disconnectSearchConsole() {
     if (!site || !confirm('Disconnect Search Console and remove its cached metrics?')) return;
+    const id = site.id;
     searchConsoleOp++;
     searchConsoleChanges++;
-    await api.disconnectSearchConsole(site.id);
-    searchConsoleChanges++;
-    searchConsoleProperty = null;
-    searchConsoleNotice = '';
-    searchConsole = await api.searchConsoleStatus(site.id);
+    try {
+      await api.disconnectSearchConsole(id);
+      if (site?.id === id) {
+        searchConsoleProperty = null;
+        searchConsoleNotice = '';
+      }
+    } finally {
+      finishSearchConsoleChange();
+    }
   }
   async function createBrief(event: SubmitEvent) {
     event.preventDefault();
