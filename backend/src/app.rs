@@ -25,9 +25,9 @@ use crate::{
     privacy::sanitize_url,
     reporting::{date_bounds, DateBounds},
     search_console::{
-        authorization_url, decrypt_token, domain_property, encrypt_token, oauth_state,
-        preferred_property, site_resource_url, state_hash, verification_request,
-        verified_property_urls, SearchConsoleConfig,
+        authorization_url, decrypt_token, domain_property, encrypt_token, forbidden_message,
+        missing_scopes, oauth_state, preferred_property, site_resource_url, state_hash,
+        verification_request, verified_property_urls, SearchConsoleConfig,
     },
     server_ingest::{validate_server_event, ServerEventBatch},
     site_icon::{fetch_favicon, normalize_color},
@@ -2724,6 +2724,8 @@ async fn connect_search_console(
 struct GoogleTokenResponse {
     access_token: String,
     refresh_token: Option<String>,
+    #[serde(default)]
+    scope: String,
 }
 
 #[derive(Deserialize)]
@@ -2803,6 +2805,13 @@ async fn search_console_callback(
         ],
     )
     .await?;
+    let missing = missing_scopes(&tokens.scope);
+    if !missing.is_empty() {
+        tracing::warn!(?missing, "Search Console connect lacks requested scopes");
+        return Err(ApiError::BadRequest(
+            "Google did not grant every requested permission. Connect Search Console again and allow all permissions so Slimlytics can add and verify properties.".into(),
+        ));
+    }
     let refresh_token = tokens
         .refresh_token
         .ok_or_else(|| ApiError::BadRequest("Google did not return an offline token".into()))?;
@@ -2951,8 +2960,8 @@ async fn search_console_access(
     Ok((domain, access_token, encrypted))
 }
 
-/// Maps a rejected Google API call to a message the user can act on. Connections made before
-/// Slimlytics could add properties hold a read-only grant, which Google answers with 403.
+/// Maps a rejected Google API call to a message the user can act on. A 403 can mean a missing
+/// grant (e.g. a read-only connection from before Slimlytics added properties) or a disabled API.
 async fn google_api_response(
     result: Result<reqwest::Response, reqwest::Error>,
     action: &str,
@@ -2966,10 +2975,10 @@ async fn google_api_response(
     if status.is_success() {
         return Ok(response);
     }
-    tracing::warn!(%status, action, "Google API request rejected");
+    let body = response.text().await.unwrap_or_default();
+    tracing::warn!(%status, action, body, "Google API request rejected");
     Err(ApiError::BadRequest(if status == StatusCode::FORBIDDEN {
-        "Google denied permission. Reconnect Search Console to let Slimlytics add and verify properties."
-            .into()
+        forbidden_message(&body)
     } else {
         rejected.into()
     }))

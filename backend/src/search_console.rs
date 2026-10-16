@@ -113,3 +113,48 @@ pub fn verification_request(domain: &str) -> Value {
         "verificationMethod":"DNS_TXT"
     })
 }
+
+/// Requested scopes missing from a token's space-separated `scope` grant. Google's consent screen
+/// lets users untick individual permissions, so a successful connect can still lack some.
+pub fn missing_scopes(granted: &str) -> Vec<&'static str> {
+    let granted: Vec<&str> = granted.split_whitespace().collect();
+    GOOGLE_SCOPES
+        .into_iter()
+        .filter(|scope| !granted.contains(scope))
+        .collect()
+}
+
+/// Explains a 403 from a Google API using the error body's reason, since Google answers both a
+/// missing grant and an API disabled in the OAuth client's Cloud project with 403.
+pub fn forbidden_message(body: &str) -> String {
+    let error: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let error = &error["error"];
+    let mut reasons = error["details"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(error["errors"].as_array().into_iter().flatten())
+        .filter_map(|detail| detail["reason"].as_str());
+    let message = error["message"].as_str().unwrap_or_default();
+    if reasons
+        .clone()
+        .any(|reason| matches!(reason, "SERVICE_DISABLED" | "accessNotConfigured"))
+    {
+        return format!(
+            "A Google API Slimlytics needs is not enabled for its Google Cloud project: {message}"
+        );
+    }
+    if reasons.any(|reason| {
+        matches!(
+            reason,
+            "ACCESS_TOKEN_SCOPE_INSUFFICIENT" | "insufficientPermissions"
+        )
+    }) {
+        return "Google denied permission. Reconnect Search Console and allow every requested permission so Slimlytics can add and verify properties.".into();
+    }
+    if message.is_empty() {
+        "Google denied permission to add or verify this property".into()
+    } else {
+        format!("Google denied permission: {message}")
+    }
+}

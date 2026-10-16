@@ -1,7 +1,7 @@
 use slimlytics_backend::search_console::{
-    authorization_url, decrypt_token, domain_property, encrypt_token, preferred_property,
-    site_resource_url, verification_request, verified_property_urls, SearchConsoleConfig,
-    GOOGLE_SCOPES,
+    authorization_url, decrypt_token, domain_property, encrypt_token, forbidden_message,
+    missing_scopes, preferred_property, site_resource_url, verification_request,
+    verified_property_urls, SearchConsoleConfig, GOOGLE_SCOPES,
 };
 
 #[test]
@@ -93,4 +93,31 @@ fn verifies_domain_properties_with_a_dns_txt_record() {
             "verificationMethod":"DNS_TXT"
         })
     );
+}
+
+#[test]
+fn reports_scopes_the_user_did_not_grant() {
+    assert!(missing_scopes(&GOOGLE_SCOPES.join(" ")).is_empty());
+    assert_eq!(
+        missing_scopes("openid https://www.googleapis.com/auth/webmasters"),
+        vec!["https://www.googleapis.com/auth/siteverification"]
+    );
+    assert_eq!(missing_scopes(""), GOOGLE_SCOPES.to_vec());
+}
+
+#[test]
+fn explains_why_google_denied_permission() {
+    let disabled = r#"{"error":{"code":403,"message":"Site Verification API has not been used in project 1 before or it is disabled.","status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED"}]}}"#;
+    assert!(forbidden_message(disabled).contains("not enabled for its Google Cloud project"));
+
+    let scope = r#"{"error":{"code":403,"message":"Insufficient Permission","errors":[{"reason":"insufficientPermissions"}]}}"#;
+    assert!(forbidden_message(scope).contains("Reconnect Search Console"));
+
+    let other =
+        r#"{"error":{"code":403,"message":"User does not have sufficient permission for site"}}"#;
+    assert_eq!(
+        forbidden_message(other),
+        "Google denied permission: User does not have sufficient permission for site"
+    );
+    assert!(!forbidden_message("not json").is_empty());
 }
