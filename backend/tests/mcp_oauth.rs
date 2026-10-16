@@ -352,6 +352,27 @@ async fn login_pkce_single_use_scopes_and_site_setup() {
         .await
         .unwrap();
     let proxy_key = proxy_key.to_string();
+    // Without allowedOrigins the site defaults to its own domain, so collection is not blocked.
+    let site_uuid = uuid::Uuid::parse_str(&site_id).unwrap();
+    let origins = |pool: sqlx::PgPool| async move {
+        sqlx::query_scalar::<_, Vec<String>>("SELECT allowed_origins FROM sites WHERE id=$1")
+            .bind(site_uuid)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    };
+    let expected = vec![format!("https://{domain}"), format!("https://www.{domain}")];
+    assert_eq!(origins(pool.clone()).await, expected);
+    // A reused site left with no origins is repaired.
+    sqlx::query("UPDATE sites SET allowed_origins='{}' WHERE id=$1")
+        .bind(site_uuid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repaired = json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"setup_site","arguments":{"name":"Agent website","domain":domain}}});
+    let repaired = value(json_post(&router, "/api/mcp", repaired, Some(token)).await).await;
+    assert_eq!(repaired["result"]["structuredContent"]["created"], false);
+    assert_eq!(origins(pool.clone()).await, expected);
     // A newly created site returns its proxy key once; the config references the environment.
     let created = &first["result"]["structuredContent"]["setup"];
     assert_eq!(created["proxyKey"], proxy_key.as_str());

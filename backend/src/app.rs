@@ -1015,6 +1015,11 @@ async fn ensure_site(
 ) -> Result<(StatusCode, Json<EnsureSiteResponse>), ApiError> {
     validate_site(&input)?;
     input.domain = canonical_domain(&input.domain)?;
+    // Collection rejects every origin not on the list, so an empty list would silently drop all
+    // traffic. Default to the site's own domain.
+    if input.allowed_origins.is_empty() {
+        input.allowed_origins = default_allowed_origins(&input.domain);
+    }
     let mut tx = state.pool.begin().await?;
     if state.billing.is_some() {
         billing_routes::lock_account_sites(&mut tx, user).await?;
@@ -1050,6 +1055,19 @@ async fn ensure_site(
         .ok_or_else(|| ApiError::BadRequest("domain is already managed by another account".into()))?;
         (false, site)
     };
+    let mut site = site;
+    // Repair a reused site left with no allowed origins (it could not collect anything).
+    if !created
+        && site.allowed_origins.is_empty()
+        && require_site(&state.pool, user, site.id, true).await.is_ok()
+    {
+        sqlx::query("UPDATE sites SET allowed_origins=$2,updated_at=now() WHERE id=$1")
+            .bind(site.id)
+            .bind(&input.allowed_origins)
+            .execute(&mut *tx)
+            .await?;
+        site.allowed_origins = input.allowed_origins.clone();
+    }
     tx.commit().await?;
     let status = if created {
         StatusCode::CREATED
@@ -1081,6 +1099,18 @@ fn validate_site(input: &SiteInput) -> Result<(), ApiError> {
         }
     }
     Ok(())
+}
+
+fn default_allowed_origins(domain: &str) -> Vec<String> {
+    if domain == "localhost" {
+        return vec!["http://localhost".into()];
+    }
+    let mut origins = vec![format!("https://{domain}")];
+    match domain.strip_prefix("www.") {
+        Some(apex) => origins.push(format!("https://{apex}")),
+        None => origins.push(format!("https://www.{domain}")),
+    }
+    origins
 }
 
 fn canonical_domain(value: &str) -> Result<String, ApiError> {
