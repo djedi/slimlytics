@@ -13,3 +13,4 @@ coverage
 backups
 .DS_Store
 data
+.prebuilt

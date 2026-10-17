@@ -13,12 +13,16 @@ deploy_user="slimdeploy"
 sentinel_name=".slimlytics-deployment"
 sentinel_value="slimlytics-production-v1"
 skip_checks=false
+prebuilt=""
 
 usage() {
   cat <<'EOF'
-Usage: scripts/deploy-production.sh [--skip-checks]
+Usage: scripts/deploy-production.sh [--skip-checks] [--prebuilt DIR]
 
 Builds, backs up, deploys, and verifies Slimlytics production.
+
+  --prebuilt DIR  Ship release artifacts from scripts/build-prebuilt.sh instead of
+                  compiling on the server (images are only packaged there).
 
 Environment overrides:
   SLIMLYTICS_DEPLOY_HOST       Dedicated slimdeploy SSH destination
@@ -32,6 +36,11 @@ EOF
 while (($#)); do
   case "$1" in
     --skip-checks) skip_checks=true ;;
+    --prebuilt)
+      [[ $# -ge 2 ]] || { printf -- '--prebuilt requires a directory.\n' >&2; exit 2; }
+      prebuilt="$2"
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -58,6 +67,12 @@ done
   printf 'Local Slimlytics deployment sentinel is missing or invalid.\n' >&2
   exit 1
 }
+
+if [[ -n "$prebuilt" ]]; then
+  for artifact in backend/slimlytics-backend backend/Dockerfile frontend/build frontend/Dockerfile scalar-assets.json; do
+    [[ -e "$prebuilt/$artifact" ]] || { printf 'Prebuilt artifact missing: %s/%s\n' "$prebuilt" "$artifact" >&2; exit 1; }
+  done
+fi
 
 for command in git rsync ssh python3 make npm node; do
   command -v "$command" >/dev/null || { printf 'Required command not found: %s\n' "$command" >&2; exit 1; }
@@ -96,7 +111,11 @@ if ! $skip_checks; then
   npm --prefix frontend audit --audit-level=high
 fi
 
-expected_scalar_assets_json="$(node frontend/scripts/verify-api-docs-build.mjs --json)"
+if [[ -n "$prebuilt" ]]; then
+  expected_scalar_assets_json="$(<"$prebuilt/scalar-assets.json")"
+else
+  expected_scalar_assets_json="$(node frontend/scripts/verify-api-docs-build.mjs --json)"
+fi
 
 essh=(ssh -o BatchMode=yes "$remote_host")
 
@@ -182,6 +201,7 @@ mkdir "$rollback"
 rsync -a --delete \
   --exclude .env --exclude backups --exclude .git --exclude '.deploy-lock*' \
   --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist --exclude /data/geoip \
+  --exclude /.prebuilt \
   "$app/" "$rollback/"
 cd "$app"
 ./scripts/backup.sh
@@ -219,6 +239,7 @@ lock_token=$8
 rsync -a --delete \
   --exclude .env --exclude backups --exclude .git --exclude '.deploy-lock*' \
   --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist --exclude /data/geoip \
+  --exclude /.prebuilt \
   "$rollback/" "$app/"
 cd "$app"
 compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
@@ -242,10 +263,14 @@ printf 'Synchronizing release %s to production...\n' "$short_revision"
 rsync -az --delete-delay \
   --exclude .git --exclude .env --exclude backups --exclude '.deploy-lock*' \
   --exclude target --exclude node_modules --exclude .svelte-kit --exclude build --exclude dist --exclude /data/geoip \
-  --exclude .DS_Store \
+  --exclude .DS_Store --exclude /.prebuilt \
   ./ "$remote_host:$remote_app/"
+if [[ -n "$prebuilt" ]]; then
+  printf 'Uploading prebuilt release artifacts...\n'
+  rsync -az --delete-delay --exclude .DS_Store "$prebuilt/" "$remote_host:$remote_app/.prebuilt/"
+fi
 
-remote_script "$remote_app" "$revision" "$deploy_user" "$sentinel_name" "$sentinel_value" "$lock_name" "$lock_token" <<'REMOTE'
+remote_script "$remote_app" "$revision" "$deploy_user" "$sentinel_name" "$sentinel_value" "$lock_name" "$lock_token" "${prebuilt:+prebuilt}" <<'REMOTE'
 set -Eeuo pipefail
 app=$1
 revision=$2
@@ -254,6 +279,7 @@ sentinel=$4
 sentinel_value=$5
 lock_name=$6
 lock_token=$7
+mode=${8:-}
 
 [[ "$(id -un)" == "$deploy_user" && "$(id -u)" -ne 0 ]] || { echo 'Refusing deployment from an unexpected or root remote account.' >&2; exit 1; }
 [[ -d "$app" && "$(realpath -e -- "$app")" == "$app" ]] || { echo 'Deployment target is not the canonical app path.' >&2; exit 1; }
@@ -264,13 +290,18 @@ printf '%s\n' "$revision" > .deploy-revision
 # Refresh the monthly GeoIP database; a download failure must not block the release.
 ./scripts/update-geoip.sh || echo 'Warning: GeoIP update failed; continuing with the existing database.' >&2
 compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
+# Prebuilt releases only package CI-built artifacts into images instead of compiling here.
+[[ "$mode" != prebuilt ]] || compose+=(-f compose.prebuilt.yaml)
+# rsync replaces docker/Caddyfile with a new inode, but the single-file bind mount keeps the old
+# one and admin is off (no reload), so Caddy is recreated only when its routing changed.
+running_caddyfile="$("${compose[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile 2>/dev/null | cut -d' ' -f1 || true)"
 "${compose[@]}" config -q
 "${compose[@]}" up -d --build --remove-orphans --wait --wait-timeout 240
-# rsync replaces docker/Caddyfile with a new inode, but the single-file bind mount keeps the old
-# one and admin is off (no reload), so recreate Caddy to pick up routing changes.
-"${compose[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 60 caddy
-curl --retry 10 --retry-delay 2 --retry-all-errors --fail --silent http://127.0.0.1:8540/health >/dev/null
-curl --retry 10 --retry-delay 2 --retry-all-errors --fail --silent http://127.0.0.1:8540/ready >/dev/null
+if [[ "$running_caddyfile" != "$(sha256sum docker/Caddyfile | cut -d' ' -f1)" ]]; then
+  "${compose[@]}" up -d --force-recreate --no-deps --wait --wait-timeout 60 caddy
+fi
+curl --retry 10 --retry-delay 1 --retry-all-errors --fail --silent http://127.0.0.1:8540/health >/dev/null
+curl --retry 10 --retry-delay 1 --retry-all-errors --fail --silent http://127.0.0.1:8540/ready >/dev/null
 "${compose[@]}" ps
 REMOTE
 

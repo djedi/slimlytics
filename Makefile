@@ -35,7 +35,7 @@ tracker:
 	cp tracker/dist/slimlytics.js frontend/src/lib/server/generated/tracker.iife.txt
 
 test: test-backend test-cli test-tracker test-frontend
-	node --test scripts/server-log-forwarder.test.mjs scripts/ci-changes.test.mjs
+	node --test scripts/server-log-forwarder.test.mjs
 	python3 .github/scripts/local_pr_review_test.py -v
 
 test-backend:
@@ -57,8 +57,8 @@ check:
 	cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
 	sh -n scripts/install-cli.sh
 	bash -n scripts/deploy-production.sh
+	bash -n scripts/build-prebuilt.sh
 	node --check scripts/server-log-forwarder.mjs
-	node --check scripts/ci-changes.mjs
 	npm --prefix tracker run check
 	npm --prefix frontend run check
 

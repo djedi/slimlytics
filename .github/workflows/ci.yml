@@ -1,55 +1,63 @@
 name: Build and deploy
 
-# Runs on merge to main only: build and test, then deploy production as the final job of
-# the same run. PRs are reviewed and merged without required checks.
+# PRs: test and build release artifacts in the background (nothing is required to merge).
+# The artifacts are stored on the runner host under the tested tree's hash.
+# Merge to main: when main's tree matches a tested PR build, deploy those artifacts at once;
+# otherwise test, build, and deploy in this run.
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Never cancel a run mid-deploy. A newer merge waits for the current run; a newer
-# pending run replaces an older pending one, and its deploy includes those commits.
+# Never cancel a main run mid-deploy: a newer merge waits, and a newer pending run replaces an
+# older pending one (its deploy includes those commits). A PR update cancels its stale run.
 concurrency:
-  group: build-and-deploy-${{ github.ref }}
-  cancel-in-progress: false
+  group: build-and-deploy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
+  # Release artifacts by git tree hash under the runner user's home, shared by every runner
+  # on the host (each step expands it as "$HOME/$RELEASE_STORE").
+  RELEASE_STORE: .cache/slimlytics-releases
   JWT_SECRET: ci-only-jwt-secret-at-least-thirty-two-bytes
   VISITOR_HASH_SECRET: ci-only-visitor-secret-at-least-thirty-two-bytes
 
 jobs:
-  changes:
+  release:
     # Keep fork PR code off the persistent self-hosted machine.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    # On the runner host, so it can see whether this tree's release was already built and tested.
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
     outputs:
-      backend: ${{ steps.select.outputs.backend }}
-      web: ${{ steps.select.outputs.web }}
-      cli: ${{ steps.select.outputs.cli }}
-      container: ${{ steps.select.outputs.container }}
+      tree: ${{ steps.release.outputs.tree }}
+      prebuilt: ${{ steps.release.outputs.prebuilt }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Test change selection
+      - name: Find a tested release for this tree
+        id: release
         run: |
-          node --test scripts/ci-changes.test.mjs
-          python3 .github/scripts/local_pr_review_test.py -v
-      - name: Select affected checks
-        id: select
-        env:
-          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/ci-changes.mjs
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          # Only main reuses a release; a PR always tests and builds its own.
+          if [[ "$GITHUB_EVENT_NAME" != pull_request && -f "$HOME/$RELEASE_STORE/$tree/TESTED" ]]; then
+            echo "::notice::Deploying the release already built and tested for tree ${tree:0:12}."
+            # Mark it recently used so retention cleanup keeps it.
+            touch "$HOME/$RELEASE_STORE/$tree"
+            echo "prebuilt=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prebuilt=false" >> "$GITHUB_OUTPUT"
+          fi
 
   backend:
-    needs: changes
-    # Select only affected PR checks; pushes to main select all gates.
-    if: needs.changes.outputs.backend == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: release
+    # Every gate runs, so a passing PR vouches for the whole tree; main skips them only when
+    # its tree is already tested.
+    if: needs.release.outputs.prebuilt != 'true'
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     env:
       # Persistent across runs on the self-hosted runner, so builds are incremental.
@@ -88,9 +96,10 @@ jobs:
         run: if [ -n "${PG_CONTAINER:-}" ]; then docker rm -f "$PG_CONTAINER"; fi
 
   web:
-    needs: changes
-    # Select only affected PR checks; pushes to main select all gates.
-    if: needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: release
+    # Every gate runs, so a passing PR vouches for the whole tree; main skips them only when
+    # its tree is already tested.
+    if: needs.release.outputs.prebuilt != 'true'
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     steps:
       - uses: actions/checkout@v7
@@ -116,9 +125,10 @@ jobs:
         run: npm --prefix frontend run check && npm --prefix frontend test -- --run && npm --prefix frontend run build
 
   cli:
-    needs: changes
-    # Select only affected PR checks; pushes to main select all gates.
-    if: needs.changes.outputs.cli == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: release
+    # Every gate runs, so a passing PR vouches for the whole tree; main skips them only when
+    # its tree is already tested.
+    if: needs.release.outputs.prebuilt != 'true'
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/../.cargo-target/cli
@@ -139,50 +149,101 @@ jobs:
       - name: Locked release build and installer syntax
         run: cargo build --manifest-path cli/Cargo.toml --release --locked && sh -n scripts/install-cli.sh
 
-  container:
-    # Self-hosted runner on a public repo: never run fork PR code on it.
-    # Allow unrelated jobs to be skipped, but never build after a failure/cancellation.
-    if: >-
-      ${{ !failure() && !cancelled() && needs.changes.result == 'success' &&
-          needs.changes.outputs.container == 'true' &&
-          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+  artifacts:
+    # The production release: x86-64 backend binary and frontend build, packaged into images
+    # on the server at deploy time instead of compiled there.
+    needs: release
+    if: needs.release.outputs.prebuilt != 'true'
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
-    needs: [changes, backend, web, cli]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain PATH
+        run: |
+          echo /opt/homebrew/opt/node@24/bin >> "$GITHUB_PATH"
+          echo /opt/homebrew/bin >> "$GITHUB_PATH"
+          echo /usr/local/bin >> "$GITHUB_PATH"
+      - name: Build release artifacts
+        env:
+          TREE: ${{ needs.release.outputs.tree }}
+        run: |
+          store="$HOME/$RELEASE_STORE"
+          mkdir -p "$store"
+          # Releases are immutable: a complete one for this tree is reused, never replaced.
+          if [[ -d "$store/$TREE" ]]; then
+            echo "Reusing the release already built for tree ${TREE:0:12}."
+            touch "$store/$TREE"
+            exit 0
+          fi
+          staging="$store/.staging-${{ github.run_id }}-${{ github.run_attempt }}"
+          ./scripts/build-prebuilt.sh "$staging"
+          # Atomic publish: rename(2) fails if a concurrent run already published this tree,
+          # in which case that release is kept and this copy is discarded.
+          python3 -c 'import os, sys; os.rename(sys.argv[1], sys.argv[2])' "$staging" "$store/$TREE" \
+            || echo "Tree ${TREE:0:12} was published concurrently; keeping that release."
+          rm -rf "$staging"
+          # Prune releases outside the 20 most recently used that are also over a day old, so a
+          # release a run has just selected (its mtime is refreshed) is never removed.
+          cd "$store"
+          ls -1t | grep -E '^[0-9a-f]{40}$' | tail -n +21 | while read -r old; do
+            if [[ -n "$(find "./$old" -maxdepth 0 -mtime +1)" ]]; then rm -rf "./$old"; fi
+          done
+
+  smoke:
+    # Run the exact production images (amd64, emulated) as a composed stack before the release
+    # can be marked deployable or shipped.
+    needs: [release, artifacts]
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
     env:
-      COMPOSE_PROJECT_NAME: slimlytics-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      HTTP_PORT: "18080"
-      COMPOSE_FILE: compose.yaml:compose.ci.yaml
-      CI_RUN_WEB_CHECKS: ${{ needs.web.result == 'success' && 'false' || 'true' }}
+      COMPOSE_PROJECT_NAME: slimlytics-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+      COMPOSE_FILE: compose.yaml:compose.ci.yaml:compose.prebuilt.yaml
+      # Any free loopback port, so concurrent runs do not collide.
+      HTTP_PORT: "0"
     steps:
       - uses: actions/checkout@v7
       - name: Toolchain PATH
         run: |
           echo /opt/homebrew/bin >> "$GITHUB_PATH"
           echo /usr/local/bin >> "$GITHUB_PATH"
+      - name: Copy release into the workspace
+        env:
+          TREE: ${{ needs.release.outputs.tree }}
+        run: cp -R "$HOME/$RELEASE_STORE/$TREE" .prebuilt
       - name: Generate disposable Compose environment
         run: ./scripts/generate-env.sh
-      - name: Validate Compose
-        run: docker compose config --quiet
-      - name: Build images
-        run: docker compose build
-      - name: Start and smoke-test Compose
+      - name: Build images and smoke-test the stack
         run: |
-          docker compose up -d
-          for i in {1..30}; do
-            curl --fail --silent http://127.0.0.1:18080/health && curl --fail --silent http://127.0.0.1:18080/ready && exit 0
-            sleep 2
-          done
-          docker compose ps
-          docker compose logs
-          exit 1
+          docker compose config --quiet
+          docker compose up -d --build --wait --wait-timeout 180
+          port="$(docker compose port caddy 80 | sed 's/.*://')"
+          curl --fail --silent "http://127.0.0.1:$port/health"
+          curl --fail --silent "http://127.0.0.1:$port/ready"
+          curl --fail --silent --output /dev/null "http://127.0.0.1:$port/"
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose ps; docker compose logs --tail 100
       - name: Stop Compose
         if: always()
         run: docker compose down -v
 
+  mark-tested:
+    # Every gate and the smoke test passed: main may deploy this release as-is if it ends up
+    # with the same tree.
+    needs: [release, backend, web, cli, artifacts, smoke]
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, macOS, ARM64, slimlytics]
+    steps:
+      - name: Mark release tested
+        env:
+          TREE: ${{ needs.release.outputs.tree }}
+        run: touch "$HOME/$RELEASE_STORE/$TREE/TESTED"
+
   deploy:
-    # Deploy main only after every selected gate passed; skipped gates do not block it.
-    needs: [backend, web, cli, container]
-    if: ${{ !failure() && !cancelled() && github.ref == 'refs/heads/main' }}
+    # Deploy main with either the tested PR release for this tree (gates skipped) or the release
+    # this run built, tested, and smoke-tested.
+    needs: [release, backend, web, cli, artifacts, smoke]
+    if: >-
+      ${{ !failure() && !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+          (needs.release.outputs.prebuilt == 'true' || needs.smoke.result == 'success') }}
     runs-on: [self-hosted, macOS, ARM64, slimlytics]
     environment: production
     timeout-minutes: 30
@@ -233,19 +294,16 @@ jobs:
           chmod 700 "$ssh_dir/bin/ssh"
           echo "$ssh_dir/bin" >> "$GITHUB_PATH"
 
-      # The earlier jobs ran the full test/check suite on this commit; the deploy script
-      # still needs the built frontend to verify the deployed API docs assets.
-      - name: Build tracker and frontend
-        if: steps.current.outputs.deploy == 'true'
-        run: |
-          npm --prefix tracker ci
-          npm --prefix frontend ci
-          make tracker
-          npm --prefix frontend run build
-
       - name: Deploy
         if: steps.current.outputs.deploy == 'true'
-        run: ./scripts/deploy-production.sh --skip-checks
+        env:
+          TREE: ${{ needs.release.outputs.tree }}
+        run: |
+          # Deploy a private copy, so retention cleanup cannot remove it mid-deploy.
+          release="$RUNNER_TEMP/release"
+          rm -rf "$release"
+          cp -R "$HOME/$RELEASE_STORE/$TREE" "$release"
+          ./scripts/deploy-production.sh --skip-checks --prebuilt "$release"
 
       - name: Remove SSH deploy key
         if: always()
