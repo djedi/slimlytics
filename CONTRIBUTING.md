@@ -37,6 +37,8 @@ PRs have no required status checks: review and merge. Each push to `main` starts
 
 `scripts/ci-changes.mjs` still decides which gates a diff selects (covered by `node --test scripts/ci-changes.test.mjs`); pushes to `main` always run the full suite: `backend`, `web`, `cli`, and `container`.
 
+Three runners on the Mac mini carry the `slimlytics` label (`slimlytics-mini`, `-2`, `-3` in `~/.local/share/github-runners/slimlytics*`), so `backend`, `web`, and `cli` run in parallel; `container` and then `deploy` follow. Each runner keeps its own Cargo target directory, so its first Rust build is cold.
+
 Container checks use `compose.ci.yaml` to poll health every second instead of waiting for production polling intervals. The frontend Docker build skips duplicate checks only when the web job passed for the same revision; ordinary Docker builds still run their checks. Rust build dependencies and targets are cached in BuildKit mounts, with the executable copied into the image outside the cache. The first build fills the cache; later source changes reuse dependency compilation.
 
 ## Local AI review
