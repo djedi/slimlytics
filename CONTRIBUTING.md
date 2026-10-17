@@ -33,13 +33,14 @@ Use conventional prefixes such as `feat:`, `fix:`, `test:`, `docs:`, `refactor:`
 
 ## Merging and CI
 
-PRs have no required status checks: review and merge. Each push to `main` starts one **Build and deploy** run: the test gates, then a `deploy` job that ships production in the same run. A failing gate stops that run before `deploy`, so production stays on the last good commit until a fix is merged; run `make check` and `make test` locally for risky changes. To redeploy without a new merge, start **Build and deploy** manually from `main` (Actions → Run workflow).
+PRs have no required status checks: review and merge. The **Build and deploy** workflow does two things:
 
-`scripts/ci-changes.mjs` still decides which gates a diff selects (covered by `node --test scripts/ci-changes.test.mjs`); pushes to `main` always run the full suite: `backend`, `web`, `cli`, and `container`.
+- **On a PR**, in the background: every test gate (`backend`, `web`, `cli`) plus an `artifacts` job that builds the production release with `scripts/build-prebuilt.sh`. That release is the x86-64 Linux backend binary, cross-compiled in Docker on the ARM Mac mini by `docker/backend-cross.Dockerfile`, plus the SvelteKit build. The release is stored on the runner host at `~/.cache/slimlytics-releases/<git tree hash>`. A `smoke` job runs those exact amd64 images as a composed stack under emulation. When every gate and the smoke test pass, `mark-tested` marks the release deployable. Releases are immutable and reused per tree.
+- **On merge to `main`**: if `main`'s tree matches a tested PR release, which is normal when the PR was up to date, `deploy` ships that release right away with no tests or builds. Otherwise the run tests, builds, and deploys. A failing gate stops the run before `deploy`, so production stays on the last good commit. To redeploy without a new merge, start **Build and deploy** manually from `main` (Actions → Run workflow).
 
-Three runners on the Mac mini carry the `slimlytics` label (`slimlytics-mini`, `-2`, `-3` in `~/.local/share/github-runners/slimlytics*`), so `backend`, `web`, and `cli` run in parallel; `container` and then `deploy` follow. Each runner keeps its own Cargo target directory, so its first Rust build is cold.
+Deploys pass `--prebuilt` to `scripts/deploy-production.sh`. The server only packages the artifacts into images (`compose.prebuilt.yaml`, `docker/prebuilt/`) and does not compile anything. Caddy is recreated only when `docker/Caddyfile` changed. Health checks poll every second while containers start. Rollback still rebuilds the previous source snapshot on the server.
 
-Container checks use `compose.ci.yaml` to poll health every second instead of waiting for production polling intervals. The frontend Docker build skips duplicate checks only when the web job passed for the same revision; ordinary Docker builds still run their checks. Rust build dependencies and targets are cached in BuildKit mounts, with the executable copied into the image outside the cache. The first build fills the cache; later source changes reuse dependency compilation.
+Three runners on the Mac mini carry the `slimlytics` label (`slimlytics-mini`, `-2`, `-3` in `~/.local/share/github-runners/slimlytics*`), so jobs run in parallel. Each runner keeps its own Cargo target directory, so its first Rust build is cold; the cross-compile cache lives in Docker BuildKit and is shared.
 
 ## Local AI review
 

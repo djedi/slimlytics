@@ -1,0 +1,15 @@
+# Production images from artifacts already built and tested in CI (scripts/build-prebuilt.sh),
+# so a deploy only packages them instead of compiling on the server.
+# Usage: docker compose -f compose.yaml -f compose.proxy.yaml -f compose.prebuilt.yaml up -d --build
+services:
+  backend:
+    # The production host is x86-64; CI smoke-tests the same images under emulation.
+    platform: linux/amd64
+    build:
+      context: .prebuilt/backend
+      dockerfile: Dockerfile
+  frontend:
+    platform: linux/amd64
+    build:
+      context: .prebuilt/frontend
+      dockerfile: Dockerfile

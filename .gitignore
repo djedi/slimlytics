@@ -33,3 +33,6 @@ postgres-data/
 /data/geoip/*
 !/data/geoip/.gitkeep
 backups/*.sql*
+
+# Prebuilt release artifacts (scripts/build-prebuilt.sh)
+/.prebuilt/
