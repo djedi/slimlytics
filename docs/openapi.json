@@ -3291,6 +3291,104 @@
         ]
       }
     },
+    "/api/sites/summary": {
+      "get": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Get overview cards for every site",
+        "operationId": "getSiteSummaries",
+        "responses": {
+          "200": {
+            "description": "One summary per site, in site creation order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SiteSummary"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Failed to deserialize path parameters"
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required or invalid/expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Credential lacks permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive first date"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive last date"
+          }
+        ],
+        "description": "Visitors with previous-period comparison, page views, bounce rate, average visit duration, current online visitors, and the daily trend for every site the caller can read, in one request. Each site uses its own timezone for the inclusive dates."
+      }
+    },
     "/api/sites/{siteId}/overview": {
       "get": {
         "tags": [
@@ -6866,6 +6964,50 @@
               "number",
               "null"
             ]
+          }
+        }
+      },
+      "SiteSummary": {
+        "type": "object",
+        "required": [
+          "siteId",
+          "views",
+          "visitors",
+          "currentOnline",
+          "bounceRate",
+          "avgDurationSeconds",
+          "trend"
+        ],
+        "properties": {
+          "siteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "views": {
+            "type": "integer",
+            "description": "Human page views in the range"
+          },
+          "visitors": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "currentOnline": {
+            "type": "integer",
+            "description": "Distinct human visitors with an event in the last five minutes"
+          },
+          "bounceRate": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "avgDurationSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "trend": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrendPoint"
+            }
           }
         }
       },

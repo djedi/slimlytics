@@ -325,6 +325,20 @@ pub struct Overview {
     pub trend: Vec<TrendPoint>,
 }
 
+/// One site's card on the all-sites dashboard: the overview metrics it shows, without the
+/// sessions and custom-event comparisons only the single-site overview needs.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteSummary {
+    pub site_id: Uuid,
+    pub views: i64,
+    pub visitors: Metric,
+    pub current_online: i64,
+    pub bounce_rate: f64,
+    pub avg_duration_seconds: f64,
+    pub trend: Vec<TrendPoint>,
+}
+
 #[derive(Debug, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct TrendPoint {

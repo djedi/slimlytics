@@ -30,4 +30,11 @@ describe('site card', () => {
     expect(document.body).not.toHaveTextContent('Check installation');
     expect(screen.getByRole('link')).toHaveAttribute('href', '/app/s1');
   });
+
+  it('shows a placeholder, not "unavailable", while stats are still loading', () => {
+    render(SiteCard, { site, days: 28, pending: true });
+    expect(document.body).not.toHaveTextContent('Stats unavailable');
+    expect(document.body).not.toHaveTextContent('No visits');
+    expect(screen.getByRole('link')).toHaveAttribute('aria-busy', 'true');
+  });
 });

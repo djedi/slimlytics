@@ -26,6 +26,7 @@ fn validates_stable_idempotency_keys() {
 #[test]
 fn maps_rest_operations_to_least_privilege_scopes() {
     assert_eq!(required_scope("GET", "/api/sites"), SITES_READ);
+    assert_eq!(required_scope("GET", "/api/sites/summary"), ANALYTICS_READ);
     assert_eq!(
         required_scope("DELETE", "/api/account/tokens/current"),
         SITES_READ

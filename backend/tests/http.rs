@@ -156,6 +156,7 @@ async fn openapi_document_covers_every_public_backend_route() {
         ("/api/sites/{siteId}/icon", "get"),
         ("/api/sites/{siteId}/icon", "put"),
         ("/api/sites/{siteId}/collection-health", "get"),
+        ("/api/sites/summary", "get"),
         ("/api/sites/{siteId}/overview", "get"),
         ("/api/sites/{siteId}/reports/{dimension}", "get"),
         ("/api/sites/{siteId}/insights/journeys", "get"),

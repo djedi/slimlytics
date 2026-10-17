@@ -94,6 +94,33 @@ describe('ApiClient', () => {
     });
   });
 
+  it('loads every site summary in one request', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify([{
+      siteId: 's1',
+      views: 12,
+      visitors: { current: 7, previous: 5, change_percent: 40 },
+      currentOnline: 1,
+      bounceRate: 37.5,
+      avgDurationSeconds: 83.2,
+      trend: [{ date: '2026-07-30', visitors: 7, pageViews: 12 }]
+    }]), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const api = new ApiClient('/api', fetcher, false);
+
+    const summaries = await api.siteSummaries(7);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0][0])).toMatch(/^\/api\/sites\/summary\?from=\d{4}-\d{2}-\d{2}&to=/);
+    expect(summaries.get('s1')).toMatchObject({
+      visitors: 7,
+      previousVisitors: 5,
+      pageViews: 12,
+      change: 40,
+      currentOnline: 1,
+      bounceRate: 37.5,
+      avgDuration: 83.2,
+      trend: [{ date: '2026-07-30', visitors: 7, pageViews: 12 }]
+    });
+  });
+
   it('normalizes goal conversion evidence returned by the API', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify([{
       id: 'g1',
