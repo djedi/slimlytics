@@ -172,7 +172,17 @@
                       {:else if table.dimension === 'country'}
                         {row.value.toUpperCase()}
                       {:else}
-                        <span title={row.value}>{row.value}</span>
+                        <span class="query-cell">
+                          <span title={row.value}>{row.value}</span>
+                          <a
+                            class="google-link"
+                            href={`https://www.google.com/search?q=${encodeURIComponent(row.value)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            aria-label={`Search Google for “${row.value}”`}
+                            title="Search Google"><ExternalLink size={12} aria-hidden="true" /></a
+                          >
+                        </span>
                       {/if}
                     </th>
                     <td class="numeric"><strong>{compactNumber(row.clicks)}</strong></td>
@@ -208,6 +218,23 @@
   }
   .search-label a:hover {
     color: var(--accent);
+  }
+  /* Truncate the query, never the link beside it. */
+  .query-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .query-cell > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .search-label .google-link {
+    flex: none;
+    display: inline-flex;
+    color: var(--muted);
   }
   .empty.large :global(svg) {
     justify-self: center;

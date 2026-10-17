@@ -37,6 +37,14 @@ describe('Search Console view', () => {
     expect(summary).toHaveTextContent('5.6');
   });
 
+  it('links each query to a Google search for it', () => {
+    render(SearchConsoleView, { status: connected, reports: { ...reports, query: [row('cats & dogs?', 1, 2, 3)] }, settingsHref: '/settings', onSync: vi.fn() });
+    const link = screen.getByRole('link', { name: 'Search Google for “cats & dogs?”' });
+    expect(link).toHaveAttribute('href', 'https://www.google.com/search?q=cats%20%26%20dogs%3F');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
   it('lists top queries, pages, countries, and devices', () => {
     render(SearchConsoleView, { status: connected, reports, settingsHref: '/settings', onSync: vi.fn() });
     expect(screen.getByRole('table', { name: 'Top queries' })).toHaveTextContent('privacy analytics');
