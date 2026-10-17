@@ -1,16 +1,18 @@
 name: CI
 
+# Runs on merge to main only; a passing run triggers the production deploy. PRs are
+# reviewed and merged without required checks.
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# Cancel superseded runs of the same PR/branch.
+# A newer merge supersedes an older run; its deploy includes the older commits.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
