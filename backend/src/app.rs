@@ -45,6 +45,7 @@ use axum::{
     Json, Router,
 };
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -52,7 +53,7 @@ use std::{
     convert::Infallible,
     net::{IpAddr, SocketAddr},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt};
@@ -100,6 +101,9 @@ pub struct AppState {
     /// Hosted-plan billing; `None` (the default) means no plans or limits.
     billing: Option<Arc<crate::billing::BillingConfig>>,
     http: reqwest::Client,
+    /// Previous-period distinct visitors per (site, period start, period end). Those periods
+    /// have ended, so the all-sites dashboard reuses them instead of rescanning raw events.
+    previous_visitors: Arc<DashMap<PreviousPeriodKey, (Instant, i64)>>,
 }
 impl AppState {
     pub fn new(pool: PgPool, jwt_secret: String, identity_secret: Vec<u8>) -> Self {
@@ -121,6 +125,7 @@ impl AppState {
             search_console: None,
             billing: None,
             http: reqwest::Client::new(),
+            previous_visitors: Arc::new(DashMap::new()),
         }
     }
     pub fn with_public_url(mut self, value: &str) -> Result<Self, ApiError> {
@@ -387,6 +392,7 @@ pub fn app(state: AppState) -> Router {
             "/api/sites/{site_id}/collection-health",
             get(get_collection_health),
         )
+        .route("/api/sites/summary", get(site_summaries))
         .route("/api/sites/{site_id}/overview", get(overview))
         .route("/api/sites/{site_id}/reports/{dimension}", get(report))
         .route(
@@ -1963,9 +1969,10 @@ async fn overview(
          LEFT JOIN LATERAL ( \
            SELECT count(DISTINCT visitor_id) FILTER(WHERE traffic_class='human') visitors, \
              count(*) FILTER(WHERE traffic_class='human' AND event_name='pageview') page_views \
-           FROM events WHERE site_id=$1 AND occurred_at >= $5 AND occurred_at < $6 \
+           FROM events WHERE r.site_id IS NULL AND site_id=$1 \
+             AND occurred_at >= $5 AND occurred_at < $6 \
              AND (occurred_at AT TIME ZONE $4)::date=day::date \
-         ) live ON r.site_id IS NULL \
+         ) live ON true \
          ORDER BY day",
     )
     .bind(site)
@@ -1986,6 +1993,189 @@ async fn overview(
         avg_duration_seconds,
         trend,
     }))
+}
+/// How long a previous-period visitor count is reused. Matches the hourly rollup refresh so
+/// late-arriving events and retention pruning are picked up on the same cadence.
+const PREVIOUS_VISITORS_TTL: Duration = Duration::from_secs(3600);
+/// Prune expired previous-period entries once the cache grows past this many.
+const PREVIOUS_VISITORS_PRUNE_AT: usize = 4096;
+
+type SummaryRow = (Uuid, i64, i64, i64);
+/// A site and its previous period's start and end.
+type PreviousPeriodKey = (Uuid, DateTime<Utc>, DateTime<Utc>);
+type SessionRow = (Uuid, f64, f64);
+type SummaryTrendRow = (Uuid, chrono::NaiveDate, i64, i64);
+
+/// Overview cards for every site the user belongs to, in a handful of set-based queries
+/// rather than one overview request (and several raw scans) per site.
+async fn site_summaries(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Query(q): Query<RangeQuery>,
+) -> Result<Json<Vec<SiteSummary>>, ApiError> {
+    // Range checks do not depend on any site's timezone, so reject bad ranges up front.
+    date_bounds(q.from, q.to, "UTC").map_err(|message| ApiError::BadRequest(message.into()))?;
+    let sites: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT s.id,s.timezone FROM sites s JOIN site_memberships m ON m.site_id=s.id \
+         WHERE m.user_id=$1 ORDER BY s.created_at",
+    )
+    .bind(u)
+    .fetch_all(&s.pool)
+    .await?;
+    let now = Instant::now();
+    let wall_now = Utc::now();
+    let (mut ids, mut starts, mut ends, mut priors, mut zones) =
+        (vec![], vec![], vec![], vec![], vec![]);
+    let mut cached = std::collections::HashMap::new();
+    for (id, timezone) in sites {
+        // Each site's range is its own local calendar days. A site whose timezone cannot place
+        // them (e.g. a DST gap at midnight) is left out, so its card alone shows unavailable.
+        let Ok((a, b, p)) = date_bounds(q.from, q.to, &timezone) else {
+            continue;
+        };
+        // Only a period that has fully ended is cached; a future range's "previous" can be live.
+        let cacheable = a <= wall_now;
+        let prior = match s.previous_visitors.get(&(id, p, a)).filter(|_| cacheable) {
+            Some(entry) if now.duration_since(entry.0) < PREVIOUS_VISITORS_TTL => {
+                cached.insert(id, entry.1);
+                // An empty previous window, so the query skips rescanning that period.
+                a
+            }
+            _ => p,
+        };
+        ids.push(id);
+        starts.push(a);
+        ends.push(b);
+        priors.push(prior);
+        zones.push(timezone);
+    }
+    if ids.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    // Per-site DISTINCT subqueries hash-aggregate each site separately, several times faster
+    // than count(DISTINCT ...) FILTER over every site's rows at once.
+    let visitors = sqlx::query_as::<_, SummaryRow>(
+        "SELECT r.site_id, \
+           (SELECT count(*) FROM (SELECT DISTINCT visitor_id FROM events \
+             WHERE site_id=r.site_id AND traffic_class='human' \
+             AND occurred_at >= r.a AND occurred_at < r.b) v), \
+           (SELECT count(*) FROM (SELECT DISTINCT visitor_id FROM events \
+             WHERE site_id=r.site_id AND traffic_class='human' \
+             AND occurred_at >= r.p AND occurred_at < r.a) v), \
+           (SELECT count(*) FROM events WHERE site_id=r.site_id AND traffic_class='human' \
+             AND event_name='pageview' AND occurred_at >= r.a AND occurred_at < r.b) \
+         FROM unnest($1::uuid[],$2::timestamptz[],$3::timestamptz[],$4::timestamptz[]) \
+           r(site_id,a,b,p)",
+    )
+    .bind(&ids)
+    .bind(&starts)
+    .bind(&ends)
+    .bind(&priors)
+    .fetch_all(&s.pool);
+    let sessions = sqlx::query_as::<_, SessionRow>(
+        "SELECT r.site_id, \
+           COALESCE(100.0 * count(*) FILTER (WHERE page_views=1) / NULLIF(count(page_views),0),0)::float8, \
+           COALESCE(avg(duration_seconds),0)::float8 \
+         FROM unnest($1::uuid[],$2::timestamptz[],$3::timestamptz[]) r(site_id,a,b) \
+         LEFT JOIN LATERAL ( \
+           SELECT count(*) FILTER (WHERE event_name='pageview') page_views, \
+             EXTRACT(EPOCH FROM max(occurred_at)-min(occurred_at)) duration_seconds \
+           FROM events WHERE site_id=r.site_id AND traffic_class='human' \
+             AND occurred_at >= r.a AND occurred_at < r.b \
+           GROUP BY session_id \
+         ) sessions ON page_views > 0 \
+         GROUP BY r.site_id",
+    )
+    .bind(&ids)
+    .bind(&starts)
+    .bind(&ends)
+    .fetch_all(&s.pool);
+    // Completed days come from daily_site_rollups; only days without a rollup row (today,
+    // or days the hourly refresh has not reached) read raw events. The rollup check sits
+    // inside the lateral so PostgreSQL skips the raw scan instead of discarding its result.
+    let trend = sqlx::query_as::<_, SummaryTrendRow>(
+        "SELECT r.site_id, day::date, \
+           COALESCE(ru.visitors,live.visitors,0)::bigint, \
+           COALESCE(ru.page_views,live.page_views,0)::bigint \
+         FROM unnest($1::uuid[],$2::timestamptz[],$3::timestamptz[],$4::text[]) r(site_id,a,b,tz) \
+         CROSS JOIN generate_series($5::date,$6::date,interval '1 day') day \
+         LEFT JOIN daily_site_rollups ru ON ru.site_id=r.site_id AND ru.metric_date=day::date \
+         LEFT JOIN LATERAL ( \
+           SELECT count(DISTINCT visitor_id) visitors, \
+             count(*) FILTER(WHERE event_name='pageview') page_views \
+           FROM events WHERE ru.site_id IS NULL AND site_id=r.site_id \
+             AND traffic_class='human' AND occurred_at >= r.a AND occurred_at < r.b \
+             AND (occurred_at AT TIME ZONE r.tz)::date=day::date \
+         ) live ON true \
+         ORDER BY r.site_id, day",
+    )
+    .bind(&ids)
+    .bind(&starts)
+    .bind(&ends)
+    .bind(&zones)
+    .bind(q.from)
+    .bind(q.to)
+    .fetch_all(&s.pool);
+    let online = sqlx::query_as::<_, (Uuid, i64)>(
+        "SELECT site_id, count(DISTINCT visitor_id) FROM events \
+         WHERE site_id=ANY($1) AND traffic_class='human' \
+         AND occurred_at > now() - interval '5 minutes' GROUP BY site_id",
+    )
+    .bind(&ids)
+    .fetch_all(&s.pool);
+    let (visitors, sessions, trend, online) = tokio::try_join!(visitors, sessions, trend, online)?;
+
+    let mut visitors: std::collections::HashMap<_, _> = visitors
+        .into_iter()
+        .map(|(id, current, previous, views)| (id, (current, previous, views)))
+        .collect();
+    let mut sessions: std::collections::HashMap<_, _> = sessions
+        .into_iter()
+        .map(|(id, bounce, duration)| (id, (bounce, duration)))
+        .collect();
+    let online: std::collections::HashMap<_, _> = online.into_iter().collect();
+    let mut trends: std::collections::HashMap<Uuid, Vec<TrendPoint>> =
+        std::collections::HashMap::new();
+    for (id, date, visitors, page_views) in trend {
+        trends.entry(id).or_default().push(TrendPoint {
+            date,
+            visitors,
+            page_views,
+        });
+    }
+    if s.previous_visitors.len() >= PREVIOUS_VISITORS_PRUNE_AT {
+        s.previous_visitors
+            .retain(|_, entry| now.duration_since(entry.0) < PREVIOUS_VISITORS_TTL);
+    }
+    let summaries = ids
+        .iter()
+        .zip(starts.iter().zip(&priors))
+        .map(|(&id, (&a, &prior))| {
+            // Raw counts, like the single-site overview, so late events show up immediately.
+            let (current, scanned_previous, views) = visitors.remove(&id).unwrap_or_default();
+            let previous = match cached.get(&id) {
+                Some(&previous) => previous,
+                None if a <= wall_now => {
+                    s.previous_visitors
+                        .insert((id, prior, a), (now, scanned_previous));
+                    scanned_previous
+                }
+                None => scanned_previous,
+            };
+            let trend = trends.remove(&id).unwrap_or_default();
+            let (bounce_rate, avg_duration_seconds) = sessions.remove(&id).unwrap_or_default();
+            SiteSummary {
+                site_id: id,
+                views,
+                visitors: metric(current, previous),
+                current_online: online.get(&id).copied().unwrap_or_default(),
+                bounce_rate,
+                avg_duration_seconds,
+                trend,
+            }
+        })
+        .collect();
+    Ok(Json(summaries))
 }
 async fn report(
     State(s): State<AppState>,

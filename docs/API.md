@@ -86,6 +86,7 @@ Returns the complete JavaScript tracker plus a site initializer targeting the ex
 
 ## Reporting
 
+- `GET /api/sites/summary?from=2026-07-01&to=2026-07-28` (overview cards for every site in one request)
 - `GET /api/sites/{siteId}/overview?from=2026-07-01&to=2026-07-28`
 - `GET /api/sites/{siteId}/reports/pages`
 - `GET /api/sites/{siteId}/reports/referrers`

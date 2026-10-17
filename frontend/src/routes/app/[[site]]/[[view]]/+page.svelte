@@ -224,9 +224,14 @@
         .catch(() => {});
     // Keep stats fresh while the dashboard stays open (e.g. phone browsing + desktop dashboard).
     const refresh = () => {
-      if (document.visibilityState !== 'visible' || loading) return;
+      if (document.visibilityState !== 'visible' || loading || summariesPending) return;
       if (!site) {
-        void refreshSitesQuietly().catch(() => {});
+        if (!quietRefreshing) {
+          quietRefreshing = true;
+          void refreshSitesQuietly()
+            .catch(() => {})
+            .finally(() => (quietRefreshing = false));
+        }
         void refreshBillingQuietly();
       }
       else if (view !== 'settings' && view !== 'search') void refreshViewQuietly().catch(() => {});
@@ -376,30 +381,63 @@
     void loadBilling().then(() => {
       if (page.url.searchParams.get('billing') === 'success') void confirmCheckout();
     });
+    const range = days;
+    const request = ++sitesRequest;
+    // Start the stats now, but show the site list (and resolve deep links) as soon as it arrives.
+    const summaries = api.siteSummaries(range);
+    summaries.catch(() => {});
     try {
-      await refreshSitesQuietly();
+      const loaded = await api.sites();
+      if (request !== sitesRequest) return;
+      sites = loaded.map((item) => ({ ...item, overview: undefined }));
+      // The stats for this range are on their way; returning to All sites must not reload them.
+      sitesDays = range;
+      summariesPending = true;
     } catch (reason) {
-      error = reason instanceof Error ? reason.message : 'Could not load sites.';
+      if (request === sitesRequest) {
+        error = reason instanceof Error ? reason.message : 'Could not load sites.';
+        summariesPending = false;
+      }
+      return;
     } finally {
-      loading = false;
-      sitesLoaded = true;
+      if (request === sitesRequest) {
+        loading = false;
+        sitesLoaded = true;
+      }
+    }
+    try {
+      const overviews = await summaries;
+      if (request !== sitesRequest) return;
+      // Apply to the current list: sites added or edited while the stats loaded must survive.
+      sites = applySummaries(sites, overviews);
+    } catch {
+      // Cards without an overview show as unavailable; the periodic refresh retries.
+    } finally {
+      if (request === sitesRequest) summariesPending = false;
     }
   }
   // The date range the workspace overviews were loaded with. A site view can change the
   // range, so returning to All sites must reload when it no longer matches.
   let sitesDays: number | null = null;
+  // Bumped per site-list load so a slower, older response cannot overwrite a newer one.
+  let sitesRequest = 0;
+  // Counts local site edits so a background refresh fetched before one cannot undo it.
+  let sitesEdits = 0;
+  // A background refresh is in flight; later ticks wait rather than superseding it forever.
+  let quietRefreshing = false;
+  // The site list is showing but its stats are still loading.
+  let summariesPending = $state(false);
+  function applySummaries(loaded: Site[], overviews: Map<string, Overview>): Site[] {
+    return loaded.map((item) => ({ ...item, overview: overviews.get(item.id) ?? item.overview }));
+  }
   async function refreshSitesQuietly() {
     const range = days;
-    const loaded = await api.sites();
-    sites = await Promise.all(
-      loaded.map(async (item) => {
-        try {
-          return { ...item, overview: await api.overview(item.id, range) };
-        } catch {
-          return item;
-        }
-      })
-    );
+    const request = ++sitesRequest;
+    const edits = sitesEdits;
+    const [loaded, overviews] = await Promise.all([api.sites(), api.siteSummaries(range)]);
+    // A site added or edited meanwhile is newer than this snapshot; the next tick picks it up.
+    if (request !== sitesRequest || edits !== sitesEdits) return;
+    sites = applySummaries(loaded, overviews);
     sitesDays = range;
   }
   async function loadView() {
@@ -610,6 +648,7 @@
     const updated = await api.updateAntiAdblock(site.id, settings);
     const next = { ...updated, overview: site.overview };
     site = next;
+    sitesEdits++;
     sites = sites.map((item) => (item.id === next.id ? { ...next, overview: item.overview } : item));
   }
   async function saveSiteIcon(settings: SiteIconSettings) {
@@ -617,6 +656,7 @@
     const updated = await api.updateSiteIcon(site.id, settings);
     // The user may have switched sites while the favicon was fetched: only replace the active
     // site if it is still the one saved.
+    sitesEdits++;
     sites = sites.map((item) => (item.id === updated.id ? { ...updated, overview: item.overview } : item));
     if (site?.id === updated.id) site = { ...updated, overview: site.overview };
   }
@@ -758,6 +798,7 @@
     if (!site || !confirm('Rotate the server ingestion key? Existing log shippers will stop working.')) return;
     const result = await api.rotateServerKey(site.id);
     site = { ...site, serverWriteKey: result.serverWriteKey };
+    sitesEdits++;
     sites = sites.map((item) => item.id === site?.id ? { ...item, serverWriteKey: result.serverWriteKey } : item);
   }
   async function addGoal() {
@@ -780,7 +821,10 @@
         domain,
         allowedOrigins: [origin]
       });
-      sites = [...sites, { ...created, overview: await api.overview(created.id, days) }];
+      const overview = await api.overview(created.id, days);
+      sitesEdits++;
+      // A background refresh may already have listed it.
+      sites = [...sites.filter((item) => item.id !== created.id), { ...created, overview }];
       void refreshBillingQuietly();
       newSite = false;
       siteName = '';
@@ -929,29 +973,29 @@
           <PlanCard status={billingStatus} busy={billingBusy} onCheckout={startCheckout} onPortal={openBillingPortal} />
         {/if}
         {#if sites.length}
-          <section class="portfolio-summary" aria-label="Workspace totals">
+          <section class="portfolio-summary" class:pending={summariesPending} aria-label="Workspace totals" aria-busy={summariesPending}>
             <div>
               <span class="label"><Users size={15} aria-hidden="true" /> Visitors</span>
-              <strong>{compactNumber(totals.visitors)}</strong>
-              <ChangeBadge change={totals.change} />
+              <strong>{summariesPending ? '—' : compactNumber(totals.visitors)}</strong>
+              {#if !summariesPending}<ChangeBadge change={totals.change} />{/if}
             </div>
             <div>
               <span class="label"><FileText size={15} aria-hidden="true" /> Page views</span>
-              <strong>{compactNumber(totals.pageViews)}</strong>
+              <strong>{summariesPending ? '—' : compactNumber(totals.pageViews)}</strong>
               <small>{totals.visitors ? (totals.pageViews / totals.visitors).toFixed(1) : '0'} per visitor</small>
             </div>
             <div>
               <span class="label"><Radio size={15} aria-hidden="true" /> Online now</span>
-              <strong>{totals.online}</strong>
+              <strong>{summariesPending ? '—' : totals.online}</strong>
               <small>across {sites.length} {sites.length === 1 ? 'site' : 'sites'}</small>
             </div>
             <div>
               <span class="label"><Layers size={15} aria-hidden="true" /> Active sites</span>
-              <strong>{activeSites}<span class="of">/{sites.length}</span></strong>
+              <strong>{summariesPending ? '—' : activeSites}<span class="of">/{sites.length}</span></strong>
               <small>with visits in {days} days</small>
             </div>
           </section>
-          {#if unavailableSites}
+          {#if unavailableSites && !summariesPending}
             <p class="rollup-note" role="status">
               Totals exclude {unavailableSites}
               {unavailableSites === 1 ? 'site whose stats' : 'sites whose stats'} couldn’t load.
@@ -969,7 +1013,7 @@
           </div>
           <div class="site-grid rollup-grid">
             {#each sortedSites as item (item.id)}
-              <SiteCard site={item} {days} {apiBase} />
+              <SiteCard site={item} {days} {apiBase} pending={summariesPending && !item.overview} />
             {/each}
             <button class="add-site-card" onclick={() => (newSite = true)}>
               <span><Plus size={20} aria-hidden="true" /></span>

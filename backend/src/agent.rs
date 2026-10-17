@@ -26,6 +26,7 @@ pub fn required_scope(method: &str, path: &str) -> &'static str {
         };
     }
     let analytics_path = [
+        "/sites/summary",
         "/overview",
         "/reports/",
         "/visitors",

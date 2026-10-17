@@ -726,3 +726,180 @@ fn json_request(method: &str, uri: &str, token: Option<&str>, body: Value) -> Re
 async fn body_json(body: Body) -> Value {
     serde_json::from_slice(&to_bytes(body, usize::MAX).await.unwrap()).unwrap()
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn site_summaries_match_each_sites_overview() {
+    let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL required");
+    let pool = PgPoolOptions::new().connect(&url).await.unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    let router = app(AppState::new(
+        pool.clone(),
+        "01234567890123456789012345678901".into(),
+        b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
+    ));
+    let email = format!("summary+{}@example.com", uuid::Uuid::new_v4());
+    let register = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/register",
+            None,
+            json!({"email":email,"password":"long-enough-password"}),
+        ))
+        .await
+        .unwrap();
+    let token = body_json(register.into_body()).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // With no sites yet: an empty list, but a bad range is still rejected.
+    for (query, status) in [
+        ("from=2026-07-01&to=2026-07-28", StatusCode::OK),
+        ("from=2026-07-28&to=2026-07-01", StatusCode::BAD_REQUEST),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(json_request(
+                "GET",
+                &format!("/api/sites/summary?{query}"),
+                Some(&token),
+                json!({}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{query}");
+    }
+    let mut site_ids = vec![];
+    for (name, timezone) in [("Busy", "UTC"), ("Quiet", "America/Denver")] {
+        let created = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                "/api/sites",
+                Some(&token),
+                json!({"name":name,"domain":format!("{}.example.com", uuid::Uuid::new_v4()),
+                    "timezone":timezone,"retention_days":90}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let id = body_json(created.into_body()).await["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        site_ids.push(uuid::Uuid::parse_str(&id).unwrap());
+    }
+    // Busy: two sessions in the current range (one bounced), one returning visitor, plus a
+    // previous-period visit and a bot that must not count. Quiet has no events at all.
+    for (visitor, session, event, age, class) in [
+        ("v1", "s1", "pageview", "1 minute", "human"),
+        ("v1", "s1", "pageview", "30 seconds", "human"),
+        ("v2", "s2", "pageview", "3 days", "human"),
+        ("v1", "s3", "signup", "5 days", "human"),
+        ("v3", "s4", "pageview", "10 days", "human"),
+        ("bot", "s5", "pageview", "2 days", "bot"),
+    ] {
+        sqlx::query(
+            "INSERT INTO events(site_id,visitor_id,session_id,event_name,url,path,occurred_at,traffic_class) \
+             VALUES($1,$2,$3,$4,'https://example.com/','/',now()-$5::interval,$6::traffic_class)",
+        )
+        .bind(site_ids[0])
+        .bind(visitor)
+        .bind(session)
+        .bind(event)
+        .bind(age)
+        .bind(class)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    // Completed days are served from rollups; today stays raw.
+    refresh_daily_rollups(&pool, 30).await.unwrap();
+
+    let to = chrono::Utc::now().date_naive();
+    let from = to - chrono::Days::new(6);
+    let range = format!("from={from}&to={to}");
+    let get = |path: String| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let response = router
+                .oneshot(json_request("GET", &path, Some(&token), json!({})))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            body_json(response.into_body()).await
+        }
+    };
+    // Twice: the second request reuses the cached previous-period visitors.
+    for _ in 0..2 {
+        let summaries = get(format!("/api/sites/summary?{range}")).await;
+        let summaries = summaries.as_array().unwrap();
+        assert_eq!(summaries.len(), 2);
+        for (summary, id) in summaries.iter().zip(&site_ids) {
+            assert_eq!(summary["siteId"], id.to_string());
+            let overview = get(format!("/api/sites/{id}/overview?{range}")).await;
+            assert_eq!(summary["views"], overview["views"]["current"], "{id}");
+            assert_eq!(summary["visitors"], overview["visitors"], "{id}");
+            assert_eq!(summary["currentOnline"], overview["currentOnline"]);
+            assert_eq!(summary["bounceRate"], overview["bounceRate"]);
+            assert_eq!(
+                summary["avgDurationSeconds"],
+                overview["avgDurationSeconds"]
+            );
+            assert_eq!(summary["trend"], overview["trend"]);
+        }
+        assert_eq!(summaries[0]["views"], 3);
+        assert_eq!(summaries[0]["visitors"]["current"], 2);
+        assert_eq!(summaries[0]["visitors"]["previous"], 1);
+        assert_eq!(summaries[0]["currentOnline"], 1);
+        assert_eq!(summaries[1]["visitors"]["current"], 0);
+        assert_eq!(summaries[1]["trend"].as_array().unwrap().len(), 7);
+    }
+
+    // Santiago has no local midnight on 2026-09-06 (DST); only that site drops out.
+    let created = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/sites",
+            Some(&token),
+            json!({"name":"Santiago","domain":format!("{}.example.com", uuid::Uuid::new_v4()),
+                "timezone":"America/Santiago","retention_days":90}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let summaries = get("/api/sites/summary?from=2026-09-06&to=2026-10-03".into()).await;
+    let ids: Vec<_> = summaries
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|summary| summary["siteId"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(ids, [site_ids[0].to_string(), site_ids[1].to_string()]);
+    let reversed = router
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            &format!("/api/sites/summary?from={to}&to={from}"),
+            Some(&token),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(reversed.status(), StatusCode::BAD_REQUEST);
+
+    let unauthenticated = router
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            &format!("/api/sites/summary?{range}"),
+            None,
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+}

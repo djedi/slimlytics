@@ -172,6 +172,15 @@ interface WireOverview {
   avg_duration_seconds?: number;
   trend?: TrendPoint[];
 }
+interface WireSiteSummary {
+  siteId: string;
+  views: number;
+  visitors: WireMetric;
+  currentOnline: number;
+  bounceRate: number;
+  avgDurationSeconds: number;
+  trend: TrendPoint[];
+}
 interface WireReportRow { value: string; views: number; visitors: number }
 interface WireGoal { id: string; name: string; eventName?: string; event_name?: string; pathPattern?: string; path_pattern?: string; conversions?: number; conversionRate?: number; conversion_rate?: number }
 function dates(days: number) {
@@ -449,6 +458,27 @@ export class ApiClient {
       currentOnline: wire.currentOnline ?? wire.current_online ?? 0,
       trend: wire.trend ?? []
     };
+  }
+  /** Overview cards for every site in one request, keyed by site ID; `sessions` is not included. */
+  async siteSummaries(days = 28): Promise<Map<string, Overview>> {
+    const rows = await this.request<WireSiteSummary[]>(`/sites/summary?${dateQuery(days)}`, {}, () =>
+      demoSites.map((site) => {
+        const demo = site.overview ?? baseOverview;
+        const previous = Math.round(demo.visitors / (1 + demo.change / 100));
+        return { siteId: site.id, views: demo.pageViews, visitors: { current: demo.visitors, previous, change_percent: demo.change }, currentOnline: demo.currentOnline, bounceRate: demo.bounceRate, avgDurationSeconds: demo.avgDuration, trend: demo.trend };
+      })
+    );
+    return new Map(rows.map((row) => [row.siteId, {
+      visitors: row.visitors.current,
+      previousVisitors: row.visitors.previous,
+      sessions: 0,
+      pageViews: row.views,
+      bounceRate: row.bounceRate,
+      avgDuration: row.avgDurationSeconds,
+      change: row.visitors.change_percent ?? 0,
+      currentOnline: row.currentOnline,
+      trend: row.trend
+    }]));
   }
   async report(id: string, type: string, days = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(days)}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, visitors: row.visitors })); }
   journeys(id: string, days = 28) { return this.request<Journey[]>(`/sites/${id}/insights/journeys?${dateQuery(days)}`, {}, () => []); }

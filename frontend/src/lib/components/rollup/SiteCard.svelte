@@ -6,16 +6,22 @@
   import SiteIcon from '../SiteIcon.svelte';
   import ChangeBadge from './ChangeBadge.svelte';
 
-  let { site, days, apiBase }: { site: Site; days: number; apiBase?: string } = $props();
+  let {
+    site,
+    days,
+    apiBase,
+    pending = false
+  }: { site: Site; days: number; apiBase?: string; pending?: boolean } = $props();
 
   const overview = $derived(site.overview);
   const trend = $derived(overview?.trend ?? []);
   const values = $derived(trend.map((point) => point.visitors));
   const paths = $derived(trendPaths(values, 300, 60));
   // No overview means the request failed: show that as unavailable, not as a quiet site.
-  const unavailable = $derived(!overview);
-  const quiet = $derived(!unavailable && overview!.visitors === 0 && values.every((value) => value === 0));
-  const muted = $derived(quiet || unavailable);
+  // While stats are still loading, the card shows a placeholder instead.
+  const unavailable = $derived(!overview && !pending);
+  const quiet = $derived(!!overview && overview.visitors === 0 && values.every((value) => value === 0));
+  const muted = $derived(quiet || unavailable || pending);
   const peak = $derived(
     trend.reduce<{ date: string; visitors: number } | null>(
       (best, point) => (!best || point.visitors > best.visitors ? point : best),
@@ -31,7 +37,7 @@
   );
 </script>
 
-<a class="site-card-v2" class:quiet {href} style={`--hue:${avatarHue(site.domain)}`}>
+<a class="site-card-v2" class:quiet class:pending aria-busy={pending} {href} style={`--hue:${avatarHue(site.domain)}`}>
   <header>
     <SiteIcon {site} size={38} {apiBase} />
     <span class="name">
@@ -44,12 +50,14 @@
   </header>
 
   <div class="headline">
-    <strong>{unavailable ? '—' : compactNumber(overview?.visitors ?? 0)}</strong>
+    <strong>{unavailable || pending ? '—' : compactNumber(overview?.visitors ?? 0)}</strong>
     <span>visitors</span>
     {#if !muted}<ChangeBadge change={overview?.change} />{/if}
   </div>
 
-  {#if unavailable}
+  {#if pending}
+    <div class="empty-chart loading-chart" aria-hidden="true"></div>
+  {:else if unavailable}
     <div class="empty-chart">
       <span>Stats unavailable</span>
       <span class="hint-muted">Couldn’t load this site’s overview. It will retry shortly.</span>
@@ -73,7 +81,7 @@
   {/if}
 
   <dl>
-    <div><dt>Page views</dt><dd>{unavailable ? '—' : compactNumber(overview?.pageViews ?? 0)}</dd></div>
+    <div><dt>Page views</dt><dd>{unavailable || pending ? '—' : compactNumber(overview?.pageViews ?? 0)}</dd></div>
     <div><dt>Bounce rate</dt><dd>{muted ? '—' : `${Math.round(overview?.bounceRate ?? 0)}%`}</dd></div>
     <div><dt>Avg. visit</dt><dd>{muted ? '—' : duration(overview?.avgDuration ?? 0)}</dd></div>
   </dl>
@@ -226,6 +234,16 @@
     color: var(--muted);
     font-size: 13px;
     text-align: center;
+  }
+  .loading-chart {
+    border-style: solid;
+    background: color-mix(in srgb, var(--line) 45%, transparent);
+    animation: card-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes card-pulse {
+    50% {
+      opacity: 0.45;
+    }
   }
   .empty-chart .hint-muted {
     font-size: 12px;
