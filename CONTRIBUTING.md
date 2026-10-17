@@ -33,7 +33,7 @@ Use conventional prefixes such as `feat:`, `fix:`, `test:`, `docs:`, `refactor:`
 
 ## Merging and CI
 
-PRs have no required status checks: review and merge. CI runs on every push to `main` (and on manual dispatch); when it passes, **Deploy production** runs automatically. A failing `main` run blocks that deploy until a fix is merged, so run `make check` and `make test` locally for risky changes.
+PRs have no required status checks: review and merge. Each push to `main` starts one **Build and deploy** run: the test gates, then a `deploy` job that ships production in the same run. A failing gate stops that run before `deploy`, so production stays on the last good commit until a fix is merged; run `make check` and `make test` locally for risky changes. To redeploy without a new merge, start **Build and deploy** manually from `main` (Actions → Run workflow).
 
 `scripts/ci-changes.mjs` still decides which gates a diff selects (covered by `node --test scripts/ci-changes.test.mjs`); pushes to `main` always run the full suite: `backend`, `web`, `cli`, and `container`.
 
