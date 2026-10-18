@@ -50,6 +50,25 @@ describe('ApiClient', () => {
     }));
   });
 
+  it('keeps withheld site keys absent and fetches them from the keys endpoint', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{
+        id: 's1', name: 'Example', domain: 'example.com', writeKey: 'wk',
+        serverWriteKeyHint: '…25f1', proxyKeyHint: '…4f31', canManageKeys: false,
+        antiAdblockServer: 'caddy', antiAdblockJsPath: '/456bbb63bb86.js', antiAdblockBeaconPath: '/0d31360a3101'
+      }]), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ writeKey: 'wk', serverWriteKey: 'swk', proxyKey: 'pk' }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    const api = new ApiClient('/api', fetcher, false);
+    api.setToken('secret');
+    const [site] = await api.sites();
+    expect(site.serverWriteKey).toBeUndefined();
+    expect(site.proxyKey).toBeUndefined();
+    expect(site.serverWriteKeyHint).toBe('…25f1');
+    expect(site.canManageKeys).toBe(false);
+    expect(await api.siteKeys('s1')).toEqual({ writeKey: 'wk', serverWriteKey: 'swk', proxyKey: 'pk' });
+    expect(fetcher).toHaveBeenLastCalledWith('/api/sites/s1/keys', expect.objectContaining({ method: 'POST' }));
+  });
+
   it('reads collection health for operational and agent diagnostics', async () => {
     const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       acceptedTotal: 42,

@@ -74,11 +74,14 @@ API-token secrets are returned only at creation. Listings contain IDs, names, pr
 ```bash
 slimlytics site list
 slimlytics site show example.com
+slimlytics site keys example.com
 slimlytics site add example.com --name Example --server caddy
 slimlytics site delete example.com --yes
 ```
 
 A site can be selected by UUID or exact domain. Ambiguous domains are rejected; use a UUID to disambiguate.
+
+`site list`, `site show`, and the `site` object in `site add`/`site ensure` output never print the secret server or proxy key. `site keys` prints the write, server, and proxy keys for site owners and admins (the token needs `sites:write`, which `auth login` grants).
 
 `site ensure` is the preferred agent operation. It creates the exact domain only if absent, otherwise reuses it, configures the requested server type, and always returns installation instructions:
 
@@ -126,10 +129,12 @@ slimlytics tracking configure example.com --server caddy \
 
 The result contains:
 
-- hardened reverse-proxy configuration for the selected server;
+- hardened reverse-proxy configuration for the selected server, reading the proxy key from the `SLIMLYTICS_PROXY_KEY` environment variable (`proxyKeyPlaceholder`, `proxyKeyHint`);
 - the minimal same-origin `<script>` snippet;
 - script and beacon test URLs;
 - ordered installation and verification steps.
+
+The generated configuration does not contain the proxy key, so it can be committed with the website. Set `SLIMLYTICS_PROXY_KEY` in the web server's private environment (from `slimlytics site keys DOMAIN` or the dashboard). Caddy reads `{$SLIMLYTICS_PROXY_KEY}` and Apache `${SLIMLYTICS_PROXY_KEY}` from the environment when the configuration loads. Nginx does not, so render its configuration with `envsubst '${SLIMLYTICS_PROXY_KEY}'` or the official image's `/etc/nginx/templates`. To write the real key into `serverConfig` instead, pass `--include-proxy-key` to `tracking show`, `tracking configure`, `site add`, or `site ensure` (owners and admins only), and keep that output out of repositories.
 
 An AI agent should:
 

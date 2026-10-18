@@ -48,12 +48,17 @@ export const cliCommands: CliCommandDoc[] = [
   {
     usage: 'slimlytics site list',
     summary: 'List all sites in the account.',
-    details: 'JSON output returns the complete persisted site settings.'
+    details: 'JSON output returns the persisted site settings, with key hints instead of the secret server and proxy keys.'
   },
   {
     usage: 'slimlytics site show SITE',
     summary: 'Show one site by UUID or exact domain.',
-    details: 'A UUID is recommended for scripts. Ambiguous selectors fail rather than choosing silently.'
+    details: 'A UUID is recommended for scripts. Ambiguous selectors fail rather than choosing silently. Secret server and proxy keys are never printed; use site keys.'
+  },
+  {
+    usage: 'slimlytics site keys SITE',
+    summary: "Print a site's write, server, and proxy keys.",
+    details: 'Owners and admins only; the API token needs sites:write. Keep the output out of repositories and agent logs.'
   },
   {
     usage: 'slimlytics site add DOMAIN [--name NAME] [--timezone TZ] [--retention-days DAYS] [--origin URL]... [--server SERVER]',
@@ -71,12 +76,12 @@ export const cliCommands: CliCommandDoc[] = [
     details: 'The explicit --yes flag prevents accidental interactive or agent deletion.'
   },
   {
-    usage: 'slimlytics tracking show SITE',
+    usage: 'slimlytics tracking show SITE [--include-proxy-key]',
     summary: 'Generate the current first-party tracking setup.',
-    details: 'Returns hardened reverse-proxy configuration, the minimal script tag, and script/beacon verification URLs.'
+    details: 'Returns hardened reverse-proxy configuration, the minimal script tag, and script/beacon verification URLs. The configuration reads the proxy key from SLIMLYTICS_PROXY_KEY; --include-proxy-key writes the real key instead (owners and admins).'
   },
   {
-    usage: 'slimlytics tracking configure SITE --server SERVER [--js-path PATH] [--beacon-path PATH]',
+    usage: 'slimlytics tracking configure SITE --server SERVER [--js-path PATH] [--beacon-path PATH] [--include-proxy-key]',
     summary: 'Persist and render first-party tracking settings.',
     details: 'Paths must be same-origin single-segment paths; the JavaScript path must end in .js and must differ from the beacon path.'
   }

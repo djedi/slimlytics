@@ -19,7 +19,7 @@ fn site_ensure_reuses_domain_and_emits_agent_contract() {
         assert!(request
             .to_ascii_lowercase()
             .contains("authorization: bearer slyt_test-agent-token\r\n"));
-        let body = r#"{"created":false,"site":{"id":"df222f1c-8d95-4917-872e-98b30115aac8","name":"Example","domain":"example.com","timezone":"UTC","allowedOrigins":["https://example.com"],"retentionDays":365,"writeKey":"d8f6f152-7a9e-4eb9-a8a1-468db4c0ea33","serverWriteKey":"7e55bd93-2601-46fc-881a-e847209f25f1","antiAdblockServer":"caddy","antiAdblockJsPath":"/456bbb63bb86.js","antiAdblockBeaconPath":"/0d31360a3101","createdAt":"2026-07-29T00:00:00Z"}}"#;
+        let body = r#"{"created":false,"site":{"id":"df222f1c-8d95-4917-872e-98b30115aac8","name":"Example","domain":"example.com","timezone":"UTC","allowedOrigins":["https://example.com"],"retentionDays":365,"writeKey":"d8f6f152-7a9e-4eb9-a8a1-468db4c0ea33","serverWriteKey":"7e55bd93-2601-46fc-881a-e847209f25f1","proxyKey":"6f1f6c2e-1d5e-4a3b-9f0e-2b7d6c5a4f31","proxyKeyHint":"…4f31","antiAdblockServer":"caddy","antiAdblockJsPath":"/456bbb63bb86.js","antiAdblockBeaconPath":"/0d31360a3101","createdAt":"2026-07-29T00:00:00Z"}}"#;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -66,6 +66,15 @@ fn site_ensure_reuses_domain_and_emits_agent_contract() {
         value["data"]["tracking"]["serverIngestUrl"],
         format!("http://{address}/api/ingest")
     );
+    // Secret keys stay out of agent-facing output; the config reads the proxy key from the env.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("7e55bd93-2601-46fc-881a-e847209f25f1"));
+    assert!(!stdout.contains("6f1f6c2e-1d5e-4a3b-9f0e-2b7d6c5a4f31"));
+    assert!(value["data"]["tracking"]["serverConfig"]
+        .as_str()
+        .unwrap()
+        .contains("header_up X-Slimlytics-Proxy-Key {$SLIMLYTICS_PROXY_KEY}"));
+    assert_eq!(value["data"]["tracking"]["proxyKeyHint"], "…4f31");
 }
 
 #[test]
