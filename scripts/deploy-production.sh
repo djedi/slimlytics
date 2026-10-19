@@ -119,13 +119,16 @@ fi
 
 essh=(ssh -o BatchMode=yes "$remote_host")
 
+# Runs a script from stdin on the remote host. The whole script is read before it starts and it
+# runs with stdin from /dev/null, so a command inside it that reads stdin (docker compose exec,
+# ssh, read) cannot swallow the rest of the script and let bash exit 0 having skipped it.
 remote_script() {
-  local command='bash -se --' argument quoted
+  local command='script="$(cat)" && exec bash -c "$script" bash' argument quoted
   for argument in "$@"; do
     printf -v quoted '%q' "$argument"
     command+=" $quoted"
   done
-  "${essh[@]}" "$command"
+  "${essh[@]}" "$command </dev/null"
 }
 
 release_lock() {
@@ -270,7 +273,12 @@ if [[ -n "$prebuilt" ]]; then
   rsync -az --delete-delay --exclude .DS_Store "$prebuilt/" "$remote_host:$remote_app/.prebuilt/"
 fi
 
-remote_script "$remote_app" "$revision" "$deploy_user" "$sentinel_name" "$sentinel_value" "$lock_name" "$lock_token" "${prebuilt:+prebuilt}" <<'REMOTE'
+# A remote apply that stops early must never pass for a deploy: require its final marker.
+# Output goes to a file rather than a pipeline or command substitution, so the ERR trap (and
+# its rollback) only ever runs in this shell, never also in an inherited subshell.
+apply_marker="slimlytics-apply-complete-$lock_token"
+apply_log="$(mktemp)"
+remote_script "$remote_app" "$revision" "$deploy_user" "$sentinel_name" "$sentinel_value" "$lock_name" "$lock_token" "${prebuilt:+prebuilt}" "$apply_marker" >"$apply_log" <<'REMOTE'
 set -Eeuo pipefail
 app=$1
 revision=$2
@@ -280,6 +288,7 @@ sentinel_value=$5
 lock_name=$6
 lock_token=$7
 mode=${8:-}
+apply_marker=$9
 
 [[ "$(id -un)" == "$deploy_user" && "$(id -u)" -ne 0 ]] || { echo 'Refusing deployment from an unexpected or root remote account.' >&2; exit 1; }
 [[ -d "$app" && "$(realpath -e -- "$app")" == "$app" ]] || { echo 'Deployment target is not the canonical app path.' >&2; exit 1; }
@@ -294,7 +303,7 @@ compose=(docker compose -f compose.yaml -f compose.proxy.yaml)
 [[ "$mode" != prebuilt ]] || compose+=(-f compose.prebuilt.yaml)
 # rsync replaces docker/Caddyfile with a new inode, but the single-file bind mount keeps the old
 # one and admin is off (no reload), so Caddy is recreated only when its routing changed.
-running_caddyfile="$("${compose[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile 2>/dev/null | cut -d' ' -f1 || true)"
+running_caddyfile="$("${compose[@]}" exec -T caddy sha256sum /etc/caddy/Caddyfile </dev/null 2>/dev/null | cut -d' ' -f1 || true)"
 "${compose[@]}" config -q
 "${compose[@]}" up -d --build --remove-orphans --wait --wait-timeout 240
 if [[ "$running_caddyfile" != "$(sha256sum docker/Caddyfile | cut -d' ' -f1)" ]]; then
@@ -303,7 +312,16 @@ fi
 curl --retry 10 --retry-delay 1 --retry-all-errors --fail --silent http://127.0.0.1:8540/health >/dev/null
 curl --retry 10 --retry-delay 1 --retry-all-errors --fail --silent http://127.0.0.1:8540/ready >/dev/null
 "${compose[@]}" ps
+printf '%s\n' "$apply_marker"
 REMOTE
+cat "$apply_log"
+apply_complete=false
+grep -qxF "$apply_marker" "$apply_log" && apply_complete=true
+rm -f "$apply_log"
+$apply_complete || {
+  printf 'Remote Compose apply did not run to completion.\n' >&2
+  false
+}
 
 printf 'Verifying public health, redirect, exact API contract, and Scalar CSS...\n'
 PUBLIC_URL="$public_url" EXPECTED_SCALAR_ASSETS_JSON="$expected_scalar_assets_json" python3 - <<'PY'
