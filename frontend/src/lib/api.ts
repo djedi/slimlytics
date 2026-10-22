@@ -183,12 +183,21 @@ interface WireSiteSummary {
 }
 interface WireReportRow { value: string; views: number; visitors: number }
 interface WireGoal { id: string; name: string; eventName?: string; event_name?: string; pathPattern?: string; path_pattern?: string; conversions?: number; conversionRate?: number; conversion_rate?: number }
-function dates(days: number) {
-  const to = new Date();
-  const from = new Date(to.getTime() - Math.max(0, days - 1) * 864e5);
-  return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+/** Today's calendar date in `timeZone` (the viewer's zone when omitted), as YYYY-MM-DD. */
+export function localDate(now: Date, timeZone?: string) {
+  let format: Intl.DateTimeFormat;
+  try { format = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }); }
+  catch { format = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }); }
+  const part = (type: string) => format.formatToParts(now).find((item) => item.type === type)?.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
-function dateQuery(days: number) { const range = dates(days); return `from=${range.from}&to=${range.to}`; }
+/** Inclusive range of `days` calendar days ending today in the site's zone, which is how the API reads dates. */
+export function dates(days: number, timeZone?: string, now = new Date()) {
+  const to = localDate(now, timeZone);
+  const from = new Date(Date.parse(`${to}T00:00:00Z`) - Math.max(0, days - 1) * 864e5).toISOString().slice(0, 10);
+  return { from, to };
+}
+function dateQuery(days: number, timeZone?: string) { const range = dates(days, timeZone); return `from=${range.from}&to=${range.to}`; }
 function normalizeSite(site: WireSite): Site { return { ...site, writeKey: site.writeKey ?? site.write_key ?? '', serverWriteKey: site.serverWriteKey ?? site.server_write_key ?? '', antiAdblockServer: site.antiAdblockServer ?? site.anti_adblock_server ?? 'caddy', antiAdblockJsPath: site.antiAdblockJsPath ?? site.anti_adblock_js_path ?? '/slimlytics.js', antiAdblockBeaconPath: site.antiAdblockBeaconPath ?? site.anti_adblock_beacon_path ?? '/slimlytics-event' }; }
 const trend = Array.from({ length: 28 }, (_, index) => ({ date: new Date(Date.now() - (27 - index) * 864e5).toISOString().slice(0, 10), visitors: 84 + ((index * 17) % 71), pageViews: 151 + ((index * 29) % 129) }));
 const baseOverview: Overview = { visitors: 3421, sessions: 3892, pageViews: 8754, bounceRate: 38.4, avgDuration: 164, change: 12.8, currentOnline: 14, trend };
@@ -406,6 +415,10 @@ export class ApiClient {
       }
     });
   }
+  /** Site timezones seen in API responses, so date ranges follow each site's calendar. */
+  private zones = new Map<string, string>();
+  private remember(site: Site) { if (site.timezone) this.zones.set(site.id, site.timezone); return site; }
+  private zone(id: string) { return this.zones.get(id); }
   me() { return this.request<User>('/auth/me'); }
   startPasskeySignIn() { return this.request<WebAuthnChallenge>('/auth/passkey/start', { method: 'POST' }); }
   async finishPasskeySignIn(challengeId: string, credential: unknown) {
@@ -426,12 +439,12 @@ export class ApiClient {
   adminUserAction(id: string, action: 'disable' | 'enable' | 'revoke-sessions') { return this.request<void>(`/admin/users/${id}/${action}`, { method: 'POST' }); }
   adminDeleteUser(id: string, confirmEmail: string) { return this.request<void>(`/admin/users/${id}`, { method: 'DELETE', body: JSON.stringify({ confirmEmail }) }); }
   adminAudit(limit = 100) { return this.request<AdminAuditEntry[]>(`/admin/audit?limit=${limit}`); }
-  async sites() { return (await this.request<WireSite[]>('/sites', {}, () => demoSites)).map(normalizeSite); }
-  async site(id: string) { return normalizeSite(await this.request<WireSite>(`/sites/${id}`, {}, () => demoSites.find((site) => site.id === id) ?? demoSites[0])); }
+  async sites() { return (await this.request<WireSite[]>('/sites', {}, () => demoSites)).map((site) => this.remember(normalizeSite(site))); }
+  async site(id: string) { return this.remember(normalizeSite(await this.request<WireSite>(`/sites/${id}`, {}, () => demoSites.find((site) => site.id === id) ?? demoSites[0]))); }
   async createSite(site: Pick<Site, 'name' | 'domain'> & { allowedOrigins?: string[] }) {
-    return normalizeSite(await this.request<WireSite>('/sites', { method: 'POST', body: JSON.stringify({ ...site, timezone: 'UTC', retentionDays: 365 }) }, () => ({ ...site, id: crypto.randomUUID(), writeKey: `wk_demo_${Date.now()}` })));
+    return this.remember(normalizeSite(await this.request<WireSite>('/sites', { method: 'POST', body: JSON.stringify({ ...site, timezone: 'UTC', retentionDays: 365 }) }, () => ({ ...site, id: crypto.randomUUID(), writeKey: `wk_demo_${Date.now()}`, timezone: 'UTC' }))));
   }
-  async updateSite(id: string, site: Partial<Site>) { return normalizeSite(await this.request<WireSite>(`/sites/${id}`, { method: 'PUT', body: JSON.stringify(site) }, () => ({ ...demoSites[0], ...site, id }))); }
+  async updateSite(id: string, site: Partial<Site>) { return this.remember(normalizeSite(await this.request<WireSite>(`/sites/${id}`, { method: 'PUT', body: JSON.stringify(site) }, () => ({ ...demoSites[0], ...site, id })))); }
   async updateSiteIcon(id: string, settings: SiteIconSettings) { return normalizeSite(await this.request<WireSite>(`/sites/${id}/icon`, { method: 'PUT', body: JSON.stringify(settings) }, () => ({ ...demoSites[0], id, iconMode: settings.mode, iconBackground: settings.background || null, iconBackgroundEnd: settings.backgroundEnd || null, iconForeground: settings.foreground || null }))); }
   async updateAntiAdblock(id: string, settings: AntiAdblockSettings) { return normalizeSite(await this.request<WireSite>(`/sites/${id}/anti-adblock`, { method: 'PUT', body: JSON.stringify(settings) }, () => ({ ...demoSites[0], id, antiAdblockServer: settings.serverType, antiAdblockJsPath: settings.jsPath, antiAdblockBeaconPath: settings.beaconPath }))); }
   rotateProxyKey(id: string) { return this.request<{ proxyKey: string }>(`/sites/${id}/rotate-proxy-key`, { method: 'POST' }); }
@@ -439,7 +452,7 @@ export class ApiClient {
   collectionHealth(id: string) { return this.request<CollectionHealth>(`/sites/${id}/collection-health`, {}, () => ({ acceptedTotal: 0, rejectedTotal: 0 })); }
   deleteSite(id: string) { return this.request<void>(`/sites/${id}`, { method: 'DELETE' }, () => undefined); }
   async overview(id: string, days = 28): Promise<Overview> {
-    const wire = await this.request<WireOverview>(`/sites/${id}/overview?${dateQuery(days)}`, {}, () => ({
+    const wire = await this.request<WireOverview>(`/sites/${id}/overview?${dateQuery(days, this.zone(id))}`, {}, () => ({
       views: { current: baseOverview.pageViews, previous: 0 },
       visitors: { current: baseOverview.visitors, previous: 0 },
       sessions: { current: baseOverview.sessions, previous: 0 },
@@ -460,14 +473,16 @@ export class ApiClient {
     };
   }
   /** Overview cards for every site in one request, keyed by site ID; `sessions` is not included. */
-  async siteSummaries(days = 28): Promise<Map<string, Overview>> {
-    const rows = await this.request<WireSiteSummary[]>(`/sites/summary?${dateQuery(days)}`, {}, () =>
-      demoSites.map((site) => {
-        const demo = site.overview ?? baseOverview;
-        const previous = Math.round(demo.visitors / (1 + demo.change / 100));
-        return { siteId: site.id, views: demo.pageViews, visitors: { current: demo.visitors, previous, change_percent: demo.change }, currentOnline: demo.currentOnline, bounceRate: demo.bounceRate, avgDurationSeconds: demo.avgDuration, trend: demo.trend };
-      })
-    );
+  /** Pass the site list being loaded alongside, so ranges follow every current site's timezone. */
+  async siteSummaries(days = 28, sites: Site[] | Promise<Site[]> = this.sites()): Promise<Map<string, Overview>> {
+    // The API reads one date range in every site's own zone, so sites whose calendars differ
+    // (e.g. a UTC site after 6 PM in Denver) each need the range ending on their own today.
+    const queries = new Map<string, Set<string>>();
+    for (const site of await sites) { const query = dateQuery(days, site.timezone); queries.set(query, (queries.get(query) ?? new Set()).add(site.id)); }
+    if (queries.size === 0) queries.set(dateQuery(days), new Set());
+    const all = queries.size === 1;
+    const responses = await Promise.all([...queries].map(async ([query, ids]) => ({ ids, rows: await this.summaryRows(query) })));
+    const rows = responses.flatMap(({ ids, rows }) => rows.filter((row) => all || ids.has(row.siteId)));
     return new Map(rows.map((row) => [row.siteId, {
       visitors: row.visitors.current,
       previousVisitors: row.visitors.previous,
@@ -480,38 +495,47 @@ export class ApiClient {
       trend: row.trend
     }]));
   }
-  async report(id: string, type: string, days = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(days)}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, visitors: row.visitors })); }
-  journeys(id: string, days = 28) { return this.request<Journey[]>(`/sites/${id}/insights/journeys?${dateQuery(days)}`, {}, () => []); }
-  attribution(id: string, days = 28) { return this.request<Attribution[]>(`/sites/${id}/insights/attribution?${dateQuery(days)}`, {}, () => []); }
-  anomalies(id: string, days = 28) { return this.request<Anomaly[]>(`/sites/${id}/insights/anomalies?${dateQuery(days)}`, {}, () => []); }
-  annotations(id: string, days = 28) { return this.request<Annotation[]>(`/sites/${id}/annotations?${dateQuery(days)}`, {}, () => []); }
+  private summaryRows(query: string) {
+    return this.request<WireSiteSummary[]>(`/sites/summary?${query}`, {}, () =>
+      demoSites.map((site) => {
+        const demo = site.overview ?? baseOverview;
+        const previous = Math.round(demo.visitors / (1 + demo.change / 100));
+        return { siteId: site.id, views: demo.pageViews, visitors: { current: demo.visitors, previous, change_percent: demo.change }, currentOnline: demo.currentOnline, bounceRate: demo.bounceRate, avgDurationSeconds: demo.avgDuration, trend: demo.trend };
+      })
+    );
+  }
+  async report(id: string, type: string, days = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(days, this.zone(id))}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, visitors: row.visitors })); }
+  journeys(id: string, days = 28) { return this.request<Journey[]>(`/sites/${id}/insights/journeys?${dateQuery(days, this.zone(id))}`, {}, () => []); }
+  attribution(id: string, days = 28) { return this.request<Attribution[]>(`/sites/${id}/insights/attribution?${dateQuery(days, this.zone(id))}`, {}, () => []); }
+  anomalies(id: string, days = 28) { return this.request<Anomaly[]>(`/sites/${id}/insights/anomalies?${dateQuery(days, this.zone(id))}`, {}, () => []); }
+  annotations(id: string, days = 28) { return this.request<Annotation[]>(`/sites/${id}/annotations?${dateQuery(days, this.zone(id))}`, {}, () => []); }
   createAnnotation(id: string, annotation: Pick<Annotation, 'occurredOn' | 'label'>) { return this.request<Annotation>(`/sites/${id}/annotations`, { method: 'POST', body: JSON.stringify(annotation) }); }
   deleteAnnotation(id: string, annotationId: string) { return this.request<void>(`/sites/${id}/annotations/${annotationId}`, { method: 'DELETE' }); }
   funnels(id: string) { return this.request<Funnel[]>(`/sites/${id}/funnels`, {}, () => []); }
   createFunnel(id: string, funnel: Pick<Funnel, 'name' | 'steps'>) { return this.request<Funnel>(`/sites/${id}/funnels`, { method: 'POST', body: JSON.stringify(funnel) }); }
   deleteFunnel(id: string, funnelId: string) { return this.request<void>(`/sites/${id}/funnels/${funnelId}`, { method: 'DELETE' }); }
-  funnelReport(id: string, funnelId: string, days = 28) { return this.request<FunnelReport>(`/sites/${id}/funnels/${funnelId}/report?${dateQuery(days)}`, {}, () => ({ id: funnelId, name: 'Funnel', from: dates(days).from, to: dates(days).to, steps: [] })); }
+  funnelReport(id: string, funnelId: string, days = 28) { return this.request<FunnelReport>(`/sites/${id}/funnels/${funnelId}/report?${dateQuery(days, this.zone(id))}`, {}, () => ({ id: funnelId, name: 'Funnel', ...dates(days, this.zone(id)), steps: [] })); }
   searchConsoleStatus(id: string) { return this.request<SearchConsoleStatus>(`/sites/${id}/integrations/search-console`, {}, () => ({ configured: true, connected: true, propertyUrl: 'sc-domain:docs.northstar.dev', lastSyncedAt: new Date().toISOString() })); }
   connectSearchConsole(id: string) { return this.request<{ authorizationUrl: string }>(`/sites/${id}/integrations/search-console/connect`, { method: 'POST' }); }
   disconnectSearchConsole(id: string) { return this.request<void>(`/sites/${id}/integrations/search-console`, { method: 'DELETE' }); }
-  syncSearchConsole(id: string, days = 28) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/search-console/sync?${dateQuery(days)}`, { method: 'POST' }); }
+  syncSearchConsole(id: string, days = 28) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/search-console/sync?${dateQuery(days, this.zone(id))}`, { method: 'POST' }); }
   addSearchConsoleProperty(id: string) { return this.request<SearchConsoleProperty>(`/sites/${id}/integrations/search-console/property`, { method: 'POST' }); }
   verifySearchConsoleProperty(id: string) { return this.request<{ propertyUrl: string; verified: boolean }>(`/sites/${id}/integrations/search-console/property/verify`, { method: 'POST' }); }
-  searchConsoleReport(id: string, dimension: SearchConsoleDimension = 'query', days = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(days)}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, days)); }
+  searchConsoleReport(id: string, dimension: SearchConsoleDimension = 'query', days = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(days, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, days)); }
   reportSubscriptions(id: string) { return this.request<ReportSubscription[]>(`/sites/${id}/report-subscriptions`, {}, () => []); }
   createReportSubscription(id: string, subscription: Omit<ReportSubscription, 'id' | 'siteId' | 'nextRunAt' | 'createdAt' | 'lastSentAt' | 'lastStatus' | 'lastError' | 'signingSecret'>) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions`, { method: 'POST', body: JSON.stringify(subscription) }); }
   updateReportSubscription(id: string, subscription: ReportSubscription) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions/${subscription.id}`, { method: 'PUT', body: JSON.stringify(subscription) }); }
   deleteReportSubscription(id: string, subscriptionId: string) { return this.request<void>(`/sites/${id}/report-subscriptions/${subscriptionId}`, { method: 'DELETE' }); }
   deliverReportSubscription(id: string, subscriptionId: string) { return this.request<{ status: string }>(`/sites/${id}/report-subscriptions/${subscriptionId}/deliver`, { method: 'POST' }); }
-  visitors(id: string, days = 28) { return this.request<Visitor[]>(`/sites/${id}/visitors?${dateQuery(days)}`, {}, () => [{ id: 'v1', country: 'United States', city: 'Portland', device: 'Desktop', browser: 'Firefox', page: '/docs', sessions: 4, lastSeen: new Date().toISOString() }]); }
-  events(id: string, days = 28) { return this.request<LiveEvent[]>(`/sites/${id}/events?${dateQuery(days)}`, {}, () => [{ id: 'e1', type: 'pageview', page: '/docs/getting-started', visitorId: 'v1', country: 'US', city: 'Portland', timestamp: new Date().toISOString(), referrer: 'Google' }]); }
+  visitors(id: string, days = 28) { return this.request<Visitor[]>(`/sites/${id}/visitors?${dateQuery(days, this.zone(id))}`, {}, () => [{ id: 'v1', country: 'United States', city: 'Portland', device: 'Desktop', browser: 'Firefox', page: '/docs', sessions: 4, lastSeen: new Date().toISOString() }]); }
+  events(id: string, days = 28) { return this.request<LiveEvent[]>(`/sites/${id}/events?${dateQuery(days, this.zone(id))}`, {}, () => [{ id: 'e1', type: 'pageview', page: '/docs/getting-started', visitorId: 'v1', country: 'US', city: 'Portland', timestamp: new Date().toISOString(), referrer: 'Google' }]); }
   async goals(id: string) { const rows = await this.request<WireGoal[]>(`/sites/${id}/goals`, {}, () => []); return rows.map((goal) => ({ id: goal.id, name: goal.name, type: 'event', target: goal.eventName ?? goal.event_name ?? '', conversions: goal.conversions ?? 0, conversionRate: goal.conversionRate ?? goal.conversion_rate ?? 0 })); }
   async createGoal(id: string, goal: Omit<Goal, 'id'>) { const row = await this.request<WireGoal>(`/sites/${id}/goals`, { method: 'POST', body: JSON.stringify({ name: goal.name, eventName: goal.target }) }, () => ({ ...goal, id: crypto.randomUUID(), eventName: goal.target })); return { id: row.id, name: row.name, type: 'event', target: row.eventName ?? row.event_name ?? goal.target, conversions: 0, conversionRate: 0 }; }
-  exportUrl(id: string, days: number) { return `${this.base}/sites/${id}/export.csv?${dateQuery(days)}`; }
+  exportUrl(id: string, days: number) { return `${this.base}/sites/${id}/export.csv?${dateQuery(days, this.zone(id))}`; }
   streamUrl(id: string, token?: string) { const query = token ? `?token=${encodeURIComponent(token)}` : ''; return `${this.base}/sites/${id}/stream${query}`; }
   async downloadExport(id: string, days: number, attempts = 0): Promise<Blob> {
     const sent = this.token;
-    const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(days)}`, { headers: sent ? { authorization: `Bearer ${sent}` } : {} });
+    const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(days, this.zone(id))}`, { headers: sent ? { authorization: `Bearer ${sent}` } : {} });
     if (response.status === 401 && sent && !this.demo) {
       if (attempts < 2 && await this.refreshSession(sent)) return this.downloadExport(id, days, attempts + 1);
       this.onUnauthorized?.();
