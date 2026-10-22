@@ -1,17 +1,17 @@
 <script lang="ts">
   import { ArrowRight, Settings } from '@lucide/svelte';
   import type { Site } from '$lib/api';
-  import { appHref } from '$lib/app-routes';
+  import { appHref, compareText, periodText, type DateRange } from '$lib/app-routes';
   import { avatarHue, compactNumber, duration, trendPaths } from '$lib/ui';
   import SiteIcon from '../SiteIcon.svelte';
   import ChangeBadge from './ChangeBadge.svelte';
 
   let {
     site,
-    days,
+    range,
     apiBase,
     pending = false
-  }: { site: Site; days: number; apiBase?: string; pending?: boolean } = $props();
+  }: { site: Site; range: DateRange; apiBase?: string; pending?: boolean } = $props();
 
   const overview = $derived(site.overview);
   const trend = $derived(overview?.trend ?? []);
@@ -29,11 +29,11 @@
     )
   );
   const online = $derived(overview?.currentOnline ?? 0);
-  const href = $derived(appHref(site.id, quiet ? 'settings' : 'overview', days));
+  const href = $derived(appHref(site.id, quiet ? 'settings' : 'overview', range));
   const chartLabel = $derived(
     peak && peak.visitors > 0
-      ? `${site.name}: ${overview?.visitors ?? 0} visitors over the last ${days} days, peaking at ${peak.visitors} on ${new Date(peak.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
-      : `${site.name}: no visitors in the last ${days} days`
+      ? `${site.name}: ${overview?.visitors ?? 0} visitors ${periodText(range.period)}, peaking at ${peak.visitors} on ${new Date(peak.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+      : `${site.name}: no visitors ${periodText(range.period)}`
   );
 </script>
 
@@ -52,7 +52,7 @@
   <div class="headline">
     <strong>{unavailable || pending ? '—' : compactNumber(overview?.visitors ?? 0)}</strong>
     <span>visitors</span>
-    {#if !muted}<ChangeBadge change={overview?.change} />{/if}
+    {#if !muted}<ChangeBadge change={overview?.change} label={compareText(range)} />{/if}
   </div>
 
   {#if pending}
@@ -64,7 +64,7 @@
     </div>
   {:else if quiet}
     <div class="empty-chart">
-      <span>No visits in the last {days} days</span>
+      <span>No visits {periodText(range.period)}</span>
       <span class="hint"><Settings size={13} aria-hidden="true" /> Check installation</span>
     </div>
   {:else}

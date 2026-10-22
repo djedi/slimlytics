@@ -3384,6 +3384,17 @@
               "format": "date"
             },
             "description": "Inclusive last date"
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["previous", "week"],
+              "default": "previous"
+            },
+            "description": "Comparison period: `previous` is the same number of days just before the range; `week` is the same days one week earlier. While the range is in progress, the comparison is cut to the same elapsed time, in five-minute steps."
           }
         ],
         "description": "Visitors with previous-period comparison, page views, bounce rate, average visit duration, current online visitors, and the daily trend for every site the caller can read, in one request. Each site uses its own timezone for the inclusive dates."
@@ -3499,6 +3510,17 @@
               "format": "date"
             },
             "description": "Inclusive last date"
+          },
+          {
+            "name": "compare",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["previous", "week"],
+              "default": "previous"
+            },
+            "description": "Comparison period: `previous` is the same number of days just before the range; `week` is the same days one week earlier. While the range is in progress, the comparison is cut to the same elapsed time, in five-minute steps."
           }
         ]
       }
@@ -7054,6 +7076,44 @@
             "items": {
               "$ref": "#/components/schemas/TrendPoint"
             }
+          },
+          "hourly": {
+            "type": "array",
+            "description": "Present only for single-day ranges: each hour of the day (23 or 25 on daylight saving days) beside the same local clock hour of the comparison day",
+            "items": {
+              "$ref": "#/components/schemas/HourPoint"
+            }
+          }
+        }
+      },
+      "HourPoint": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["hour", "visitors", "pageViews", "previousVisitors", "previousPageViews"],
+        "properties": {
+          "hour": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 23,
+            "description": "Local clock hour the slot starts at, in the site's timezone; repeats on the day clocks fall back"
+          },
+          "visitors": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Null for hours that have not started yet"
+          },
+          "pageViews": {
+            "type": ["integer", "null"],
+            "minimum": 0,
+            "description": "Null for hours that have not started yet"
+          },
+          "previousVisitors": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "previousPageViews": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
