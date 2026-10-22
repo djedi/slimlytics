@@ -85,7 +85,7 @@ describe('ApiClient', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const api = new ApiClient('/api', fetcher, false);
 
-    await expect(api.overview('s1', 7)).resolves.toMatchObject({
+    await expect(api.overview('s1', { period: 7, compare: 'previous' })).resolves.toMatchObject({
       visitors: 7,
       pageViews: 12,
       bounceRate: 37.5,
@@ -106,7 +106,7 @@ describe('ApiClient', () => {
     }]), { status: 200, headers: { 'content-type': 'application/json' } }));
     const api = new ApiClient('/api', fetcher, false);
 
-    const summaries = await api.siteSummaries(7, [{ id: 's1', timezone: 'UTC' } as Site]);
+    const summaries = await api.siteSummaries({ period: 7, compare: 'previous' }, [{ id: 's1', timezone: 'UTC' } as Site]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(String(fetcher.mock.calls[0][0])).toMatch(/^\/api\/sites\/summary\?from=\d{4}-\d{2}-\d{2}&to=/);
     expect(summaries.get('s1')).toMatchObject({
@@ -255,7 +255,8 @@ describe('date ranges', () => {
 
   it('ends on today in the site timezone, not the UTC date', () => {
     expect(dates(28, 'America/Denver', evening)).toEqual({ from: '2026-09-24', to: '2026-10-21' });
-    expect(dates(1, 'UTC', evening)).toEqual({ from: '2026-10-22', to: '2026-10-22' });
+    expect(dates('today', 'UTC', evening)).toEqual({ from: '2026-10-22', to: '2026-10-22' });
+    expect(dates('yesterday', 'America/Denver', evening)).toEqual({ from: '2026-10-20', to: '2026-10-20' });
   });
 
   it('requests per-site reports in that site timezone', async () => {
@@ -273,6 +274,21 @@ describe('date ranges', () => {
     }
   });
 
+  it('requests yesterday as one whole local day', async () => {
+    vi.useFakeTimers({ now: evening, toFake: ['Date'] });
+    try {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 's1', writeKey: 'wk', timezone: 'America/Denver' }]), { status: 200 }))
+        .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+      const api = new ApiClient('/api', fetcher, false);
+      await api.sites();
+      await api.visitors('s1', 'yesterday');
+      expect(fetcher.mock.calls[1][0]).toBe('/api/sites/s1/visitors?from=2026-10-20&to=2026-10-20');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('remembers the timezone of a newly created site', async () => {
     vi.useFakeTimers({ now: evening, toFake: ['Date'] });
     try {
@@ -281,7 +297,7 @@ describe('date ranges', () => {
         .mockResolvedValueOnce(new Response('[]', { status: 200 }));
       const api = new ApiClient('/api', fetcher, false);
       await api.createSite({ name: 'New', domain: 'new.test' });
-      await api.report('s2', 'pages', 1);
+      await api.report('s2', 'pages', 'today');
       expect(fetcher.mock.calls[1][0]).toBe('/api/sites/s2/reports/pages?from=2026-10-22&to=2026-10-22');
     } finally {
       vi.useRealTimers();
@@ -295,15 +311,15 @@ describe('date ranges', () => {
       const fetcher = vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url === '/api/sites') return new Response(JSON.stringify([{ id: 'den', writeKey: 'a', timezone: 'America/Denver' }, { id: 'utc', writeKey: 'b', timezone: 'UTC' }]), { status: 200 });
-        const today = url.endsWith('to=2026-10-22') ? 22 : 21;
+        const today = url.includes('to=2026-10-22') ? 22 : 21;
         return new Response(JSON.stringify([row('den', today), row('utc', today)]), { status: 200 });
       });
       const api = new ApiClient('/api', fetcher, false);
-      const summaries = await api.siteSummaries(1);
+      const summaries = await api.siteSummaries({ period: 'today', compare: 'week' });
       expect(fetcher.mock.calls.map(([url]) => url).sort()).toEqual([
         '/api/sites',
-        '/api/sites/summary?from=2026-10-21&to=2026-10-21',
-        '/api/sites/summary?from=2026-10-22&to=2026-10-22'
+        '/api/sites/summary?from=2026-10-21&to=2026-10-21&compare=week',
+        '/api/sites/summary?from=2026-10-22&to=2026-10-22&compare=week'
       ]);
       expect(summaries.get('den')?.pageViews).toBe(21);
       expect(summaries.get('utc')?.pageViews).toBe(22);

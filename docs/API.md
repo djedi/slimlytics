@@ -96,7 +96,7 @@ Returns the complete JavaScript tracker plus a site initializer targeting the ex
 - `GET /api/sites/{siteId}/visitors`
 - `GET /api/sites/{siteId}/events`
 
-Overview, reports, visitors, events, and export accept inclusive `from` and `to` dates. Reports also accept a bounded `limit`. The overview includes the prior equivalent period for percentage comparisons.
+Overview, reports, visitors, events, and export accept inclusive `from` and `to` dates. Reports also accept a bounded `limit`. The overview and site summaries include a comparison period for percentage changes: by default the same number of days just before the range, or with `compare=week` the same days one week earlier. While the range is still in progress (for example today), the comparison is cut to the same elapsed time. A single-day overview also returns `hourly`, each local hour beside the same hour of the comparison day.
 
 ## Goals
 

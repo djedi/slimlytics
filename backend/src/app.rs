@@ -23,7 +23,7 @@ use crate::{
     marketing::marketing_context,
     models::*,
     privacy::sanitize_url,
-    reporting::{date_bounds, DateBounds},
+    reporting::{compare_bounds, compare_shift, date_bounds, hour_slots, DateBounds},
     search_console::{
         authorization_url, decrypt_token, domain_property, encrypt_token, forbidden_message,
         missing_scopes, oauth_state, preferred_property, site_resource_url, state_hash,
@@ -1931,9 +1931,11 @@ async fn overview(
     Query(q): Query<RangeQuery>,
 ) -> Result<Json<Overview>, ApiError> {
     require_site(&s.pool, u, site, false).await?;
-    let ((a, b, p), timezone) = bounds(&s.pool, site, q.from, q.to).await?;
+    let ((a, b, _), timezone) = bounds(&s.pool, site, q.from, q.to).await?;
+    let (pa, pb, _) = compare_bounds(q.from, q.to, &timezone, q.compare, Utc::now())
+        .map_err(|message| ApiError::BadRequest(message.into()))?;
     let c = counts(&s.pool, site, a, b).await?;
-    let old = counts(&s.pool, site, p, a).await?;
+    let old = counts(&s.pool, site, pa, pb).await?;
     let current_online: i64 = sqlx::query_scalar(
         "SELECT count(DISTINCT visitor_id) FROM events \
          WHERE site_id=$1 AND traffic_class='human' \
@@ -1978,11 +1980,17 @@ async fn overview(
     .bind(site)
     .bind(q.from)
     .bind(q.to)
-    .bind(timezone)
+    .bind(&timezone)
     .bind(a)
     .bind(b)
     .fetch_all(&s.pool)
     .await?;
+    let hourly = if q.from == q.to {
+        let shift = compare_shift(q.from, q.to, q.compare);
+        Some(hourly_trend(&s.pool, site, &timezone, shift, (a, b)).await?)
+    } else {
+        None
+    };
     Ok(Json(Overview {
         views: metric(c.0, old.0),
         visitors: metric(c.1, old.1),
@@ -1992,7 +2000,56 @@ async fn overview(
         bounce_rate,
         avg_duration_seconds,
         trend,
+        hourly,
     }))
+}
+/// Visitors and page views per hour of a day, beside the hour starting at the same local
+/// clock time on its comparison day (see `hour_slots`).
+async fn hourly_trend(
+    pool: &PgPool,
+    site: Uuid,
+    timezone: &str,
+    shift: chrono::Days,
+    (a, b): (DateTime<Utc>, DateTime<Utc>),
+) -> Result<Vec<HourPoint>, ApiError> {
+    let slots = hour_slots(timezone, a, b, shift)
+        .map_err(|message| ApiError::BadRequest(message.into()))?;
+    let hours: Vec<i32> = slots.iter().map(|slot| slot.hour).collect();
+    let starts: Vec<_> = slots.iter().map(|slot| slot.start).collect();
+    let ends: Vec<_> = slots.iter().map(|slot| slot.end).collect();
+    let prior_starts: Vec<_> = slots.iter().map(|slot| slot.prior_start).collect();
+    let prior_ends: Vec<_> = slots.iter().map(|slot| slot.prior_end).collect();
+    let mut points: Vec<HourPoint> = sqlx::query_as(
+        "SELECT s.hour, \
+           (SELECT count(DISTINCT visitor_id) FROM events WHERE site_id=$1 AND traffic_class='human' \
+             AND occurred_at >= s.a AND occurred_at < s.b) AS visitors, \
+           (SELECT count(*) FROM events WHERE site_id=$1 AND traffic_class='human' \
+             AND event_name='pageview' AND occurred_at >= s.a AND occurred_at < s.b) AS page_views, \
+           (SELECT count(DISTINCT visitor_id) FROM events WHERE site_id=$1 AND traffic_class='human' \
+             AND occurred_at >= s.pa AND occurred_at < s.pb) AS previous_visitors, \
+           (SELECT count(*) FROM events WHERE site_id=$1 AND traffic_class='human' \
+             AND event_name='pageview' AND occurred_at >= s.pa AND occurred_at < s.pb) AS previous_page_views \
+         FROM unnest($2::int[],$3::timestamptz[],$4::timestamptz[],$5::timestamptz[],$6::timestamptz[]) \
+           WITH ORDINALITY s(hour,a,b,pa,pb,n) \
+         ORDER BY s.n",
+    )
+    .bind(site)
+    .bind(&hours)
+    .bind(&starts)
+    .bind(&ends)
+    .bind(&prior_starts)
+    .bind(&prior_ends)
+    .fetch_all(pool)
+    .await?;
+    // Hours that have not started yet have no counts of their own.
+    let now = Utc::now();
+    for (point, start) in points.iter_mut().zip(&starts) {
+        if *start > now {
+            point.visitors = None;
+            point.page_views = None;
+        }
+    }
+    Ok(points)
 }
 /// How long a previous-period visitor count is reused. Matches the hourly rollup refresh so
 /// late-arriving events and retention pruning are picked up on the same cadence.
@@ -2024,29 +2081,35 @@ async fn site_summaries(
     .await?;
     let now = Instant::now();
     let wall_now = Utc::now();
-    let (mut ids, mut starts, mut ends, mut priors, mut zones) =
-        (vec![], vec![], vec![], vec![], vec![]);
+    let (mut ids, mut starts, mut ends, mut zones) = (vec![], vec![], vec![], vec![]);
+    // Each site's comparison window: where its scan starts, where it ends, and the cache key.
+    let (mut prior_starts, mut prior_ends, mut prior_keys) = (vec![], vec![], vec![]);
     let mut cached = std::collections::HashMap::new();
     for (id, timezone) in sites {
         // Each site's range is its own local calendar days. A site whose timezone cannot place
-        // them (e.g. a DST gap at midnight) is left out, so its card alone shows unavailable.
-        let Ok((a, b, p)) = date_bounds(q.from, q.to, &timezone) else {
+        // them (an unknown timezone) is left out, so its card alone shows unavailable.
+        let Ok((a, b, _)) = date_bounds(q.from, q.to, &timezone) else {
+            continue;
+        };
+        let Ok((pa, pb, _)) = compare_bounds(q.from, q.to, &timezone, q.compare, wall_now) else {
             continue;
         };
         // Only a period that has fully ended is cached; a future range's "previous" can be live.
-        let cacheable = a <= wall_now;
-        let prior = match s.previous_visitors.get(&(id, p, a)).filter(|_| cacheable) {
+        let cacheable = pb <= wall_now;
+        let prior_start = match s.previous_visitors.get(&(id, pa, pb)).filter(|_| cacheable) {
             Some(entry) if now.duration_since(entry.0) < PREVIOUS_VISITORS_TTL => {
                 cached.insert(id, entry.1);
                 // An empty previous window, so the query skips rescanning that period.
-                a
+                pb
             }
-            _ => p,
+            _ => pa,
         };
         ids.push(id);
         starts.push(a);
         ends.push(b);
-        priors.push(prior);
+        prior_starts.push(prior_start);
+        prior_ends.push(pb);
+        prior_keys.push((pa, pb));
         zones.push(timezone);
     }
     if ids.is_empty() {
@@ -2061,16 +2124,17 @@ async fn site_summaries(
              AND occurred_at >= r.a AND occurred_at < r.b) v), \
            (SELECT count(*) FROM (SELECT DISTINCT visitor_id FROM events \
              WHERE site_id=r.site_id AND traffic_class='human' \
-             AND occurred_at >= r.p AND occurred_at < r.a) v), \
+             AND occurred_at >= r.pa AND occurred_at < r.pb) v), \
            (SELECT count(*) FROM events WHERE site_id=r.site_id AND traffic_class='human' \
              AND event_name='pageview' AND occurred_at >= r.a AND occurred_at < r.b) \
-         FROM unnest($1::uuid[],$2::timestamptz[],$3::timestamptz[],$4::timestamptz[]) \
-           r(site_id,a,b,p)",
+         FROM unnest($1::uuid[],$2::timestamptz[],$3::timestamptz[],$4::timestamptz[],$5::timestamptz[]) \
+           r(site_id,a,b,pa,pb)",
     )
     .bind(&ids)
     .bind(&starts)
     .bind(&ends)
-    .bind(&priors)
+    .bind(&prior_starts)
+    .bind(&prior_ends)
     .fetch_all(&s.pool);
     let sessions = sqlx::query_as::<_, SessionRow>(
         "SELECT r.site_id, \
@@ -2149,15 +2213,15 @@ async fn site_summaries(
     }
     let summaries = ids
         .iter()
-        .zip(starts.iter().zip(&priors))
-        .map(|(&id, (&a, &prior))| {
+        .zip(&prior_keys)
+        .map(|(&id, &(pa, pb))| {
             // Raw counts, like the single-site overview, so late events show up immediately.
             let (current, scanned_previous, views) = visitors.remove(&id).unwrap_or_default();
             let previous = match cached.get(&id) {
                 Some(&previous) => previous,
-                None if a <= wall_now => {
+                None if pb <= wall_now => {
                     s.previous_visitors
-                        .insert((id, prior, a), (now, scanned_previous));
+                        .insert((id, pa, pb), (now, scanned_previous));
                     scanned_previous
                 }
                 None => scanned_previous,

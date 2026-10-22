@@ -1,5 +1,9 @@
+import { DEFAULT_RANGE, periodDays, type DateRange, type Period } from './app-routes';
+
 export interface TrendPoint { date: string; visitors: number; pageViews: number }
-export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[] }
+/** One local hour of a single-day range, beside the same hour of the day it is compared with. */
+export interface HourPoint { hour: number; visitors: number | null; pageViews: number | null; previousVisitors: number; previousPageViews: number }
+export interface Overview { visitors: number; previousVisitors?: number; sessions: number; pageViews: number; bounceRate: number; avgDuration: number; change: number; currentOnline: number; trend: TrendPoint[]; hourly?: HourPoint[] }
 export type AntiAdblockServer = 'caddy' | 'nginx' | 'apache';
 export interface AntiAdblockSettings { serverType: AntiAdblockServer; jsPath: string; beaconPath: string }
 export interface BillingPlan { id: string; name: string; sites: number | null; dailyPageViews: number | null; monthlyPriceCents: number; annualPriceCents: number; currency: string; intervals?: ('month' | 'year')[] }
@@ -171,6 +175,7 @@ interface WireOverview {
   avgDurationSeconds?: number;
   avg_duration_seconds?: number;
   trend?: TrendPoint[];
+  hourly?: HourPoint[];
 }
 interface WireSiteSummary {
   siteId: string;
@@ -191,13 +196,14 @@ export function localDate(now: Date, timeZone?: string) {
   const part = (type: string) => format.formatToParts(now).find((item) => item.type === type)?.value;
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
-/** Inclusive range of `days` calendar days ending today in the site's zone, which is how the API reads dates. */
-export function dates(days: number, timeZone?: string, now = new Date()) {
-  const to = localDate(now, timeZone);
-  const from = new Date(Date.parse(`${to}T00:00:00Z`) - Math.max(0, days - 1) * 864e5).toISOString().slice(0, 10);
-  return { from, to };
+/** The inclusive dates a period covers in the site's zone, which is how the API reads dates. */
+export function dates(period: Period, timeZone?: string, now = new Date()) {
+  const today = localDate(now, timeZone);
+  const daysBefore = (date: string, count: number) => new Date(Date.parse(`${date}T00:00:00Z`) - count * 864e5).toISOString().slice(0, 10);
+  const to = period === 'yesterday' ? daysBefore(today, 1) : today;
+  return { from: daysBefore(to, periodDays(period) - 1), to };
 }
-function dateQuery(days: number, timeZone?: string) { const range = dates(days, timeZone); return `from=${range.from}&to=${range.to}`; }
+function dateQuery(period: Period, timeZone?: string) { const range = dates(period, timeZone); return `from=${range.from}&to=${range.to}`; }
 function normalizeSite(site: WireSite): Site { return { ...site, writeKey: site.writeKey ?? site.write_key ?? '', serverWriteKey: site.serverWriteKey ?? site.server_write_key ?? '', antiAdblockServer: site.antiAdblockServer ?? site.anti_adblock_server ?? 'caddy', antiAdblockJsPath: site.antiAdblockJsPath ?? site.anti_adblock_js_path ?? '/slimlytics.js', antiAdblockBeaconPath: site.antiAdblockBeaconPath ?? site.anti_adblock_beacon_path ?? '/slimlytics-event' }; }
 const trend = Array.from({ length: 28 }, (_, index) => ({ date: new Date(Date.now() - (27 - index) * 864e5).toISOString().slice(0, 10), visitors: 84 + ((index * 17) % 71), pageViews: 151 + ((index * 29) % 129) }));
 const baseOverview: Overview = { visitors: 3421, sessions: 3892, pageViews: 8754, bounceRate: 38.4, avgDuration: 164, change: 12.8, currentOnline: 14, trend };
@@ -451,8 +457,8 @@ export class ApiClient {
   rotateServerKey(id: string) { return this.request<{ serverWriteKey: string }>(`/sites/${id}/rotate-server-key`, { method: 'POST' }); }
   collectionHealth(id: string) { return this.request<CollectionHealth>(`/sites/${id}/collection-health`, {}, () => ({ acceptedTotal: 0, rejectedTotal: 0 })); }
   deleteSite(id: string) { return this.request<void>(`/sites/${id}`, { method: 'DELETE' }, () => undefined); }
-  async overview(id: string, days = 28): Promise<Overview> {
-    const wire = await this.request<WireOverview>(`/sites/${id}/overview?${dateQuery(days, this.zone(id))}`, {}, () => ({
+  async overview(id: string, range: DateRange = DEFAULT_RANGE): Promise<Overview> {
+    const wire = await this.request<WireOverview>(`/sites/${id}/overview?${dateQuery(range.period, this.zone(id))}&compare=${range.compare}`, {}, () => ({
       views: { current: baseOverview.pageViews, previous: 0 },
       visitors: { current: baseOverview.visitors, previous: 0 },
       sessions: { current: baseOverview.sessions, previous: 0 },
@@ -469,17 +475,18 @@ export class ApiClient {
       avgDuration: wire.avgDurationSeconds ?? wire.avg_duration_seconds ?? 0,
       change,
       currentOnline: wire.currentOnline ?? wire.current_online ?? 0,
-      trend: wire.trend ?? []
+      trend: wire.trend ?? [],
+      hourly: wire.hourly
     };
   }
   /** Overview cards for every site in one request, keyed by site ID; `sessions` is not included. */
   /** Pass the site list being loaded alongside, so ranges follow every current site's timezone. */
-  async siteSummaries(days = 28, sites: Site[] | Promise<Site[]> = this.sites()): Promise<Map<string, Overview>> {
+  async siteSummaries(range: DateRange = DEFAULT_RANGE, sites: Site[] | Promise<Site[]> = this.sites()): Promise<Map<string, Overview>> {
     // The API reads one date range in every site's own zone, so sites whose calendars differ
     // (e.g. a UTC site after 6 PM in Denver) each need the range ending on their own today.
     const queries = new Map<string, Set<string>>();
-    for (const site of await sites) { const query = dateQuery(days, site.timezone); queries.set(query, (queries.get(query) ?? new Set()).add(site.id)); }
-    if (queries.size === 0) queries.set(dateQuery(days), new Set());
+    for (const site of await sites) { const query = `${dateQuery(range.period, site.timezone)}&compare=${range.compare}`; queries.set(query, (queries.get(query) ?? new Set()).add(site.id)); }
+    if (queries.size === 0) queries.set(`${dateQuery(range.period)}&compare=${range.compare}`, new Set());
     const all = queries.size === 1;
     const responses = await Promise.all([...queries].map(async ([query, ids]) => ({ ids, rows: await this.summaryRows(query) })));
     const rows = responses.flatMap(({ ids, rows }) => rows.filter((row) => all || ids.has(row.siteId)));
@@ -504,40 +511,40 @@ export class ApiClient {
       })
     );
   }
-  async report(id: string, type: string, days = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(days, this.zone(id))}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, visitors: row.visitors })); }
-  journeys(id: string, days = 28) { return this.request<Journey[]>(`/sites/${id}/insights/journeys?${dateQuery(days, this.zone(id))}`, {}, () => []); }
-  attribution(id: string, days = 28) { return this.request<Attribution[]>(`/sites/${id}/insights/attribution?${dateQuery(days, this.zone(id))}`, {}, () => []); }
-  anomalies(id: string, days = 28) { return this.request<Anomaly[]>(`/sites/${id}/insights/anomalies?${dateQuery(days, this.zone(id))}`, {}, () => []); }
-  annotations(id: string, days = 28) { return this.request<Annotation[]>(`/sites/${id}/annotations?${dateQuery(days, this.zone(id))}`, {}, () => []); }
+  async report(id: string, type: string, period: Period = 28) { const rows = await this.request<WireReportRow[]>(`/sites/${id}/reports/${type}?${dateQuery(period, this.zone(id))}`, {}, () => []); return rows.map((row) => ({ label: row.value, value: row.views, visitors: row.visitors })); }
+  journeys(id: string, period: Period = 28) { return this.request<Journey[]>(`/sites/${id}/insights/journeys?${dateQuery(period, this.zone(id))}`, {}, () => []); }
+  attribution(id: string, period: Period = 28) { return this.request<Attribution[]>(`/sites/${id}/insights/attribution?${dateQuery(period, this.zone(id))}`, {}, () => []); }
+  anomalies(id: string, period: Period = 28) { return this.request<Anomaly[]>(`/sites/${id}/insights/anomalies?${dateQuery(period, this.zone(id))}`, {}, () => []); }
+  annotations(id: string, period: Period = 28) { return this.request<Annotation[]>(`/sites/${id}/annotations?${dateQuery(period, this.zone(id))}`, {}, () => []); }
   createAnnotation(id: string, annotation: Pick<Annotation, 'occurredOn' | 'label'>) { return this.request<Annotation>(`/sites/${id}/annotations`, { method: 'POST', body: JSON.stringify(annotation) }); }
   deleteAnnotation(id: string, annotationId: string) { return this.request<void>(`/sites/${id}/annotations/${annotationId}`, { method: 'DELETE' }); }
   funnels(id: string) { return this.request<Funnel[]>(`/sites/${id}/funnels`, {}, () => []); }
   createFunnel(id: string, funnel: Pick<Funnel, 'name' | 'steps'>) { return this.request<Funnel>(`/sites/${id}/funnels`, { method: 'POST', body: JSON.stringify(funnel) }); }
   deleteFunnel(id: string, funnelId: string) { return this.request<void>(`/sites/${id}/funnels/${funnelId}`, { method: 'DELETE' }); }
-  funnelReport(id: string, funnelId: string, days = 28) { return this.request<FunnelReport>(`/sites/${id}/funnels/${funnelId}/report?${dateQuery(days, this.zone(id))}`, {}, () => ({ id: funnelId, name: 'Funnel', ...dates(days, this.zone(id)), steps: [] })); }
+  funnelReport(id: string, funnelId: string, period: Period = 28) { return this.request<FunnelReport>(`/sites/${id}/funnels/${funnelId}/report?${dateQuery(period, this.zone(id))}`, {}, () => ({ id: funnelId, name: 'Funnel', ...dates(period, this.zone(id)), steps: [] })); }
   searchConsoleStatus(id: string) { return this.request<SearchConsoleStatus>(`/sites/${id}/integrations/search-console`, {}, () => ({ configured: true, connected: true, propertyUrl: 'sc-domain:docs.northstar.dev', lastSyncedAt: new Date().toISOString() })); }
   connectSearchConsole(id: string) { return this.request<{ authorizationUrl: string }>(`/sites/${id}/integrations/search-console/connect`, { method: 'POST' }); }
   disconnectSearchConsole(id: string) { return this.request<void>(`/sites/${id}/integrations/search-console`, { method: 'DELETE' }); }
-  syncSearchConsole(id: string, days = 28) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/search-console/sync?${dateQuery(days, this.zone(id))}`, { method: 'POST' }); }
+  syncSearchConsole(id: string, period: Period = 28) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/search-console/sync?${dateQuery(period, this.zone(id))}`, { method: 'POST' }); }
   addSearchConsoleProperty(id: string) { return this.request<SearchConsoleProperty>(`/sites/${id}/integrations/search-console/property`, { method: 'POST' }); }
   verifySearchConsoleProperty(id: string) { return this.request<{ propertyUrl: string; verified: boolean }>(`/sites/${id}/integrations/search-console/property/verify`, { method: 'POST' }); }
-  searchConsoleReport(id: string, dimension: SearchConsoleDimension = 'query', days = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(days, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, days)); }
+  searchConsoleReport(id: string, dimension: SearchConsoleDimension = 'query', period: Period = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(period, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, periodDays(period))); }
   reportSubscriptions(id: string) { return this.request<ReportSubscription[]>(`/sites/${id}/report-subscriptions`, {}, () => []); }
   createReportSubscription(id: string, subscription: Omit<ReportSubscription, 'id' | 'siteId' | 'nextRunAt' | 'createdAt' | 'lastSentAt' | 'lastStatus' | 'lastError' | 'signingSecret'>) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions`, { method: 'POST', body: JSON.stringify(subscription) }); }
   updateReportSubscription(id: string, subscription: ReportSubscription) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions/${subscription.id}`, { method: 'PUT', body: JSON.stringify(subscription) }); }
   deleteReportSubscription(id: string, subscriptionId: string) { return this.request<void>(`/sites/${id}/report-subscriptions/${subscriptionId}`, { method: 'DELETE' }); }
   deliverReportSubscription(id: string, subscriptionId: string) { return this.request<{ status: string }>(`/sites/${id}/report-subscriptions/${subscriptionId}/deliver`, { method: 'POST' }); }
-  visitors(id: string, days = 28) { return this.request<Visitor[]>(`/sites/${id}/visitors?${dateQuery(days, this.zone(id))}`, {}, () => [{ id: 'v1', country: 'United States', city: 'Portland', device: 'Desktop', browser: 'Firefox', page: '/docs', sessions: 4, lastSeen: new Date().toISOString() }]); }
-  events(id: string, days = 28) { return this.request<LiveEvent[]>(`/sites/${id}/events?${dateQuery(days, this.zone(id))}`, {}, () => [{ id: 'e1', type: 'pageview', page: '/docs/getting-started', visitorId: 'v1', country: 'US', city: 'Portland', timestamp: new Date().toISOString(), referrer: 'Google' }]); }
+  visitors(id: string, period: Period = 28) { return this.request<Visitor[]>(`/sites/${id}/visitors?${dateQuery(period, this.zone(id))}`, {}, () => [{ id: 'v1', country: 'United States', city: 'Portland', device: 'Desktop', browser: 'Firefox', page: '/docs', sessions: 4, lastSeen: new Date().toISOString() }]); }
+  events(id: string, period: Period = 28) { return this.request<LiveEvent[]>(`/sites/${id}/events?${dateQuery(period, this.zone(id))}`, {}, () => [{ id: 'e1', type: 'pageview', page: '/docs/getting-started', visitorId: 'v1', country: 'US', city: 'Portland', timestamp: new Date().toISOString(), referrer: 'Google' }]); }
   async goals(id: string) { const rows = await this.request<WireGoal[]>(`/sites/${id}/goals`, {}, () => []); return rows.map((goal) => ({ id: goal.id, name: goal.name, type: 'event', target: goal.eventName ?? goal.event_name ?? '', conversions: goal.conversions ?? 0, conversionRate: goal.conversionRate ?? goal.conversion_rate ?? 0 })); }
   async createGoal(id: string, goal: Omit<Goal, 'id'>) { const row = await this.request<WireGoal>(`/sites/${id}/goals`, { method: 'POST', body: JSON.stringify({ name: goal.name, eventName: goal.target }) }, () => ({ ...goal, id: crypto.randomUUID(), eventName: goal.target })); return { id: row.id, name: row.name, type: 'event', target: row.eventName ?? row.event_name ?? goal.target, conversions: 0, conversionRate: 0 }; }
-  exportUrl(id: string, days: number) { return `${this.base}/sites/${id}/export.csv?${dateQuery(days, this.zone(id))}`; }
+  exportUrl(id: string, period: Period) { return `${this.base}/sites/${id}/export.csv?${dateQuery(period, this.zone(id))}`; }
   streamUrl(id: string, token?: string) { const query = token ? `?token=${encodeURIComponent(token)}` : ''; return `${this.base}/sites/${id}/stream${query}`; }
-  async downloadExport(id: string, days: number, attempts = 0): Promise<Blob> {
+  async downloadExport(id: string, period: Period, attempts = 0): Promise<Blob> {
     const sent = this.token;
-    const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(days, this.zone(id))}`, { headers: sent ? { authorization: `Bearer ${sent}` } : {} });
+    const response = await this.fetcher(`${this.base}/sites/${id}/export.csv?${dateQuery(period, this.zone(id))}`, { headers: sent ? { authorization: `Bearer ${sent}` } : {} });
     if (response.status === 401 && sent && !this.demo) {
-      if (attempts < 2 && await this.refreshSession(sent)) return this.downloadExport(id, days, attempts + 1);
+      if (attempts < 2 && await this.refreshSession(sent)) return this.downloadExport(id, period, attempts + 1);
       this.onUnauthorized?.();
     }
     if (!response.ok) throw new ApiError(response.status, `Export failed (${response.status})`);

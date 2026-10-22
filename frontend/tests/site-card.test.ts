@@ -18,13 +18,13 @@ describe('site card', () => {
   afterEach(cleanup);
 
   it('shows a loaded zero-traffic site as quiet, linking to installation settings', () => {
-    render(SiteCard, { site: { ...site, overview: zeroTraffic }, days: 28 });
+    render(SiteCard, { site: { ...site, overview: zeroTraffic }, range: { period: 28, compare: 'previous' } });
     expect(document.body).toHaveTextContent('No visits in the last 28 days');
     expect(screen.getByRole('link')).toHaveAttribute('href', '/app/s1/settings');
   });
 
   it('does not mistake a failed overview for a quiet site', () => {
-    render(SiteCard, { site, days: 28 });
+    render(SiteCard, { site, range: { period: 28, compare: 'previous' } });
     expect(document.body).toHaveTextContent('Stats unavailable');
     expect(document.body).not.toHaveTextContent('No visits');
     expect(document.body).not.toHaveTextContent('Check installation');
@@ -32,7 +32,7 @@ describe('site card', () => {
   });
 
   it('shows a placeholder, not "unavailable", while stats are still loading', () => {
-    render(SiteCard, { site, days: 28, pending: true });
+    render(SiteCard, { site, range: { period: 28, compare: 'previous' }, pending: true });
     expect(document.body).not.toHaveTextContent('Stats unavailable');
     expect(document.body).not.toHaveTextContent('No visits');
     expect(screen.getByRole('link')).toHaveAttribute('aria-busy', 'true');

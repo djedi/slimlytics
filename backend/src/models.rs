@@ -196,6 +196,8 @@ fn empty_object() -> Value {
 pub struct RangeQuery {
     pub from: NaiveDate,
     pub to: NaiveDate,
+    #[serde(default)]
+    pub compare: crate::reporting::Compare,
 }
 #[derive(Debug, Deserialize)]
 pub struct ReportQuery {
@@ -323,6 +325,22 @@ pub struct Overview {
     pub bounce_rate: f64,
     pub avg_duration_seconds: f64,
     pub trend: Vec<TrendPoint>,
+    /// Hour-by-hour traffic for single-day ranges, with the comparison day alongside.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hourly: Option<Vec<HourPoint>>,
+}
+
+/// One hour of a single-day range and the same local clock hour of its comparison day. A
+/// daylight saving day has 23 or 25 of them. The day's own counts are null for hours that
+/// have not started yet.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct HourPoint {
+    pub hour: i32,
+    pub visitors: Option<i64>,
+    pub page_views: Option<i64>,
+    pub previous_visitors: i64,
+    pub previous_page_views: i64,
 }
 
 /// One site's card on the all-sites dashboard: the overview metrics it shows, without the

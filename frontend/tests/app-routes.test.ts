@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DAYS, appHref, parseDays, parseView } from '../src/lib/app-routes';
+import { DEFAULT_RANGE, appHref, parseRange, parseView } from '../src/lib/app-routes';
 
 describe('dashboard routes', () => {
   it('builds workspace, site, and view paths', () => {
@@ -11,9 +11,10 @@ describe('dashboard routes', () => {
   });
 
   it('keeps a non-default date range in the query string', () => {
-    expect(appHref('site-1', 'pages', 7)).toBe('/app/site-1/pages?days=7');
-    expect(appHref('site-1', 'pages', DEFAULT_DAYS)).toBe('/app/site-1/pages');
-    expect(appHref(undefined, undefined, 90)).toBe('/app?days=90');
+    expect(appHref('site-1', 'pages', { period: 7, compare: 'previous' })).toBe('/app/site-1/pages?days=7');
+    expect(appHref('site-1', 'pages', DEFAULT_RANGE)).toBe('/app/site-1/pages');
+    expect(appHref(undefined, undefined, { period: 90, compare: 'previous' })).toBe('/app?days=90');
+    expect(appHref('site-1', null, { period: 'today', compare: 'week' })).toBe('/app/site-1?days=today&compare=week');
   });
 
   it('parses views, treating a missing view as overview', () => {
@@ -25,10 +26,14 @@ describe('dashboard routes', () => {
   });
 
   it('accepts only the offered date ranges', () => {
-    expect(parseDays(null)).toBe(DEFAULT_DAYS);
-    expect(parseDays('7')).toBe(7);
-    expect(parseDays('90')).toBe(90);
-    expect(parseDays('13')).toBe(DEFAULT_DAYS);
-    expect(parseDays('abc')).toBe(DEFAULT_DAYS);
+    const parse = (query: string) => parseRange(new URLSearchParams(query));
+    expect(parse('')).toEqual(DEFAULT_RANGE);
+    expect(parse('days=7')).toEqual({ period: 7, compare: 'previous' });
+    expect(parse('days=today')).toEqual({ period: 'today', compare: 'previous' });
+    expect(parse('days=yesterday&compare=week')).toEqual({ period: 'yesterday', compare: 'week' });
+    expect(parse('days=13')).toEqual(DEFAULT_RANGE);
+    expect(parse('days=abc&compare=nope')).toEqual(DEFAULT_RANGE);
+    // A week-earlier comparison is offered only for a single day.
+    expect(parse('days=28&compare=week')).toEqual(DEFAULT_RANGE);
   });
 });

@@ -68,7 +68,20 @@
     type Visitor
   } from '$lib/api';
   import { applyTheme, compactNumber, duration, flagEmoji, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
-  import { appHref, parseDays, parseView, type SiteView } from '$lib/app-routes';
+  import {
+    DEFAULT_RANGE,
+    appHref,
+    compareOptions,
+    compareText,
+    isSingleDay,
+    parseRange,
+    parseView,
+    periodOptions,
+    periodText,
+    rangeKey,
+    type DateRange,
+    type SiteView
+  } from '$lib/app-routes';
   import ChangeBadge from '$lib/components/rollup/ChangeBadge.svelte';
   import SiteCard from '$lib/components/rollup/SiteCard.svelte';
   import PlanCard from '$lib/components/billing/PlanCard.svelte';
@@ -117,7 +130,7 @@
   let sites = $state<Site[]>([]);
   let site = $state<Site | null>(null);
   let view = $state<View>('rollup');
-  let days = $state(28);
+  let range = $state<DateRange>(DEFAULT_RANGE);
   let loading = $state(false);
   let error = $state('');
   let menuOpen = $state(false);
@@ -167,7 +180,7 @@
   });
   let searchReportsByKey = $state<Record<string, Record<SearchConsoleDimension, SearchConsoleRow[]>>>({});
   const searchReports = $derived(
-    (site && searchReportsByKey[`${site.id}:${days}`]) || emptySearchReports()
+    (site && searchReportsByKey[`${site.id}:${range.period}`]) || emptySearchReports()
   );
   // The DNS record Google needs before a property Slimlytics added can be verified.
   let searchConsoleProperty = $state<SearchConsoleProperty | null>(null);
@@ -253,9 +266,9 @@
   let routeNotice = '';
   const siteParam = $derived(page.params.site);
   const viewParam = $derived(page.params.view);
-  const daysParam = $derived(parseDays(page.url.searchParams.get('days')));
+  const rangeParam = $derived(parseRange(page.url.searchParams));
   $effect(() => {
-    const route = { siteId: siteParam, segment: viewParam, nextDays: daysParam };
+    const route = { siteId: siteParam, segment: viewParam, nextRange: rangeParam };
     if (!sitesLoaded) return;
     untrack(() => void applyRoute(route));
   });
@@ -263,39 +276,41 @@
   async function applyRoute({
     siteId,
     segment,
-    nextDays
+    nextRange
   }: {
     siteId: string | undefined;
     segment: string | undefined;
-    nextDays: number;
+    nextRange: DateRange;
   }) {
-    days = nextDays;
+    range = nextRange;
     menuOpen = false;
     error = routeNotice;
     routeNotice = '';
     if (!siteId) {
       // Search Console's OAuth callback returns to /app?site={id}; send it to that site's settings.
       const returning = page.url.searchParams.get('site');
-      if (returning) return void goto(appHref(returning, 'settings', days), { replaceState: true });
+      if (returning) return void goto(appHref(returning, 'settings', range), { replaceState: true });
       source?.close();
       site = null;
       view = 'rollup';
-      if (sitesDays !== days) await loadSites();
+      if (sitesRange !== rangeKey(range)) await loadSites();
       return;
     }
     const next = sites.find((item) => item.id === siteId);
     const nextView = parseView(segment);
     if (!next) {
       routeNotice = 'That site was not found in your workspace.';
-      return void goto(appHref(null, null, days), { replaceState: true });
+      return void goto(appHref(null, null, range), { replaceState: true });
     }
-    if (!nextView) return void goto(appHref(siteId, 'overview', days), { replaceState: true });
+    if (!nextView) return void goto(appHref(siteId, 'overview', range), { replaceState: true });
     site = next;
     view = nextView;
     await loadView();
   }
-  function changeDays(next: number) {
-    void goto(appHref(site?.id, site ? (view as SiteView) : null, next), { keepFocus: true });
+  function changeRange(next: DateRange) {
+    // A comparison the new period does not offer falls back to the previous period.
+    const compare = compareOptions(next.period).some((option) => option.value === next.compare) ? next.compare : 'previous';
+    void goto(appHref(site?.id, site ? (view as SiteView) : null, { ...next, compare }), { keepFocus: true });
   }
 
   async function logout() {
@@ -371,7 +386,7 @@
     billingNotice = `You’re on the ${billingStatus.plan?.name} plan.`;
     // Drop ?billing=success only if the user is still on the page they returned to.
     if (page.url.searchParams.get('billing') === 'success' && !site) {
-      replaceState(appHref(null, null, days), page.state);
+      replaceState(appHref(null, null, range), page.state);
     }
   }
 
@@ -381,18 +396,18 @@
     void loadBilling().then(() => {
       if (page.url.searchParams.get('billing') === 'success') void confirmCheckout();
     });
-    const range = days;
+    const requested = range;
     const request = ++sitesRequest;
     // Start the stats now, but show the site list (and resolve deep links) as soon as it arrives.
     const listed = api.sites();
-    const summaries = api.siteSummaries(range, listed);
+    const summaries = api.siteSummaries(requested, listed);
     summaries.catch(() => {});
     try {
       const loaded = await listed;
       if (request !== sitesRequest) return;
       sites = loaded.map((item) => ({ ...item, overview: undefined }));
       // The stats for this range are on their way; returning to All sites must not reload them.
-      sitesDays = range;
+      sitesRange = rangeKey(requested);
       summariesPending = true;
     } catch (reason) {
       if (request === sitesRequest) {
@@ -419,7 +434,7 @@
   }
   // The date range the workspace overviews were loaded with. A site view can change the
   // range, so returning to All sites must reload when it no longer matches.
-  let sitesDays: number | null = null;
+  let sitesRange: string | null = null;
   // Bumped per site-list load so a slower, older response cannot overwrite a newer one.
   let sitesRequest = 0;
   // Counts local site edits so a background refresh fetched before one cannot undo it.
@@ -432,15 +447,15 @@
     return loaded.map((item) => ({ ...item, overview: overviews.get(item.id) ?? item.overview }));
   }
   async function refreshSitesQuietly() {
-    const range = days;
+    const requested = range;
     const request = ++sitesRequest;
     const edits = sitesEdits;
     const listed = api.sites();
-    const [loaded, overviews] = await Promise.all([listed, api.siteSummaries(range, listed)]);
+    const [loaded, overviews] = await Promise.all([listed, api.siteSummaries(requested, listed)]);
     // A site added or edited meanwhile is newer than this snapshot; the next tick picks it up.
     if (request !== sitesRequest || edits !== sitesEdits) return;
     sites = applySummaries(loaded, overviews);
-    sitesDays = range;
+    sitesRange = rangeKey(requested);
   }
   async function loadView() {
     if (!site) return;
@@ -458,11 +473,15 @@
   async function refreshViewQuietly(resetStream = false) {
     if (!site) return;
     if (view === 'overview') {
+      const id = site.id;
+      const requested = rangeKey(range);
       const [nextOverview, pages, referrers] = await Promise.all([
-        api.overview(site.id, days),
-        api.report(site.id, 'pages', days),
-        api.report(site.id, 'referrers', days)
+        api.overview(id, range),
+        api.report(id, 'pages', range.period),
+        api.report(id, 'referrers', range.period)
       ]);
+      // A newer selection (another site, range, or comparison) owns the page now.
+      if (site?.id !== id || view !== 'overview' || rangeKey(range) !== requested) return;
       overview = nextOverview;
       topPages = (demo ? demoReport('pages') : pages).slice(0, 5);
       topReferrers = (demo ? demoReport('referrers') : referrers).slice(0, 5);
@@ -471,22 +490,22 @@
         item.id === site?.id ? { ...item, overview: nextOverview } : item
       );
       // That entry now holds this range; the workspace cache no longer has one consistent range.
-      if (days !== sitesDays) sitesDays = null;
+      if (rangeKey(range) !== sitesRange) sitesRange = null;
     } else if (view === 'insights') {
       // Load sections independently so one failing query cannot blank the whole page.
       const id = site.id;
       const [journeysResult, attributionResult, anomaliesResult, funnelsResult, reportsResult] =
         await Promise.allSettled([
-          api.journeys(id, days),
-          api.attribution(id, days),
-          api.anomalies(id, days),
+          api.journeys(id, range.period),
+          api.attribution(id, range.period),
+          api.anomalies(id, range.period),
           api.funnels(id).then(async (list) => ({
             list,
-            reports: await Promise.all(list.map((funnel) => api.funnelReport(id, funnel.id, days)))
+            reports: await Promise.all(list.map((funnel) => api.funnelReport(id, funnel.id, range.period)))
           })),
           Promise.all(
             ['landing-pages', 'exit-pages', 'sources', 'content', 'ai-referrers', 'ai-crawlers'].map(
-              (type) => api.report(id, type, days)
+              (type) => api.report(id, type, range.period)
             )
           )
         ]);
@@ -534,8 +553,8 @@
         'campaigns'
       ].includes(view)
     )
-      report = await api.report(site.id, view, days);
-    else if (view === 'visitors') visitors = await api.visitors(site.id);
+      report = await api.report(site.id, view, range.period);
+    else if (view === 'visitors') visitors = await api.visitors(site.id, range.period);
     else if (view === 'spy') {
       events = await api.events(site.id);
       if (resetStream) liveWindow = [];
@@ -545,14 +564,14 @@
     } else if (view === 'goals') goals = await api.goals(site.id);
     else if (view === 'search') {
       const id = site.id;
-      const range = days;
+      const period = range.period;
       const generation = ++searchLoadGeneration;
       const changes = searchConsoleChanges;
       const status = await api.searchConsoleStatus(id);
       let reports = emptySearchReports();
       if (status.connected && status.propertyUrl) {
         const rows = await Promise.all(
-          searchDimensions.map((dimension) => api.searchConsoleReport(id, dimension, range))
+          searchDimensions.map((dimension) => api.searchConsoleReport(id, dimension, period))
         );
         reports = Object.fromEntries(
           searchDimensions.map((dimension, index) => [dimension, rows[index]])
@@ -560,7 +579,7 @@
       }
       if (generation !== searchLoadGeneration || changes !== searchConsoleChanges) return;
       setSearchConsole(id, status);
-      searchReportsByKey = { ...searchReportsByKey, [`${id}:${range}`]: reports };
+      searchReportsByKey = { ...searchReportsByKey, [`${id}:${period}`]: reports };
     } else if (view === 'settings') {
       // A pending DNS record and notice belong to the site they were issued for.
       if (searchConsoleSetupSite !== site.id) {
@@ -673,7 +692,7 @@
     loading = true;
     error = '';
     try {
-      await api.syncSearchConsole(id, days);
+      await api.syncSearchConsole(id, range.period);
       if (view === 'search') await refreshViewQuietly();
       else setSearchConsole(id, await api.searchConsoleStatus(id));
     } catch (reason) {
@@ -708,7 +727,7 @@
   async function verifySearchConsoleProperty() {
     if (!site) return;
     const id = site.id;
-    const range = days;
+    const period = range.period;
     const op = ++searchConsoleOp;
     const current = () => site?.id === id && op === searchConsoleOp;
     searchConsoleChanges++;
@@ -731,7 +750,7 @@
         searchConsoleNotice = 'Verified. Syncing search data…';
       }
       try {
-        await api.syncSearchConsole(id, range);
+        await api.syncSearchConsole(id, period);
         if (current())
           searchConsoleNotice = 'Verified and synced. New properties can take a few days to show data.';
       } catch (reason) {
@@ -823,7 +842,7 @@
         domain,
         allowedOrigins: [origin]
       });
-      const overview = await api.overview(created.id, days);
+      const overview = await api.overview(created.id, range);
       sitesEdits++;
       // A background refresh may already have listed it.
       sites = [...sites.filter((item) => item.id !== created.id), { ...created, overview }];
@@ -831,7 +850,7 @@
       newSite = false;
       siteName = '';
       siteDomain = '';
-      await goto(appHref(created.id, 'overview', days));
+      await goto(appHref(created.id, 'overview', range));
     } catch (reason) {
       siteError = reason instanceof Error ? reason.message : 'Could not create site.';
     }
@@ -839,7 +858,7 @@
   async function downloadCsv() {
     if (!site) return;
     try {
-      const blob = await api.downloadExport(site.id, days);
+      const blob = await api.downloadExport(site.id, range.period);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -879,14 +898,14 @@
   <div class="app-shell">
     <aside class:open={menuOpen} aria-label="Primary navigation">
       <div class="sidebar-brand">
-        <a class="brand" href={appHref(null, null, days)}>
+        <a class="brand" href={appHref(null, null, range)}>
           <img class="mascot-logo" src="/images/mascot/meerkat-logo.webp" width="38" height="38" alt="" /><strong>Slimlytics</strong>
         </a>
         <button class="icon-button close-menu" aria-label="Close menu" onclick={() => (menuOpen = false)}
           ><X /></button
         >
       </div>
-      <a class="site-picker" href={appHref(null, null, days)} aria-label="All sites">
+      <a class="site-picker" href={appHref(null, null, range)} aria-label="All sites">
         {#if site}<SiteIcon {site} {apiBase} />{:else}<span class="site-avatar">ALL</span>{/if}
         <span
           ><small>{site ? 'Current site' : 'Workspace'}</small><strong
@@ -899,7 +918,7 @@
           {#each nav as item}
             <a
               class:active={view === item.id}
-              href={appHref(site.id, item.id, days)}
+              href={appHref(site.id, item.id, range)}
               aria-current={view === item.id ? 'page' : undefined}
               ><item.icon size={17} aria-hidden="true" /><span>{item.label}</span>{#if item.id === 'spy'}<i
                 ></i
@@ -909,7 +928,7 @@
         </nav>
       {:else}
         <nav>
-          <a class="active" href={appHref(null, null, days)} aria-current="page"
+          <a class="active" href={appHref(null, null, range)} aria-current="page"
             ><LayoutDashboard size={17} aria-hidden="true" />All sites</a
           >
         </nav>
@@ -945,10 +964,23 @@
         <div class="top-actions">
           <label class="date-picker"
             ><CalendarDays size={16} /><span class="sr-only">Date range</span
-            ><select value={days} onchange={(event) => changeDays(Number(event.currentTarget.value))}
-              ><option value={7}>Last 7 days</option><option value={28}>Last 28 days</option
-              ><option value={90}>Last 90 days</option></select
+            ><select
+              value={String(range.period)}
+              onchange={(event) =>
+                changeRange({
+                  ...range,
+                  period: periodOptions.find((option) => String(option.value) === event.currentTarget.value)?.value ?? range.period
+                })}
+              >{#each periodOptions as option}<option value={String(option.value)}>{option.label}</option>{/each}</select
             ></label
+          >{#if isSingleDay(range.period)}<label class="date-picker compare-picker"
+              ><span class="sr-only">Compare with</span
+              ><select
+                value={range.compare}
+                onchange={(event) => changeRange({ ...range, compare: event.currentTarget.value as DateRange['compare'] })}
+                >{#each compareOptions(range.period) as option}<option value={option.value}>{option.label}</option>{/each}</select
+              ></label
+            >{/if}
           ><button class="icon-button" aria-label="Notifications"><Bell size={18} /></button
           ><a class="avatar" href="/account" aria-label="Account security">{initials || 'ME'}</a>
         </div>
@@ -965,7 +997,7 @@
           <div>
             <p class="eyebrow">Portfolio pulse</p>
             <h2>Your sites at a glance</h2>
-            <p class="muted">Traffic across all properties during the last {days} days.</p>
+            <p class="muted">Traffic across all properties {periodText(range.period)}.</p>
           </div>
           <button class="primary" onclick={() => (newSite = true)}><Plus size={16} /> Add site</button>
         </section>
@@ -979,7 +1011,7 @@
             <div>
               <span class="label"><Users size={15} aria-hidden="true" /> Visitors</span>
               <strong>{summariesPending ? '—' : compactNumber(totals.visitors)}</strong>
-              {#if !summariesPending}<ChangeBadge change={totals.change} />{/if}
+              {#if !summariesPending}<ChangeBadge change={totals.change} label={compareText(range)} />{/if}
             </div>
             <div>
               <span class="label"><FileText size={15} aria-hidden="true" /> Page views</span>
@@ -994,7 +1026,7 @@
             <div>
               <span class="label"><Layers size={15} aria-hidden="true" /> Active sites</span>
               <strong>{summariesPending ? '—' : activeSites}<span class="of">/{sites.length}</span></strong>
-              <small>with visits in {days} days</small>
+              <small>with visits {periodText(range.period)}</small>
             </div>
           </section>
           {#if unavailableSites && !summariesPending}
@@ -1015,7 +1047,7 @@
           </div>
           <div class="site-grid rollup-grid">
             {#each sortedSites as item (item.id)}
-              <SiteCard site={item} {days} {apiBase} pending={summariesPending && !item.overview} />
+              <SiteCard site={item} {range} {apiBase} pending={summariesPending && !item.overview} />
             {/each}
             <button class="add-site-card" onclick={() => (newSite = true)}>
               <span><Plus size={20} aria-hidden="true" /></span>
@@ -1067,7 +1099,10 @@
           <article class="metric-card featured">
             <div><small>Visitors</small><Users size={17} aria-hidden="true" /></div>
             <strong>{overview.visitors.toLocaleString()}</strong>
-            <ChangeBadge change={overview.change} />
+            <ChangeBadge change={overview.change} label={compareText(range)} />
+            {#if overview.previousVisitors !== undefined}
+              <span class="metric-note">{overview.previousVisitors.toLocaleString()} {compareText(range)}</span>
+            {/if}
           </article>
           <article class="metric-card">
             <div><small>Sessions</small><Activity size={17} aria-hidden="true" /></div>
@@ -1097,7 +1132,7 @@
           <article class="metric-card" class:live-now={overview.currentOnline > 0}>
             <div><small>Online now</small><Radio size={17} aria-hidden="true" /></div>
             <strong>{overview.currentOnline}</strong>
-            <a class="metric-note metric-link" href={appHref(site.id, 'spy', days)}
+            <a class="metric-note metric-link" href={appHref(site.id, 'spy', range)}
               >{overview.currentOnline ? 'Watch live' : 'Open Spy'} <ArrowRight size={12} aria-hidden="true" /></a
             >
           </article>
@@ -1109,22 +1144,23 @@
               <h2>Visitors & page views</h2>
             </div>
             <div class="legend" aria-hidden="true">
-              <span><i class="visitors"></i>Visitors</span><span><i class="views"></i>Page views</span>
+              <span><i class="visitors"></i>Visitors</span><span><i class="views"></i>Page views</span
+              >{#if overview.hourly}<span><i class="previous"></i>Visitors {compareText(range).replace(' at this time', '').replace('vs. ', '')}</span>{/if}
             </div>
           </div>
-          <TrafficChart trend={overview.trend} />
+          <TrafficChart trend={overview.trend} hourly={overview.hourly} compareLabel={compareText(range).replace(' at this time', '')} />
         </section>
         <div class="two-col">
           <ReportTable
             title="Top pages"
             rows={topPages}
-            moreHref={appHref(site.id, 'pages', days)}
+            moreHref={appHref(site.id, 'pages', range)}
             pageOrigin={siteOrigin}
           />
           <ReportTable
             title="Top referrers"
             rows={topReferrers}
-            moreHref={appHref(site.id, 'referrers', days)}
+            moreHref={appHref(site.id, 'referrers', range)}
             linkHosts
           />
         </div>
@@ -1188,7 +1224,7 @@
         <SearchConsoleView
           status={searchConsole}
           reports={searchReports}
-          settingsHref={appHref(site.id, 'settings', days)}
+          settingsHref={appHref(site.id, 'settings', range)}
           onSync={() => void syncSearchConsole()}
           syncing={loading}
         />
@@ -1463,7 +1499,7 @@
                   {/if}
                   <button class="secondary" onclick={() => void connectSearchConsole()}>Reconnect</button>
                 {:else}
-                  <a class="primary button" href={appHref(site.id, 'search', days)}>View data</a>
+                  <a class="primary button" href={appHref(site.id, 'search', range)}>View data</a>
                   <button class="secondary" onclick={() => void syncSearchConsole()}>Sync now</button>
                 {/if}
                 <button class="secondary" disabled={searchConsoleBusy} onclick={() => void disconnectSearchConsole()}

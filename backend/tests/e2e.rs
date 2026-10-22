@@ -358,6 +358,38 @@ async fn auth_site_goal_and_collection_flow() {
     assert!(overview_body["bounceRate"].is_number());
     assert!(overview_body["avgDurationSeconds"].is_number());
     assert_eq!(overview_body["trend"].as_array().unwrap().len(), 1);
+    // A single day is also broken down by hour; hours that have not started yet are null.
+    let hourly = overview_body["hourly"].as_array().unwrap();
+    assert_eq!(hourly.len(), 24);
+    let hour = chrono::Timelike::hour(&chrono::Utc::now()) as usize;
+    assert!(hourly[hour]["visitors"].as_i64().unwrap() >= 1);
+    assert!(hourly[hour + 1..]
+        .iter()
+        .all(|point| point["visitors"].is_null()));
+    assert!(hourly.iter().all(|point| point["previousVisitors"] == 0));
+
+    for path in [
+        format!("/api/sites/{site_id}/overview?from={today}&to={today}&compare=week"),
+        format!("/api/sites/summary?from={today}&to={today}&compare=week"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(json_request("GET", &path, Some(&token), json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+    let response = router
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            &format!("/api/sites/{site_id}/overview?from={today}&to={today}&compare=nope"),
+            Some(&token),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let goals_response = router
         .clone()
@@ -858,7 +890,7 @@ async fn site_summaries_match_each_sites_overview() {
         assert_eq!(summaries[1]["trend"].as_array().unwrap().len(), 7);
     }
 
-    // Santiago has no local midnight on 2026-09-06 (DST); only that site drops out.
+    // Santiago has no local midnight on 2026-09-06 (DST); its day starts when clocks resume.
     let created = router
         .clone()
         .oneshot(json_request(
@@ -871,6 +903,10 @@ async fn site_summaries_match_each_sites_overview() {
         .await
         .unwrap();
     assert_eq!(created.status(), StatusCode::CREATED);
+    let santiago = body_json(created.into_body()).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let summaries = get("/api/sites/summary?from=2026-09-06&to=2026-10-03".into()).await;
     let ids: Vec<_> = summaries
         .as_array()
@@ -878,7 +914,11 @@ async fn site_summaries_match_each_sites_overview() {
         .iter()
         .map(|summary| summary["siteId"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(ids, [site_ids[0].to_string(), site_ids[1].to_string()]);
+    assert_eq!(
+        ids,
+        [site_ids[0].to_string(), site_ids[1].to_string(), santiago]
+    );
+    assert_eq!(summaries[2]["trend"].as_array().unwrap().len(), 28);
     let reversed = router
         .clone()
         .oneshot(json_request(
