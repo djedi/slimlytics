@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiClient, ApiError } from '../src/lib/api';
+import { ApiClient, ApiError, dates, type Site } from '../src/lib/api';
 
 describe('ApiClient', () => {
   it('uses the configured base URL, bearer auth, and camelCase contract', async () => {
@@ -106,7 +106,7 @@ describe('ApiClient', () => {
     }]), { status: 200, headers: { 'content-type': 'application/json' } }));
     const api = new ApiClient('/api', fetcher, false);
 
-    const summaries = await api.siteSummaries(7);
+    const summaries = await api.siteSummaries(7, [{ id: 's1', timezone: 'UTC' } as Site]);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(String(fetcher.mock.calls[0][0])).toMatch(/^\/api\/sites\/summary\?from=\d{4}-\d{2}-\d{2}&to=/);
     expect(summaries.get('s1')).toMatchObject({
@@ -246,5 +246,69 @@ describe('session expiry', () => {
     client.setToken('expired');
     await expect(client.sites()).rejects.toThrow();
     expect(calls).toBe(1);
+  });
+});
+
+describe('date ranges', () => {
+  // 8:55 PM on Oct 21 in Denver is already Oct 22 in UTC.
+  const evening = new Date('2026-10-22T02:55:00Z');
+
+  it('ends on today in the site timezone, not the UTC date', () => {
+    expect(dates(28, 'America/Denver', evening)).toEqual({ from: '2026-09-24', to: '2026-10-21' });
+    expect(dates(1, 'UTC', evening)).toEqual({ from: '2026-10-22', to: '2026-10-22' });
+  });
+
+  it('requests per-site reports in that site timezone', async () => {
+    vi.useFakeTimers({ now: evening, toFake: ['Date'] });
+    try {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 's1', writeKey: 'wk', timezone: 'America/Denver' }]), { status: 200 }))
+        .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+      const api = new ApiClient('/api', fetcher, false);
+      await api.sites();
+      await api.report('s1', 'pages', 7);
+      expect(fetcher.mock.calls[1][0]).toBe('/api/sites/s1/reports/pages?from=2026-10-15&to=2026-10-21');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('remembers the timezone of a newly created site', async () => {
+    vi.useFakeTimers({ now: evening, toFake: ['Date'] });
+    try {
+      const fetcher = vi.fn()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ id: 's2', writeKey: 'wk', timezone: 'UTC' }), { status: 200 }))
+        .mockResolvedValueOnce(new Response('[]', { status: 200 }));
+      const api = new ApiClient('/api', fetcher, false);
+      await api.createSite({ name: 'New', domain: 'new.test' });
+      await api.report('s2', 'pages', 1);
+      expect(fetcher.mock.calls[1][0]).toBe('/api/sites/s2/reports/pages?from=2026-10-22&to=2026-10-22');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives each site a summary card for its own calendar days', async () => {
+    vi.useFakeTimers({ now: evening, toFake: ['Date'] });
+    try {
+      const row = (siteId: string, views: number) => ({ siteId, views, visitors: { current: views, previous: 0 }, currentOnline: 0, bounceRate: 0, avgDurationSeconds: 0, trend: [] });
+      const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/sites') return new Response(JSON.stringify([{ id: 'den', writeKey: 'a', timezone: 'America/Denver' }, { id: 'utc', writeKey: 'b', timezone: 'UTC' }]), { status: 200 });
+        const today = url.endsWith('to=2026-10-22') ? 22 : 21;
+        return new Response(JSON.stringify([row('den', today), row('utc', today)]), { status: 200 });
+      });
+      const api = new ApiClient('/api', fetcher, false);
+      const summaries = await api.siteSummaries(1);
+      expect(fetcher.mock.calls.map(([url]) => url).sort()).toEqual([
+        '/api/sites',
+        '/api/sites/summary?from=2026-10-21&to=2026-10-21',
+        '/api/sites/summary?from=2026-10-22&to=2026-10-22'
+      ]);
+      expect(summaries.get('den')?.pageViews).toBe(21);
+      expect(summaries.get('utc')?.pageViews).toBe(22);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

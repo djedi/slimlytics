@@ -384,10 +384,11 @@
     const range = days;
     const request = ++sitesRequest;
     // Start the stats now, but show the site list (and resolve deep links) as soon as it arrives.
-    const summaries = api.siteSummaries(range);
+    const listed = api.sites();
+    const summaries = api.siteSummaries(range, listed);
     summaries.catch(() => {});
     try {
-      const loaded = await api.sites();
+      const loaded = await listed;
       if (request !== sitesRequest) return;
       sites = loaded.map((item) => ({ ...item, overview: undefined }));
       // The stats for this range are on their way; returning to All sites must not reload them.
@@ -434,7 +435,8 @@
     const range = days;
     const request = ++sitesRequest;
     const edits = sitesEdits;
-    const [loaded, overviews] = await Promise.all([api.sites(), api.siteSummaries(range)]);
+    const listed = api.sites();
+    const [loaded, overviews] = await Promise.all([listed, api.siteSummaries(range, listed)]);
     // A site added or edited meanwhile is newer than this snapshot; the next tick picks it up.
     if (request !== sitesRequest || edits !== sitesEdits) return;
     sites = applySummaries(loaded, overviews);
