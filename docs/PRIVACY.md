@@ -49,4 +49,6 @@ Initialize the tracker with collection disabled when consent is legally or contr
 
 Google Search Console is optional and requests the `webmasters` and `siteverification` scopes: Search Console access to read search performance and, when the user asks, add the site as a domain property; Site Verification access to verify that property after the user publishes the DNS TXT record Google issues. Slimlytics never adds or verifies a property on its own. Refresh tokens are encrypted with the deployment's integration key. Disconnecting deletes the token and all cached Search Console metrics for that site.
 
+Bing Webmaster Tools is optional and uses an API key the site owner generates in Bing Webmaster Tools and pastes into Slimlytics. The key is encrypted with the same integration key, sent only to Bing's Webmaster API, and used only to read query, page, and traffic statistics for the matching verified site. Disconnecting deletes the key and all cached Bing metrics for that site; revoke the key in Bing Webmaster Tools to invalidate it there too.
+
 Scheduled-report webhook URLs and delivery outcomes are stored as site configuration. Payloads contain aggregate marketing evidence, not raw IP addresses or form values. Webhook bodies are signed, redirects are refused, and private network destinations are blocked.

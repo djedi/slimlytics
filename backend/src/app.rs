@@ -16,6 +16,10 @@ use crate::{
         generate_api_token, generate_refresh_token, hash_api_token, hash_password,
         issue_session_token, verify_password, verify_token,
     },
+    bing_webmaster::{
+        api_url, matching_site_url, merge_metrics, parse_date, position, BingConfig,
+        Metric as BingMetric,
+    },
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
     error::ApiError,
@@ -44,7 +48,7 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -98,6 +102,7 @@ pub struct AppState {
     trust_proxy: bool,
     geoip: Option<Arc<GeoIp>>,
     search_console: Option<Arc<SearchConsoleConfig>>,
+    bing: Option<Arc<BingConfig>>,
     /// Hosted-plan billing; `None` (the default) means no plans or limits.
     billing: Option<Arc<crate::billing::BillingConfig>>,
     http: reqwest::Client,
@@ -123,6 +128,7 @@ impl AppState {
             trust_proxy: false,
             geoip: None,
             search_console: None,
+            bing: None,
             billing: None,
             http: reqwest::Client::new(),
             previous_visitors: Arc::new(DashMap::new()),
@@ -165,6 +171,10 @@ impl AppState {
     }
     pub fn with_search_console(mut self, config: SearchConsoleConfig) -> Self {
         self.search_console = Some(Arc::new(config));
+        self
+    }
+    pub fn with_bing(mut self, config: BingConfig) -> Self {
+        self.bing = Some(Arc::new(config));
         self
     }
     pub fn with_billing(mut self, config: crate::billing::BillingConfig) -> Self {
@@ -464,6 +474,15 @@ pub fn app(state: AppState) -> Router {
             "/api/sites/{site_id}/reports/search-console",
             get(search_console_report),
         )
+        .route(
+            "/api/sites/{site_id}/integrations/bing",
+            get(bing_status).post(connect_bing).delete(disconnect_bing),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/bing/sync",
+            post(sync_bing),
+        )
+        .route("/api/sites/{site_id}/reports/bing", get(bing_report))
         .route(
             "/api/integrations/search-console/callback",
             get(search_console_callback),
@@ -1154,16 +1173,39 @@ async fn update_site(
     require_site(&state.pool, user, site, true).await?;
     validate_site(&i)?;
     i.domain = canonical_domain(&i.domain)?;
+    let mut tx = state.pool.begin().await?;
+    let previous: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR UPDATE")
+        .bind(site)
+        .fetch_one(&mut *tx)
+        .await?;
+    let domain_changed = previous != i.domain;
     sqlx::query("UPDATE sites SET name=$2,domain=$3,timezone=$4,allowed_origins=$5,retention_days=$6,updated_at=now() WHERE id=$1")
         .bind(site)
         .bind(i.name)
-        .bind(i.domain)
+        .bind(&i.domain)
         .bind(i.timezone)
         .bind(i.allowed_origins)
         .bind(i.retention_days)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_conflict)?;
+    if domain_changed {
+        // The matched Bing site and its metrics belong to the old domain.
+        sqlx::query(
+            "UPDATE bing_webmaster_integrations
+             SET site_url=NULL,last_synced_at=NULL,updated_at=now(),
+                 last_error='The site domain changed. Connect Bing Webmaster Tools again to match the new domain.'
+             WHERE site_id=$1",
+        )
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+            .bind(site)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(Json(fetch_site(&state.pool, site).await?))
 }
 
@@ -3500,6 +3542,384 @@ async fn search_console_report(
     ))
 }
 
+fn bing_config(state: &AppState) -> Result<&BingConfig, ApiError> {
+    state.bing.as_deref().ok_or_else(|| {
+        ApiError::BadRequest("Bing Webmaster Tools integration is not configured".into())
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BingConnectRequest {
+    api_key: String,
+}
+
+#[derive(Deserialize)]
+struct BingResponse<T> {
+    #[serde(default = "Vec::new")]
+    d: Vec<T>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct BingSite {
+    url: String,
+    #[serde(default)]
+    is_verified: bool,
+}
+
+/// A row of GetQueryStats or GetPageStats; for pages, `query` holds the page URL.
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct BingStatsRow {
+    query: String,
+    date: String,
+    clicks: f64,
+    impressions: f64,
+    #[serde(default)]
+    avg_impression_position: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct BingTrafficRow {
+    date: String,
+    clicks: f64,
+    impressions: f64,
+}
+
+/// Calls a Bing Webmaster API method, turning a rejection into a message the user can act on.
+async fn bing_request<T: serde::de::DeserializeOwned>(
+    state: &AppState,
+    config: &BingConfig,
+    method: &str,
+    api_key: &str,
+    site_url: Option<&str>,
+) -> Result<Vec<T>, ApiError> {
+    let response = state
+        .http
+        .get(api_url(&config.api_base, method, api_key, site_url))
+        .send()
+        .await
+        .map_err(|error| {
+            // The URL carries the API key, so it must never reach the logs.
+            let error = error.without_url();
+            tracing::warn!(%error, method, "Bing Webmaster request failed");
+            ApiError::Internal
+        })?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        tracing::warn!(%status, method, body, "Bing Webmaster request rejected");
+        let message = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|error| error["Message"].as_str().map(str::to_owned));
+        return Err(ApiError::BadRequest(match message {
+            Some(message) => format!("Bing Webmaster Tools rejected the request: {message}"),
+            None => "Bing Webmaster Tools rejected the request. Check the API key.".into(),
+        }));
+    }
+    Ok(response
+        .json::<BingResponse<T>>()
+        .await
+        .map_err(|error| {
+            let error = error.without_url();
+            tracing::warn!(%error, method, "invalid Bing Webmaster response");
+            ApiError::Internal
+        })?
+        .d)
+}
+
+async fn bing_status(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, false).await?;
+    let configured = s.bing.is_some();
+    type BingStatusRow = (Option<String>, Option<DateTime<Utc>>, Option<String>);
+    let row: Option<BingStatusRow> = sqlx::query_as(
+        "SELECT site_url,last_synced_at,last_error
+         FROM bing_webmaster_integrations WHERE site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&s.pool)
+    .await?;
+    Ok(Json(match row {
+        Some(row) => json!({
+            "configured":configured,"connected":true,"siteUrl":row.0,
+            "lastSyncedAt":row.1,"lastError":row.2
+        }),
+        None => json!({"configured":configured,"connected":false}),
+    }))
+}
+
+/// Checks the API key against Bing, stores it encrypted, and picks the verified Bing site that
+/// matches this site's domain.
+#[axum::debug_handler]
+async fn connect_bing(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+    Json(body): Json<BingConnectRequest>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let config = bing_config(&s)?;
+    let api_key = body.api_key.trim();
+    if api_key.is_empty() || api_key.len() > 256 {
+        return Err(ApiError::BadRequest(
+            "Enter a Bing Webmaster API key".into(),
+        ));
+    }
+    let sites: Vec<BingSite> = bing_request(&s, config, "GetUserSites", api_key, None).await?;
+    let domain: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1")
+        .bind(site)
+        .fetch_one(&s.pool)
+        .await?;
+    let sites: Vec<(String, bool)> = sites
+        .into_iter()
+        .map(|entry| (entry.url, entry.is_verified))
+        .collect();
+    let site_url = matching_site_url(&domain, &sites);
+    let error = site_url.is_none().then(|| {
+        format!("No verified Bing Webmaster site matches {domain}. Add and verify it in Bing Webmaster Tools, then connect again.")
+    });
+    let encrypted =
+        encrypt_token(&config.encryption_key, api_key).map_err(|_| ApiError::Internal)?;
+    // The integration row is written first so its lock orders this against a running sync.
+    let mut tx = s.pool.begin().await?;
+    // The match is only valid for the domain it was made against.
+    let current_domain: String =
+        sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+            .bind(site)
+            .fetch_one(&mut *tx)
+            .await?;
+    if current_domain != domain {
+        return Err(ApiError::BadRequest(
+            "The site domain changed while connecting; connect again".into(),
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO bing_webmaster_integrations(
+           site_id,site_url,api_key_encrypted,connected_by,last_error
+         ) VALUES($1,$2,$3,$4,$5)
+         ON CONFLICT(site_id) DO UPDATE SET
+           site_url=EXCLUDED.site_url,api_key_encrypted=EXCLUDED.api_key_encrypted,
+           connected_by=EXCLUDED.connected_by,last_error=EXCLUDED.last_error,
+           last_synced_at=NULL,updated_at=now()",
+    )
+    .bind(site)
+    .bind(&site_url)
+    .bind(encrypted)
+    .bind(u)
+    .bind(error.as_deref())
+    .execute(&mut *tx)
+    .await?;
+    // A different key or site makes earlier cached metrics another account's data.
+    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({
+        "configured":true,"connected":true,"siteUrl":site_url,
+        "lastSyncedAt":null,"lastError":error
+    })))
+}
+
+async fn disconnect_bing(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let mut tx = s.pool.begin().await?;
+    sqlx::query("DELETE FROM bing_webmaster_integrations WHERE site_id=$1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Replaces the site's cached Bing metrics with everything Bing currently reports (Bing returns
+/// its whole retained history, about six months, and takes no date range).
+#[axum::debug_handler]
+async fn sync_bing(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let config = bing_config(&s)?;
+    let integration: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT site_url,api_key_encrypted FROM bing_webmaster_integrations WHERE site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&s.pool)
+    .await?;
+    let (site_url, encrypted) = integration.ok_or(ApiError::NotFound)?;
+    let site_url =
+        site_url.ok_or_else(|| ApiError::BadRequest("No matching Bing Webmaster site".into()))?;
+    let api_key = decrypt_token(&config.encryption_key, &encrypted).map_err(|error| {
+        tracing::error!(error, "stored Bing Webmaster key could not be decrypted");
+        ApiError::Internal
+    })?;
+    let key = api_key.as_str();
+    let url = Some(site_url.as_str());
+    let (queries, pages, traffic) = tokio::try_join!(
+        bing_request::<BingStatsRow>(&s, config, "GetQueryStats", key, url),
+        bing_request::<BingStatsRow>(&s, config, "GetPageStats", key, url),
+        bing_request::<BingTrafficRow>(&s, config, "GetRankAndTrafficStats", key, url),
+    )?;
+    let mut rows = Vec::new();
+    for (kind, stats) in [("query", &queries), ("page", &pages)] {
+        for row in stats {
+            if let Some(date) = parse_date(&row.date) {
+                rows.push(BingMetric {
+                    kind,
+                    date,
+                    value: row.query.clone(),
+                    clicks: row.clicks,
+                    impressions: row.impressions,
+                    position: position(row.avg_impression_position),
+                    ranked_impressions: 0.0,
+                });
+            }
+        }
+    }
+    for row in &traffic {
+        if let Some(date) = parse_date(&row.date) {
+            rows.push(BingMetric {
+                kind: "total",
+                date,
+                value: String::new(),
+                clicks: row.clicks,
+                impressions: row.impressions,
+                position: None,
+                ranked_impressions: 0.0,
+            });
+        }
+    }
+    let rows = merge_metrics(rows);
+    let mut tx = s.pool.begin().await?;
+    // Lock the site before the connection, the order connect and domain changes use, so the
+    // metric inserts' foreign-key locks cannot deadlock with a domain change.
+    sqlx::query("SELECT 1 FROM sites WHERE id=$1 FOR SHARE")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    // Locking the connection orders this against connect and disconnect, and a key that changed
+    // (or a disconnect) while Bing was answering means these results belong to no connection.
+    let current: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT api_key_encrypted,site_url FROM bing_webmaster_integrations
+         WHERE site_id=$1 FOR UPDATE",
+    )
+    .bind(site)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if current != Some((encrypted.clone(), Some(site_url.clone()))) {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected, disconnected, or the site domain changed during sync; sync again".into(),
+        ));
+    }
+    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    for row in &rows {
+        sqlx::query(
+            "INSERT INTO bing_webmaster_metrics(
+               site_id,metric_date,kind,value,clicks,impressions,position,ranked_impressions
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+        )
+        .bind(site)
+        .bind(row.date)
+        .bind(row.kind)
+        .bind(&row.value)
+        .bind(row.clicks)
+        .bind(row.impressions)
+        .bind(row.position)
+        .bind(row.ranked_impressions)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE bing_webmaster_integrations
+         SET last_synced_at=now(),last_error=NULL,updated_at=now() WHERE site_id=$1",
+    )
+    .bind(site)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"status":"ok","rows":rows.len()})))
+}
+
+/// Ranked Bing rows for a dimension: `query` and `page` from their own series, `date` from the
+/// daily site totals. Position is weighted by the impressions of rows that have one.
+async fn bing_rows(
+    pool: &PgPool,
+    site: Uuid,
+    from: NaiveDate,
+    to: NaiveDate,
+    dimension: &str,
+    limit: i64,
+) -> Result<Vec<Value>, ApiError> {
+    let (kind, column, order) = match dimension {
+        "query" => ("query", "value", "sum(clicks) DESC, sum(impressions) DESC"),
+        "page" => ("page", "value", "sum(clicks) DESC, sum(impressions) DESC"),
+        "date" => ("total", "metric_date::text", "1"),
+        _ => return Err(ApiError::BadRequest("invalid dimension".into())),
+    };
+    let sql = format!(
+        "SELECT {column},sum(clicks)::float8,sum(impressions)::float8,
+         CASE WHEN sum(impressions)=0 THEN 0 ELSE sum(clicks)/sum(impressions) END::float8,
+         COALESCE(sum(position*ranked_impressions) FILTER (WHERE position IS NOT NULL)
+           / NULLIF(sum(ranked_impressions) FILTER (WHERE position IS NOT NULL),0),0)::float8,
+         sum(ranked_impressions)::float8
+         FROM bing_webmaster_metrics
+         WHERE site_id=$1 AND kind=$2 AND metric_date BETWEEN $3 AND $4
+         GROUP BY 1 ORDER BY {order} LIMIT $5"
+    );
+    let rows: Vec<(String, f64, f64, f64, f64, f64)> = sqlx::query_as(&sql)
+        .bind(site)
+        .bind(kind)
+        .bind(from)
+        .bind(to)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "value":row.0,"clicks":row.1,"impressions":row.2,"ctr":row.3,"position":row.4,
+                "rankedImpressions":row.5
+            })
+        })
+        .collect())
+}
+
+async fn bing_report(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+    Query(q): Query<SearchConsoleReportQuery>,
+) -> Result<Json<Vec<Value>>, ApiError> {
+    require_site(&s.pool, u, site, false).await?;
+    if q.to < q.from || (q.to - q.from).num_days() > 366 {
+        return Err(ApiError::BadRequest("invalid date range".into()));
+    }
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    Ok(Json(
+        bing_rows(&s.pool, site, q.from, q.to, &q.dimension, limit).await?,
+    ))
+}
+
 #[derive(Deserialize)]
 struct McpRequest {
     jsonrpc: String,
@@ -3577,6 +3997,22 @@ fn mcp_tools() -> Value {
             "from":{"type":"string","format":"date"},
             "to":{"type":"string","format":"date"},
             "dimension":{"type":"string","enum":["query","page","country","device","date"],"default":"query"},
+            "limit":{"type":"integer","minimum":1,"maximum":500,"default":100}
+          }
+        },
+        "outputSchema":{"type":"object"},
+        "annotations":{"readOnlyHint":true,"idempotentHint":true}
+      },
+      {
+        "name":"bing_webmaster_report",
+        "description":"Get cached Bing Webmaster Tools clicks, impressions, CTR, and weighted position with explicit dates. Bing data also covers search engines built on Bing's index, such as DuckDuckGo, Yahoo, and Ecosia. Query and page rows come in roughly weekly buckets, so date ranges shorter than a week can be uneven; date rows are daily site totals.",
+        "inputSchema":{
+          "type":"object","required":["siteId","from","to"],"additionalProperties":false,
+          "properties":{
+            "siteId":{"type":"string","format":"uuid"},
+            "from":{"type":"string","format":"date"},
+            "to":{"type":"string","format":"date"},
+            "dimension":{"type":"string","enum":["query","page","date"],"default":"query"},
             "limit":{"type":"integer","minimum":1,"maximum":500,"default":100}
           }
         },
@@ -3801,6 +4237,40 @@ async fn mcp_search_console_report(
     ))
 }
 
+async fn mcp_bing_webmaster_report(
+    state: &AppState,
+    user: Uuid,
+    arguments: &Value,
+) -> Result<(Uuid, Value), ApiError> {
+    let (site, from, to) = mcp_site_and_range(arguments)?;
+    require_site(&state.pool, user, site, false).await?;
+    let dimension = arguments
+        .get("dimension")
+        .and_then(Value::as_str)
+        .unwrap_or("query");
+    let limit = arguments
+        .get("limit")
+        .and_then(Value::as_i64)
+        .unwrap_or(100)
+        .clamp(1, 500);
+    let rows = bing_rows(&state.pool, site, from, to, dimension, limit).await?;
+    let last_synced_at: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT last_synced_at FROM bing_webmaster_integrations WHERE site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten();
+    Ok((
+        site,
+        json!({
+          "siteId":site,"from":from,"to":to,"dimension":dimension,
+          "generatedAt":Utc::now(),"dataThrough":last_synced_at,"rows":rows,
+          "evidence":{"source":"Bing Webmaster Tools cached sync","freshnessField":"dataThrough"}
+        }),
+    ))
+}
+
 async fn record_agent_audit(
     state: &AppState,
     principal: &AgentUser,
@@ -4011,6 +4481,12 @@ async fn mcp(
             "search_console_report" => {
                 principal.require("integrations:read")?;
                 mcp_search_console_report(&state, principal.user_id, &arguments)
+                    .await
+                    .map(|(site, value)| (Some(site), value))
+            }
+            "bing_webmaster_report" => {
+                principal.require("integrations:read")?;
+                mcp_bing_webmaster_report(&state, principal.user_id, &arguments)
                     .await
                     .map(|(site, value)| (Some(site), value))
             }
