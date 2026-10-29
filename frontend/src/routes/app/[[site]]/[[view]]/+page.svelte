@@ -211,7 +211,13 @@
   let bingBusy = $state(false);
   let bingNotice = $state('');
   // Bumped by each Bing load and change, so an older load never overwrites a newer result.
-  let bingGeneration = 0;
+  const bingGenerations: Record<string, number> = {};
+  const bumpBing = (id: string) => (bingGenerations[id] = (bingGenerations[id] ?? 0) + 1);
+  /** Ends a connect or disconnect: loads of that site that overlapped it are discarded, so reload. */
+  function finishBingChange(id: string) {
+    bumpBing(id);
+    if (site?.id === id && (view === 'bing' || view === 'settings')) void refreshViewQuietly().catch(() => {});
+  }
   // Bumped by each connect and disconnect; only the latest, on the still-selected site, may touch
   // the shared key field, notice, and busy state.
   let bingOp = 0;
@@ -606,7 +612,7 @@
     } else if (view === 'bing') {
       const id = site.id;
       const period = range.period;
-      const generation = ++bingGeneration;
+      const generation = bumpBing(id);
       const status = await api.bingStatus(id);
       let reports = emptyBingReports();
       if (status.connected && status.siteUrl) {
@@ -616,7 +622,7 @@
           BingRow[]
         >;
       }
-      if (generation !== bingGeneration) return;
+      if (generation !== bingGenerations[id]) return;
       setBing(id, status);
       bingReportsByKey = { ...bingReportsByKey, [`${id}:${period}`]: reports };
     } else if (view === 'settings') {
@@ -632,7 +638,7 @@
       }
       const id = site.id;
       const changes = searchConsoleChanges;
-      const generation = ++bingGeneration;
+      const generation = bumpBing(id);
       let status: SearchConsoleStatus;
       let bingStatus: BingStatus;
       [collectionHealth, status, bingStatus, reportSubscriptions] = await Promise.all([
@@ -642,7 +648,7 @@
         api.reportSubscriptions(id)
       ]);
       if (changes === searchConsoleChanges) setSearchConsole(id, status);
-      if (generation === bingGeneration) setBing(id, bingStatus);
+      if (generation === bingGenerations[id]) setBing(id, bingStatus);
     }
   }
   function connectSpy() {
@@ -840,9 +846,9 @@
       Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
     );
     if (site?.id === id && view === 'bing') return refreshViewQuietly();
-    const generation = bingGeneration;
+    const generation = bingGenerations[id];
     const status = await api.bingStatus(id);
-    if (generation === bingGeneration) setBing(id, status);
+    if (generation === bingGenerations[id]) setBing(id, status);
   }
   async function connectBing(event: SubmitEvent) {
     event.preventDefault();
@@ -852,7 +858,7 @@
     const current = () => site?.id === id && op === bingOp;
     const version = (bingVersions[id] = (bingVersions[id] ?? 0) + 1);
     const latest = () => bingVersions[id] === version;
-    bingGeneration++;
+    bumpBing(id);
     bingBusy = true;
     bingNotice = '';
     try {
@@ -871,7 +877,7 @@
       if (current()) bingNotice = reason instanceof Error ? reason.message : 'Could not connect Bing Webmaster Tools.';
     } finally {
       // Loads that overlapped the change may hold an older status.
-      bingGeneration++;
+      finishBingChange(id);
       if (op === bingOp) bingBusy = false;
     }
   }
@@ -895,7 +901,7 @@
     const id = site.id;
     const op = ++bingOp;
     const version = (bingVersions[id] = (bingVersions[id] ?? 0) + 1);
-    bingGeneration++;
+    bumpBing(id);
     bingBusy = true;
     try {
       await api.disconnectBing(id);
@@ -905,7 +911,7 @@
       if (site?.id === id && op === bingOp)
         bingNotice = `Could not disconnect: ${reason instanceof Error ? reason.message : 'request failed'}. Bing is still connected.`;
     } finally {
-      bingGeneration++;
+      finishBingChange(id);
       if (op === bingOp) bingBusy = false;
     }
   }
