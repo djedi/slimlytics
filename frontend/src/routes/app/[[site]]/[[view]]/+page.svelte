@@ -211,6 +211,9 @@
   let bingNotice = $state('');
   // Bumped by each Bing load and change, so an older load never overwrites a newer result.
   let bingGeneration = 0;
+  // Bumped by each connect and disconnect; only the latest, on the still-selected site, may touch
+  // the shared key field, notice, and busy state.
+  let bingOp = 0;
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -619,6 +622,8 @@
         searchConsoleNotice = '';
         bingNotice = '';
         bingApiKey = '';
+        bingBusy = false;
+        bingOp++;
         searchConsoleSetupSite = site.id;
       }
       const id = site.id;
@@ -829,23 +834,25 @@
     event.preventDefault();
     if (!site || !bingApiKey.trim()) return;
     const id = site.id;
+    const op = ++bingOp;
+    const current = () => site?.id === id && op === bingOp;
     bingGeneration++;
     bingBusy = true;
     bingNotice = '';
     try {
       const status = await api.connectBing(id, bingApiKey.trim());
       setBing(id, status);
-      bingApiKey = '';
+      if (current()) bingApiKey = '';
       if (status.siteUrl) {
-        bingNotice = 'Connected. Syncing search data…';
+        if (current()) bingNotice = 'Connected. Syncing search data…';
         await api.syncBing(id);
         setBing(id, await api.bingStatus(id));
-        bingNotice = 'Connected and synced.';
+        if (current()) bingNotice = 'Connected and synced.';
       }
     } catch (reason) {
-      bingNotice = reason instanceof Error ? reason.message : 'Could not connect Bing Webmaster Tools.';
+      if (current()) bingNotice = reason instanceof Error ? reason.message : 'Could not connect Bing Webmaster Tools.';
     } finally {
-      bingBusy = false;
+      if (op === bingOp) bingBusy = false;
     }
   }
   async function syncBing() {
@@ -866,14 +873,15 @@
   async function disconnectBing() {
     if (!site || !confirm('Disconnect Bing Webmaster Tools and remove its cached metrics?')) return;
     const id = site.id;
+    const op = ++bingOp;
     bingGeneration++;
     bingBusy = true;
     try {
       await api.disconnectBing(id);
       setBing(id, await api.bingStatus(id));
-      bingNotice = '';
+      if (site?.id === id && op === bingOp) bingNotice = '';
     } finally {
-      bingBusy = false;
+      if (op === bingOp) bingBusy = false;
     }
   }
   async function createBrief(event: SubmitEvent) {

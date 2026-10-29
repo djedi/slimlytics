@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
         google_redirect_uri,
         integration_key,
     ) {
-        (None, None, None, None) => {}
+        (None, None, None, _) => {}
         (Some(client_id), Some(client_secret), Some(redirect_uri), Some(encryption_key)) => {
             let return_uri = format!(
                 "{}/app",
@@ -209,8 +209,8 @@ async fn main() -> Result<()> {
             });
         }
         _ => anyhow::bail!(
-            "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, and \
-             INTEGRATION_ENCRYPTION_KEY must be configured together"
+            "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI must be \
+             configured together, along with INTEGRATION_ENCRYPTION_KEY"
         ),
     }
     let report_pool = pool;

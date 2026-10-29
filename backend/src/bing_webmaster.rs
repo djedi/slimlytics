@@ -80,3 +80,53 @@ pub fn parse_date(value: &str) -> Option<NaiveDate> {
 pub fn position(value: f64) -> Option<f64> {
     (value > 0.0).then_some(value)
 }
+
+/// One cached Bing row: a query, page, or daily total in one date bucket.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Metric {
+    pub kind: &'static str,
+    pub date: NaiveDate,
+    pub value: String,
+    pub clicks: f64,
+    pub impressions: f64,
+    /// Average position over `ranked_impressions`; `None` when no impressions were ranked.
+    pub position: Option<f64>,
+    pub ranked_impressions: f64,
+}
+
+/// Merges rows Bing repeats for one key and bucket: clicks and impressions add up, and the
+/// position stays weighted by the impressions of the rows that were ranked.
+pub fn merge_metrics(rows: impl IntoIterator<Item = Metric>) -> Vec<Metric> {
+    let mut merged: Vec<Metric> = Vec::new();
+    let mut index = std::collections::HashMap::new();
+    for row in rows {
+        let ranked = if row.position.is_some() {
+            row.impressions
+        } else {
+            0.0
+        };
+        let weighted = row.position.unwrap_or(0.0) * ranked;
+        let key = (row.kind, row.date, row.value.clone());
+        match index.get(&key) {
+            Some(&at) => {
+                let existing: &mut Metric = &mut merged[at];
+                let total_weighted =
+                    existing.position.unwrap_or(0.0) * existing.ranked_impressions + weighted;
+                existing.clicks += row.clicks;
+                existing.impressions += row.impressions;
+                existing.ranked_impressions += ranked;
+                existing.position = (existing.ranked_impressions > 0.0)
+                    .then(|| total_weighted / existing.ranked_impressions);
+            }
+            None => {
+                index.insert(key, merged.len());
+                merged.push(Metric {
+                    ranked_impressions: ranked,
+                    position: (ranked > 0.0).then_some(weighted / ranked),
+                    ..row
+                });
+            }
+        }
+    }
+    merged
+}

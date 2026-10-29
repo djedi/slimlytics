@@ -1,5 +1,7 @@
 use chrono::NaiveDate;
-use slimlytics_backend::bing_webmaster::{api_url, matching_site_url, parse_date, position};
+use slimlytics_backend::bing_webmaster::{
+    api_url, matching_site_url, merge_metrics, parse_date, position, Metric,
+};
 
 #[test]
 fn builds_api_urls_with_site_and_key() {
@@ -62,6 +64,35 @@ fn treats_non_positive_positions_as_unranked() {
     assert_eq!(position(3.5), Some(3.5));
 }
 
+fn metric(value: &str, impressions: f64, position: Option<f64>) -> Metric {
+    Metric {
+        kind: "query",
+        date: NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+        value: value.into(),
+        clicks: 1.0,
+        impressions,
+        position,
+        ranked_impressions: 0.0,
+    }
+}
+
+#[test]
+fn merges_repeated_rows_with_impression_weighted_positions() {
+    let merged = merge_metrics([
+        metric("a", 10.0, Some(2.0)),
+        metric("b", 5.0, None),
+        metric("a", 90.0, Some(8.0)),
+        metric("a", 50.0, None),
+    ]);
+    assert_eq!(merged.len(), 2);
+    assert_eq!(merged[0].clicks, 3.0);
+    assert_eq!(merged[0].impressions, 150.0);
+    assert_eq!(merged[0].ranked_impressions, 100.0);
+    assert!((merged[0].position.unwrap() - 7.4).abs() < 1e-9);
+    assert_eq!(merged[1].position, None);
+    assert_eq!(merged[1].ranked_impressions, 0.0);
+}
+
 mod flow {
     use axum::{
         body::{to_bytes, Body},
@@ -119,6 +150,8 @@ mod flow {
             }))
             .route("/json/GetRankAndTrafficStats", get(|Query(p): Params| async move {
                 checked(&p, true)?;
+                // Slow enough for a disconnect to land while a sync waits on Bing.
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 Ok::<_, (StatusCode, Json<Value>)>(Json(json!({"d":[
                     {"Date":"/Date(1761462000000-0700)/","Clicks":6,"Impressions":20},
                     {"Date":"/Date(1761548400000-0700)/","Clicks":4,"Impressions":30}
@@ -279,6 +312,17 @@ mod flow {
         let (status, _) = send(&router, report("country")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
 
+        let syncing = tokio::spawn({
+            let router = router.clone();
+            let sync = request(
+                "POST",
+                &format!("{base}/integrations/bing/sync"),
+                &token,
+                json!({}),
+            );
+            async move { send(&router, sync).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let (status, _) = send(
             &router,
             request(
@@ -293,6 +337,15 @@ mod flow {
         let left: i64 = sqlx::query_scalar(
             "SELECT (SELECT count(*) FROM bing_webmaster_integrations i JOIN sites s ON s.id=i.site_id WHERE s.domain='bing-flow.example')
                   + (SELECT count(*) FROM bing_webmaster_metrics m JOIN sites s ON s.id=m.site_id WHERE s.domain='bing-flow.example')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(left, 0);
+        let (status, stale) = syncing.await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{stale}");
+        let left: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM bing_webmaster_metrics m JOIN sites s ON s.id=m.site_id WHERE s.domain='bing-flow.example'",
         )
         .fetch_one(&pool)
         .await

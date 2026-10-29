@@ -16,7 +16,10 @@ use crate::{
         generate_api_token, generate_refresh_token, hash_api_token, hash_password,
         issue_session_token, verify_password, verify_token,
     },
-    bing_webmaster::{api_url, matching_site_url, parse_date, position, BingConfig},
+    bing_webmaster::{
+        api_url, matching_site_url, merge_metrics, parse_date, position, BingConfig,
+        Metric as BingMetric,
+    },
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
     error::ApiError,
@@ -3576,6 +3579,8 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
         .send()
         .await
         .map_err(|error| {
+            // The URL carries the API key, so it must never reach the logs.
+            let error = error.without_url();
             tracing::warn!(%error, method, "Bing Webmaster request failed");
             ApiError::Internal
         })?;
@@ -3595,6 +3600,7 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
         .json::<BingResponse<T>>()
         .await
         .map_err(|error| {
+            let error = error.without_url();
             tracing::warn!(%error, method, "invalid Bing Webmaster response");
             ApiError::Internal
         })?
@@ -3657,12 +3663,8 @@ async fn connect_bing(
     });
     let encrypted =
         encrypt_token(&config.encryption_key, api_key).map_err(|_| ApiError::Internal)?;
+    // The integration row is written first so its lock orders this against a running sync.
     let mut tx = s.pool.begin().await?;
-    // A different key or site makes earlier cached metrics another account's data.
-    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
-        .bind(site)
-        .execute(&mut *tx)
-        .await?;
     sqlx::query(
         "INSERT INTO bing_webmaster_integrations(
            site_id,site_url,api_key_encrypted,connected_by,last_error
@@ -3679,6 +3681,11 @@ async fn connect_bing(
     .bind(error.as_deref())
     .execute(&mut *tx)
     .await?;
+    // A different key or site makes earlier cached metrics another account's data.
+    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Json(json!({
         "configured":true,"connected":true,"siteUrl":site_url,
@@ -3693,11 +3700,11 @@ async fn disconnect_bing(
 ) -> Result<StatusCode, ApiError> {
     require_site(&s.pool, u, site, true).await?;
     let mut tx = s.pool.begin().await?;
-    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+    sqlx::query("DELETE FROM bing_webmaster_integrations WHERE site_id=$1")
         .bind(site)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM bing_webmaster_integrations WHERE site_id=$1")
+    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
         .bind(site)
         .execute(&mut *tx)
         .await?;
@@ -3735,52 +3742,68 @@ async fn sync_bing(
         bing_request::<BingStatsRow>(&s, config, "GetPageStats", key, url),
         bing_request::<BingTrafficRow>(&s, config, "GetRankAndTrafficStats", key, url),
     )?;
-    /// Kind, bucket date, query or page, clicks, impressions, position.
-    type BingMetricRow<'a> = (&'a str, NaiveDate, &'a str, f64, f64, Option<f64>);
-    let mut rows: Vec<BingMetricRow> = Vec::new();
+    let mut rows = Vec::new();
     for (kind, stats) in [("query", &queries), ("page", &pages)] {
         for row in stats {
             if let Some(date) = parse_date(&row.date) {
-                rows.push((
+                rows.push(BingMetric {
                     kind,
                     date,
-                    &row.query,
-                    row.clicks,
-                    row.impressions,
-                    position(row.avg_impression_position),
-                ));
+                    value: row.query.clone(),
+                    clicks: row.clicks,
+                    impressions: row.impressions,
+                    position: position(row.avg_impression_position),
+                    ranked_impressions: 0.0,
+                });
             }
         }
     }
     for row in &traffic {
         if let Some(date) = parse_date(&row.date) {
-            rows.push(("total", date, "", row.clicks, row.impressions, None));
+            rows.push(BingMetric {
+                kind: "total",
+                date,
+                value: String::new(),
+                clicks: row.clicks,
+                impressions: row.impressions,
+                position: None,
+                ranked_impressions: 0.0,
+            });
         }
     }
+    let rows = merge_metrics(rows);
     let mut tx = s.pool.begin().await?;
+    // Locking the connection orders this against connect and disconnect, and a key that changed
+    // (or a disconnect) while Bing was answering means these results belong to no connection.
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT api_key_encrypted FROM bing_webmaster_integrations WHERE site_id=$1 FOR UPDATE",
+    )
+    .bind(site)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if current.as_deref() != Some(encrypted.as_str()) {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or disconnected during sync; sync again".into(),
+        ));
+    }
     sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
         .bind(site)
         .execute(&mut *tx)
         .await?;
-    for (kind, date, value, clicks, impressions, position) in &rows {
-        // Bing can repeat a key within a bucket; add them rather than keep only one.
+    for row in &rows {
         sqlx::query(
             "INSERT INTO bing_webmaster_metrics(
-               site_id,metric_date,kind,value,clicks,impressions,position
-             ) VALUES($1,$2,$3,$4,$5,$6,$7)
-             ON CONFLICT(site_id,kind,metric_date,value) DO UPDATE SET
-               clicks=bing_webmaster_metrics.clicks+EXCLUDED.clicks,
-               impressions=bing_webmaster_metrics.impressions+EXCLUDED.impressions,
-               position=COALESCE(EXCLUDED.position,bing_webmaster_metrics.position),
-               synced_at=now()",
+               site_id,metric_date,kind,value,clicks,impressions,position,ranked_impressions
+             ) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
         )
         .bind(site)
-        .bind(date)
-        .bind(kind)
-        .bind(value)
-        .bind(clicks)
-        .bind(impressions)
-        .bind(position)
+        .bind(row.date)
+        .bind(row.kind)
+        .bind(&row.value)
+        .bind(row.clicks)
+        .bind(row.impressions)
+        .bind(row.position)
+        .bind(row.ranked_impressions)
         .execute(&mut *tx)
         .await?;
     }
@@ -3814,8 +3837,8 @@ async fn bing_rows(
     let sql = format!(
         "SELECT {column},sum(clicks)::float8,sum(impressions)::float8,
          CASE WHEN sum(impressions)=0 THEN 0 ELSE sum(clicks)/sum(impressions) END::float8,
-         COALESCE(sum(position*impressions) FILTER (WHERE position IS NOT NULL)
-           / NULLIF(sum(impressions) FILTER (WHERE position IS NOT NULL),0),0)::float8
+         COALESCE(sum(position*ranked_impressions) FILTER (WHERE position IS NOT NULL)
+           / NULLIF(sum(ranked_impressions) FILTER (WHERE position IS NOT NULL),0),0)::float8
          FROM bing_webmaster_metrics
          WHERE site_id=$1 AND kind=$2 AND metric_date BETWEEN $3 AND $4
          GROUP BY 1 ORDER BY {order} LIMIT $5"

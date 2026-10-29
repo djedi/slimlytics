@@ -19,6 +19,8 @@ CREATE TABLE bing_webmaster_metrics (
   clicks double precision NOT NULL,
   impressions double precision NOT NULL,
   position double precision,
+  -- Impressions that `position` averages over; Bing marks unranked rows with no position.
+  ranked_impressions double precision NOT NULL DEFAULT 0,
   synced_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(site_id,kind,metric_date,value)
 );
