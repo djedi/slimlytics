@@ -208,7 +208,11 @@
   let bingReportsByKey = $state<Record<string, Record<BingDimension, BingRow[]>>>({});
   const bingReports = $derived((site && bingReportsByKey[`${site.id}:${range.period}`]) || emptyBingReports());
   let bingApiKey = $state('');
-  let bingBusy = $state(false);
+  // Sites with a connect or disconnect in flight; their controls stay disabled until it ends, even
+  // across navigation, so a second change can never race the first on the server.
+  let bingPending = $state<Record<string, boolean>>({});
+  const bingBusy = $derived(Boolean(site && bingPending[site.id]));
+  const setBingPending = (id: string, pending: boolean) => (bingPending = { ...bingPending, [id]: pending });
   let bingNotice = $state('');
   // Bumped by each Bing load and change, so an older load never overwrites a newer result.
   const bingGenerations: Record<string, number> = {};
@@ -632,7 +636,6 @@
         searchConsoleNotice = '';
         bingNotice = '';
         bingApiKey = '';
-        bingBusy = false;
         bingOp++;
         searchConsoleSetupSite = site.id;
       }
@@ -852,14 +855,14 @@
   }
   async function connectBing(event: SubmitEvent) {
     event.preventDefault();
-    if (!site || !bingApiKey.trim()) return;
+    if (!site || !bingApiKey.trim() || bingPending[site.id]) return;
     const id = site.id;
     const op = ++bingOp;
     const current = () => site?.id === id && op === bingOp;
     const version = (bingVersions[id] = (bingVersions[id] ?? 0) + 1);
     const latest = () => bingVersions[id] === version;
     bumpBing(id);
-    bingBusy = true;
+    setBingPending(id, true);
     bingNotice = '';
     try {
       const status = await api.connectBing(id, bingApiKey.trim());
@@ -878,7 +881,7 @@
     } finally {
       // Loads that overlapped the change may hold an older status.
       finishBingChange(id);
-      if (op === bingOp) bingBusy = false;
+      setBingPending(id, false);
     }
   }
   async function syncBing() {
@@ -897,12 +900,12 @@
     }
   }
   async function disconnectBing() {
-    if (!site || !confirm('Disconnect Bing Webmaster Tools and remove its cached metrics?')) return;
+    if (!site || bingPending[site.id] || !confirm('Disconnect Bing Webmaster Tools and remove its cached metrics?')) return;
     const id = site.id;
     const op = ++bingOp;
     const version = (bingVersions[id] = (bingVersions[id] ?? 0) + 1);
     bumpBing(id);
-    bingBusy = true;
+    setBingPending(id, true);
     try {
       await api.disconnectBing(id);
       if (bingVersions[id] === version) setBing(id, { configured: true, connected: false });
@@ -912,7 +915,7 @@
         bingNotice = `Could not disconnect: ${reason instanceof Error ? reason.message : 'request failed'}. Bing is still connected.`;
     } finally {
       finishBingChange(id);
-      if (op === bingOp) bingBusy = false;
+      setBingPending(id, false);
     }
   }
   async function createBrief(event: SubmitEvent) {
