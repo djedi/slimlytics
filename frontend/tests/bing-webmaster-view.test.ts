@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import BingWebmasterView from '../src/lib/components/BingWebmasterView.svelte';
-import type { BingStatus, SearchConsoleRow } from '../src/lib/api';
+import type { BingRow, BingStatus } from '../src/lib/api';
 
 const connected: BingStatus = {
   configured: true,
@@ -9,12 +9,13 @@ const connected: BingStatus = {
   siteUrl: 'https://example.com/',
   lastSyncedAt: '2026-10-13T12:00:00Z'
 };
-const row = (value: string, clicks: number, impressions: number, position: number): SearchConsoleRow => ({
+const row = (value: string, clicks: number, impressions: number, position: number, ranked = position > 0 ? impressions : 0): BingRow => ({
   value,
   clicks,
   impressions,
   ctr: impressions ? clicks / impressions : 0,
-  position
+  position,
+  rankedImpressions: ranked
 });
 const reports = {
   query: [row('privacy analytics', 30, 600, 4), row('slimlytics', 10, 400, 0), row('cookieless', 5, 200, 7)],
@@ -33,6 +34,13 @@ describe('Bing Webmaster view', () => {
     expect(summary).toHaveTextContent('4.0%');
     // Unranked rows are skipped: (4*600 + 7*200) / 800.
     expect(summary).toHaveTextContent('4.8');
+  });
+
+  it('weights position by ranked impressions only', () => {
+    const mixed = { ...reports, query: [row('a', 1, 100, 2, 10), row('b', 1, 10, 8, 10)] };
+    render(BingWebmasterView, { status: connected, reports: mixed, settingsHref: '/settings', onSync: vi.fn() });
+    // (2*10 + 8*10) / 20, not weighted by the 100 total impressions.
+    expect(screen.getByRole('region', { name: 'Bing search performance summary' })).toHaveTextContent('5.0');
   });
 
   it('lists queries with Bing links and pages by path', () => {

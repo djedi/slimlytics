@@ -60,6 +60,7 @@
     type ReportRow,
     type ReportSubscription,
     type BingDimension,
+    type BingRow,
     type BingStatus,
     type SearchConsoleDimension,
     type SearchConsoleProperty,
@@ -203,8 +204,8 @@
   const bing = $derived(site ? (bingBySite[site.id] ?? null) : null);
   const setBing = (id: string, status: BingStatus) => (bingBySite = { ...bingBySite, [id]: status });
   const bingDimensions: BingDimension[] = ['query', 'page', 'date'];
-  const emptyBingReports = (): Record<BingDimension, SearchConsoleRow[]> => ({ query: [], page: [], date: [] });
-  let bingReportsByKey = $state<Record<string, Record<BingDimension, SearchConsoleRow[]>>>({});
+  const emptyBingReports = (): Record<BingDimension, BingRow[]> => ({ query: [], page: [], date: [] });
+  let bingReportsByKey = $state<Record<string, Record<BingDimension, BingRow[]>>>({});
   const bingReports = $derived((site && bingReportsByKey[`${site.id}:${range.period}`]) || emptyBingReports());
   let bingApiKey = $state('');
   let bingBusy = $state(false);
@@ -609,7 +610,7 @@
         const rows = await Promise.all(bingDimensions.map((dimension) => api.bingReport(id, dimension, period)));
         reports = Object.fromEntries(bingDimensions.map((dimension, index) => [dimension, rows[index]])) as Record<
           BingDimension,
-          SearchConsoleRow[]
+          BingRow[]
         >;
       }
       if (generation !== bingGeneration) return;
@@ -830,6 +831,14 @@
       finishSearchConsoleChange();
     }
   }
+  /** Drops a site's cached Bing reports after a sync and reloads the one on screen. */
+  async function bingSynced(id: string) {
+    bingReportsByKey = Object.fromEntries(
+      Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
+    );
+    if (site?.id === id && view === 'bing') await refreshViewQuietly();
+    else setBing(id, await api.bingStatus(id));
+  }
   async function connectBing(event: SubmitEvent) {
     event.preventDefault();
     if (!site || !bingApiKey.trim()) return;
@@ -846,7 +855,7 @@
       if (status.siteUrl) {
         if (current()) bingNotice = 'Connected. Syncing search data…';
         await api.syncBing(id);
-        setBing(id, await api.bingStatus(id));
+        await bingSynced(id);
         if (current()) bingNotice = 'Connected and synced.';
       }
     } catch (reason) {
@@ -862,8 +871,7 @@
     error = '';
     try {
       await api.syncBing(id);
-      if (view === 'bing') await refreshViewQuietly();
-      else setBing(id, await api.bingStatus(id));
+      await bingSynced(id);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not sync Bing Webmaster Tools.';
     } finally {
@@ -880,6 +888,9 @@
       await api.disconnectBing(id);
       setBing(id, await api.bingStatus(id));
       if (site?.id === id && op === bingOp) bingNotice = '';
+    } catch (reason) {
+      if (site?.id === id && op === bingOp)
+        bingNotice = `Could not disconnect: ${reason instanceof Error ? reason.message : 'request failed'}. Bing is still connected.`;
     } finally {
       if (op === bingOp) bingBusy = false;
     }

@@ -4215,7 +4215,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Clicks, impressions, CTR, and weighted position"
+            "description": "Clicks, impressions, CTR, weighted position, and rankedImpressions (the impressions that position averages over)"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"

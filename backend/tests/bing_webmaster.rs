@@ -55,6 +55,10 @@ fn parses_wcf_dates_in_their_offset() {
     );
     assert_eq!(parse_date("2011-09-16"), None);
     assert_eq!(parse_date("/Date(abc)/"), None);
+    assert_eq!(parse_date("/Date()/"), None);
+    assert_eq!(parse_date("/Date(é)/"), None);
+    assert_eq!(parse_date("/Date(1316131200000-07é)/"), None);
+    assert_eq!(parse_date("/Date(1316131200000-é0000)/"), None);
 }
 
 #[test]
@@ -296,7 +300,9 @@ mod flow {
         assert_eq!(queries[0]["impressions"], 40.0);
         assert_eq!(queries[0]["position"], 3.0);
         assert_eq!(queries[1]["value"], "slimlytics");
+        assert_eq!(queries[0]["rankedImpressions"], 40.0);
         assert_eq!(queries[1]["position"], 0.0);
+        assert_eq!(queries[1]["rankedImpressions"], 0.0);
         let (_, pages) = send(&router, report("page")).await;
         assert_eq!(pages.as_array().unwrap().len(), 1);
         let (_, dates) = send(&router, report("date")).await;

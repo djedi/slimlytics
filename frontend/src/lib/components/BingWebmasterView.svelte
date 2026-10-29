@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ArrowUpRight, ExternalLink, Eye, MousePointerClick, Percent, RefreshCw, Search, Settings } from '@lucide/svelte';
-  import type { BingDimension, BingStatus, SearchConsoleRow } from '$lib/api';
+  import type { BingDimension, BingRow, BingStatus } from '$lib/api';
   import { compactNumber } from '$lib/ui';
 
   let {
@@ -11,7 +11,7 @@
     syncing = false
   }: {
     status: BingStatus | null;
-    reports: Record<BingDimension, SearchConsoleRow[]>;
+    reports: Record<BingDimension, BingRow[]>;
     settingsHref: string;
     onSync: () => void;
     syncing?: boolean;
@@ -22,14 +22,14 @@
   const totals = $derived.by(() => {
     const clicks = reports.date.reduce((sum, row) => sum + row.clicks, 0);
     const impressions = reports.date.reduce((sum, row) => sum + row.impressions, 0);
-    const ranked = reports.query.filter((row) => row.position > 0);
-    const rankedImpressions = ranked.reduce((sum, row) => sum + row.impressions, 0);
+    const ranked = reports.query.filter((row) => row.position > 0 && row.rankedImpressions > 0);
+    const rankedImpressions = ranked.reduce((sum, row) => sum + row.rankedImpressions, 0);
     return {
       clicks,
       impressions,
       ctr: impressions ? clicks / impressions : 0,
       position: rankedImpressions
-        ? ranked.reduce((sum, row) => sum + row.position * row.impressions, 0) / rankedImpressions
+        ? ranked.reduce((sum, row) => sum + row.position * row.rankedImpressions, 0) / rankedImpressions
         : 0
     };
   });

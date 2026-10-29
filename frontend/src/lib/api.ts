@@ -158,6 +158,8 @@ export interface BingStatus {
 }
 /** Bing reports queries and pages but no countries or devices; `date` is daily site totals. */
 export type BingDimension = 'query' | 'page' | 'date';
+/** A Bing row; `rankedImpressions` are the impressions its position averages over. */
+export interface BingRow extends SearchConsoleRow { rankedImpressions: number }
 export interface ReportSubscription {
   id: string; siteId: string; name: string; webhookUrl: string; frequency: 'daily' | 'weekly';
   anomalyOnly: boolean; enabled: boolean; nextRunAt: string; lastSentAt?: string | null;
@@ -541,7 +543,7 @@ export class ApiClient {
   connectBing(id: string, apiKey: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing`, { method: 'POST', body: JSON.stringify({ apiKey }) }); }
   disconnectBing(id: string) { return this.request<void>(`/sites/${id}/integrations/bing`, { method: 'DELETE' }); }
   syncBing(id: string) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/bing/sync`, { method: 'POST' }); }
-  bingReport(id: string, dimension: BingDimension = 'query', period: Period = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/bing?${dateQuery(period, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, periodDays(period)).map((row) => ({ ...row, clicks: Math.round(row.clicks / 6), impressions: Math.round(row.impressions / 6) }))); }
+  bingReport(id: string, dimension: BingDimension = 'query', period: Period = 28) { return this.request<BingRow[]>(`/sites/${id}/reports/bing?${dateQuery(period, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, periodDays(period)).map((row) => { const impressions = Math.round(row.impressions / 6); return { ...row, clicks: Math.round(row.clicks / 6), impressions, rankedImpressions: dimension === 'date' ? 0 : impressions }; })); }
   searchConsoleReport(id: string, dimension: SearchConsoleDimension = 'query', period: Period = 28) { return this.request<SearchConsoleRow[]>(`/sites/${id}/reports/search-console?${dateQuery(period, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, periodDays(period))); }
   reportSubscriptions(id: string) { return this.request<ReportSubscription[]>(`/sites/${id}/report-subscriptions`, {}, () => []); }
   createReportSubscription(id: string, subscription: Omit<ReportSubscription, 'id' | 'siteId' | 'nextRunAt' | 'createdAt' | 'lastSentAt' | 'lastStatus' | 'lastError' | 'signingSecret'>) { return this.request<ReportSubscription>(`/sites/${id}/report-subscriptions`, { method: 'POST', body: JSON.stringify(subscription) }); }

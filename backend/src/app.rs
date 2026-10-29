@@ -3838,12 +3838,13 @@ async fn bing_rows(
         "SELECT {column},sum(clicks)::float8,sum(impressions)::float8,
          CASE WHEN sum(impressions)=0 THEN 0 ELSE sum(clicks)/sum(impressions) END::float8,
          COALESCE(sum(position*ranked_impressions) FILTER (WHERE position IS NOT NULL)
-           / NULLIF(sum(ranked_impressions) FILTER (WHERE position IS NOT NULL),0),0)::float8
+           / NULLIF(sum(ranked_impressions) FILTER (WHERE position IS NOT NULL),0),0)::float8,
+         sum(ranked_impressions)::float8
          FROM bing_webmaster_metrics
          WHERE site_id=$1 AND kind=$2 AND metric_date BETWEEN $3 AND $4
          GROUP BY 1 ORDER BY {order} LIMIT $5"
     );
-    let rows: Vec<(String, f64, f64, f64, f64)> = sqlx::query_as(&sql)
+    let rows: Vec<(String, f64, f64, f64, f64, f64)> = sqlx::query_as(&sql)
         .bind(site)
         .bind(kind)
         .bind(from)
@@ -3854,7 +3855,10 @@ async fn bing_rows(
     Ok(rows
         .into_iter()
         .map(|row| {
-            json!({"value":row.0,"clicks":row.1,"impressions":row.2,"ctr":row.3,"position":row.4})
+            json!({
+                "value":row.0,"clicks":row.1,"impressions":row.2,"ctr":row.3,"position":row.4,
+                "rankedImpressions":row.5
+            })
         })
         .collect())
 }

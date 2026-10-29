@@ -52,14 +52,19 @@ pub fn matching_site_url(domain: &str, sites: &[(String, bool)]) -> Option<Strin
 /// offset Bing sent, which is the day the bucket starts.
 pub fn parse_date(value: &str) -> Option<NaiveDate> {
     let inner = value.strip_prefix("/Date(")?.strip_suffix(")/")?;
-    let split = inner[1..].find(['+', '-']).map(|index| index + 1);
+    // Skip a leading sign so a negative timestamp is not read as an offset.
+    let split = inner
+        .char_indices()
+        .skip(1)
+        .find(|(_, c)| matches!(c, '+' | '-'))
+        .map(|(index, _)| index);
     let (millis, offset) = match split {
         Some(index) => (&inner[..index], Some(&inner[index..])),
         None => (inner, None),
     };
     let millis: i64 = millis.parse().ok()?;
     let offset_seconds = match offset {
-        Some(offset) if offset.len() == 5 => {
+        Some(offset) if offset.len() == 5 && offset.is_ascii() => {
             let sign = if offset.starts_with('-') { -1 } else { 1 };
             let hours: i32 = offset[1..3].parse().ok()?;
             let minutes: i32 = offset[3..5].parse().ok()?;
