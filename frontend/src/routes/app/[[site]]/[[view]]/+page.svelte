@@ -215,6 +215,9 @@
   // Bumped by each connect and disconnect; only the latest, on the still-selected site, may touch
   // the shared key field, notice, and busy state.
   let bingOp = 0;
+  // Per-site version of connect and disconnect, so a slow response never overwrites the status a
+  // later change on that site left behind, even across navigation.
+  const bingVersions: Record<string, number> = {};
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -847,16 +850,20 @@
     const id = site.id;
     const op = ++bingOp;
     const current = () => site?.id === id && op === bingOp;
+    const version = (bingVersions[id] = (bingVersions[id] ?? 0) + 1);
+    const latest = () => bingVersions[id] === version;
     bingGeneration++;
     bingBusy = true;
     bingNotice = '';
     try {
       const status = await api.connectBing(id, bingApiKey.trim());
+      if (!latest()) return;
       setBing(id, status);
       if (current()) bingApiKey = '';
       if (status.siteUrl) {
         if (current()) bingNotice = 'Connected. Syncing search data…';
         await api.syncBing(id);
+        if (!latest()) return;
         await bingSynced(id);
         if (current()) bingNotice = 'Connected and synced.';
       }
@@ -887,11 +894,12 @@
     if (!site || !confirm('Disconnect Bing Webmaster Tools and remove its cached metrics?')) return;
     const id = site.id;
     const op = ++bingOp;
+    const version = (bingVersions[id] = (bingVersions[id] ?? 0) + 1);
     bingGeneration++;
     bingBusy = true;
     try {
       await api.disconnectBing(id);
-      setBing(id, { configured: true, connected: false });
+      if (bingVersions[id] === version) setBing(id, { configured: true, connected: false });
       if (site?.id === id && op === bingOp) bingNotice = '';
     } catch (reason) {
       if (site?.id === id && op === bingOp)

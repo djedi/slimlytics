@@ -3807,6 +3807,12 @@ async fn sync_bing(
     }
     let rows = merge_metrics(rows);
     let mut tx = s.pool.begin().await?;
+    // Lock the site before the connection, the order connect and domain changes use, so the
+    // metric inserts' foreign-key locks cannot deadlock with a domain change.
+    sqlx::query("SELECT 1 FROM sites WHERE id=$1 FOR SHARE")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
     // Locking the connection orders this against connect and disconnect, and a key that changed
     // (or a disconnect) while Bing was answering means these results belong to no connection.
     let current: Option<(String, Option<String>)> = sqlx::query_as(
