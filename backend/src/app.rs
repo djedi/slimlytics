@@ -1173,16 +1173,39 @@ async fn update_site(
     require_site(&state.pool, user, site, true).await?;
     validate_site(&i)?;
     i.domain = canonical_domain(&i.domain)?;
+    let mut tx = state.pool.begin().await?;
+    let previous: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR UPDATE")
+        .bind(site)
+        .fetch_one(&mut *tx)
+        .await?;
+    let domain_changed = previous != i.domain;
     sqlx::query("UPDATE sites SET name=$2,domain=$3,timezone=$4,allowed_origins=$5,retention_days=$6,updated_at=now() WHERE id=$1")
         .bind(site)
         .bind(i.name)
-        .bind(i.domain)
+        .bind(&i.domain)
         .bind(i.timezone)
         .bind(i.allowed_origins)
         .bind(i.retention_days)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await
         .map_err(map_conflict)?;
+    if domain_changed {
+        // The matched Bing site and its metrics belong to the old domain.
+        sqlx::query(
+            "UPDATE bing_webmaster_integrations
+             SET site_url=NULL,last_synced_at=NULL,updated_at=now(),
+                 last_error='The site domain changed. Connect Bing Webmaster Tools again to match the new domain.'
+             WHERE site_id=$1",
+        )
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+            .bind(site)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(Json(fetch_site(&state.pool, site).await?))
 }
 
@@ -3665,6 +3688,17 @@ async fn connect_bing(
         encrypt_token(&config.encryption_key, api_key).map_err(|_| ApiError::Internal)?;
     // The integration row is written first so its lock orders this against a running sync.
     let mut tx = s.pool.begin().await?;
+    // The match is only valid for the domain it was made against.
+    let current_domain: String =
+        sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+            .bind(site)
+            .fetch_one(&mut *tx)
+            .await?;
+    if current_domain != domain {
+        return Err(ApiError::BadRequest(
+            "The site domain changed while connecting; connect again".into(),
+        ));
+    }
     sqlx::query(
         "INSERT INTO bing_webmaster_integrations(
            site_id,site_url,api_key_encrypted,connected_by,last_error
@@ -3775,15 +3809,16 @@ async fn sync_bing(
     let mut tx = s.pool.begin().await?;
     // Locking the connection orders this against connect and disconnect, and a key that changed
     // (or a disconnect) while Bing was answering means these results belong to no connection.
-    let current: Option<String> = sqlx::query_scalar(
-        "SELECT api_key_encrypted FROM bing_webmaster_integrations WHERE site_id=$1 FOR UPDATE",
+    let current: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT api_key_encrypted,site_url FROM bing_webmaster_integrations
+         WHERE site_id=$1 FOR UPDATE",
     )
     .bind(site)
     .fetch_optional(&mut *tx)
     .await?;
-    if current.as_deref() != Some(encrypted.as_str()) {
+    if current != Some((encrypted.clone(), Some(site_url.clone()))) {
         return Err(ApiError::BadRequest(
-            "Bing Webmaster Tools was reconnected or disconnected during sync; sync again".into(),
+            "Bing Webmaster Tools was reconnected, disconnected, or the site domain changed during sync; sync again".into(),
         ));
     }
     sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")

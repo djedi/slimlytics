@@ -199,10 +199,12 @@ mod flow {
             api_base: fake_bing().await,
             encryption_key: [9_u8; 32],
         }));
-        sqlx::query("DELETE FROM sites WHERE domain='bing-flow.example'")
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "DELETE FROM sites WHERE domain IN ('bing-flow.example','bing-renamed.example')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let email = format!("bing+{}@example.com", uuid::Uuid::new_v4());
         let (_, registered) = send(
             &router,
@@ -357,5 +359,60 @@ mod flow {
         .await
         .unwrap();
         assert_eq!(left, 0);
+
+        // Renaming the domain while a sync waits on Bing drops the match and its metrics.
+        let (status, _) = send(
+            &router,
+            request(
+                "POST",
+                &format!("{base}/integrations/bing"),
+                &token,
+                json!({"apiKey":"good-key"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let syncing = tokio::spawn({
+            let router = router.clone();
+            let sync = request(
+                "POST",
+                &format!("{base}/integrations/bing/sync"),
+                &token,
+                json!({}),
+            );
+            async move { send(&router, sync).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let (status, renamed) = send(
+            &router,
+            request(
+                "PUT",
+                &base,
+                &token,
+                json!({"name":"Bing","domain":"bing-renamed.example","timezone":"UTC"}),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{renamed}");
+        let (status, stale) = syncing.await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{stale}");
+        let (_, after) = send(
+            &router,
+            request(
+                "GET",
+                &format!("{base}/integrations/bing"),
+                &token,
+                json!({}),
+            ),
+        )
+        .await;
+        assert_eq!(after["connected"], true);
+        assert_eq!(after["siteUrl"], Value::Null);
+        assert!(after["lastError"]
+            .as_str()
+            .unwrap()
+            .contains("domain changed"));
+        let (_, rows) = send(&router, report("query")).await;
+        assert_eq!(rows, json!([]));
     }
 }
