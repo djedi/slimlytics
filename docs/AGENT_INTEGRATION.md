@@ -33,6 +33,7 @@ Slimlytics implements JSON-RPC 2.0 lifecycle and tools for the MCP `2025-03-26`,
 - `analytics_summary`
 - `dimension_report`
 - `search_console_report`
+- `bing_webmaster_report`
 - `marketing_brief`
 
 Every analytics call requires an explicit site ID and inclusive `from`/`to` dates. Results include a generation time, source evidence, definitions where metrics can be ambiguous, and a freshness field such as `dataThrough`.
@@ -67,5 +68,6 @@ Keys must be 8-128 URL-safe characters. Slimlytics serializes concurrent request
 - Surface `dataThrough` when reporting conclusions.
 - Do not compare Search Console and browser sessions as if they were the same metric.
 - Search Console may return top rows rather than every row.
+- Bing Webmaster query and page rows come in roughly weekly buckets; use ranges of a week or more, and do not add Bing and Google clicks for the same query as if they were deduplicated.
 - Human reports exclude known bots and internal traffic.
 - AI referral reports measure people arriving from AI products. AI crawler reports measure identified automation and require server-side collection for crawlers that do not execute JavaScript.

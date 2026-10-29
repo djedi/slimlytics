@@ -59,6 +59,8 @@
     type Overview,
     type ReportRow,
     type ReportSubscription,
+    type BingDimension,
+    type BingStatus,
     type SearchConsoleDimension,
     type SearchConsoleProperty,
     type SearchConsoleRow,
@@ -90,6 +92,7 @@
   import TrafficChart from '$lib/components/TrafficChart.svelte';
   import InsightsView from '$lib/components/insights/InsightsView.svelte';
   import SearchConsoleView from '$lib/components/SearchConsoleView.svelte';
+  import BingWebmasterView from '$lib/components/BingWebmasterView.svelte';
   import type { IconDimension } from '$lib/components/DimensionIcon.svelte';
   import SiteIcon from '$lib/components/SiteIcon.svelte';
   import SiteIconSettingsCard from '$lib/components/SiteIconSettings.svelte';
@@ -120,6 +123,7 @@
     { id: 'operating-systems', label: 'Operating systems', icon: Smartphone },
     { id: 'campaigns', label: 'Campaigns', icon: Zap },
     { id: 'search', label: 'Search Console', icon: Search },
+    { id: 'bing', label: 'Bing Webmaster', icon: Search },
     { id: 'visitors', label: 'Visitors', icon: Users },
     { id: 'goals', label: 'Goals', icon: GoalIcon },
     { id: 'settings', label: 'Settings', icon: Settings }
@@ -195,6 +199,18 @@
   // Bumped when an integration change starts and when it finishes; a load that overlapped one may
   // hold an older status, so it must not overwrite the status the change left behind.
   let searchConsoleChanges = 0;
+  let bingBySite = $state<Record<string, BingStatus>>({});
+  const bing = $derived(site ? (bingBySite[site.id] ?? null) : null);
+  const setBing = (id: string, status: BingStatus) => (bingBySite = { ...bingBySite, [id]: status });
+  const bingDimensions: BingDimension[] = ['query', 'page', 'date'];
+  const emptyBingReports = (): Record<BingDimension, SearchConsoleRow[]> => ({ query: [], page: [], date: [] });
+  let bingReportsByKey = $state<Record<string, Record<BingDimension, SearchConsoleRow[]>>>({});
+  const bingReports = $derived((site && bingReportsByKey[`${site.id}:${range.period}`]) || emptyBingReports());
+  let bingApiKey = $state('');
+  let bingBusy = $state(false);
+  let bingNotice = $state('');
+  // Bumped by each Bing load and change, so an older load never overwrites a newer result.
+  let bingGeneration = 0;
   let reportSubscriptions = $state<ReportSubscription[]>([]);
   let briefName = $state('Weekly marketing brief');
   let briefWebhook = $state('');
@@ -247,7 +263,7 @@
         }
         void refreshBillingQuietly();
       }
-      else if (view !== 'settings' && view !== 'search') void refreshViewQuietly().catch(() => {});
+      else if (view !== 'settings' && view !== 'search' && view !== 'bing') void refreshViewQuietly().catch(() => {});
     };
     const interval = window.setInterval(refresh, 15_000);
     const onFocus = () => refresh();
@@ -580,22 +596,44 @@
       if (generation !== searchLoadGeneration || changes !== searchConsoleChanges) return;
       setSearchConsole(id, status);
       searchReportsByKey = { ...searchReportsByKey, [`${id}:${period}`]: reports };
+    } else if (view === 'bing') {
+      const id = site.id;
+      const period = range.period;
+      const generation = ++bingGeneration;
+      const status = await api.bingStatus(id);
+      let reports = emptyBingReports();
+      if (status.connected && status.siteUrl) {
+        const rows = await Promise.all(bingDimensions.map((dimension) => api.bingReport(id, dimension, period)));
+        reports = Object.fromEntries(bingDimensions.map((dimension, index) => [dimension, rows[index]])) as Record<
+          BingDimension,
+          SearchConsoleRow[]
+        >;
+      }
+      if (generation !== bingGeneration) return;
+      setBing(id, status);
+      bingReportsByKey = { ...bingReportsByKey, [`${id}:${period}`]: reports };
     } else if (view === 'settings') {
       // A pending DNS record and notice belong to the site they were issued for.
       if (searchConsoleSetupSite !== site.id) {
         searchConsoleProperty = null;
         searchConsoleNotice = '';
+        bingNotice = '';
+        bingApiKey = '';
         searchConsoleSetupSite = site.id;
       }
       const id = site.id;
       const changes = searchConsoleChanges;
+      const generation = ++bingGeneration;
       let status: SearchConsoleStatus;
-      [collectionHealth, status, reportSubscriptions] = await Promise.all([
+      let bingStatus: BingStatus;
+      [collectionHealth, status, bingStatus, reportSubscriptions] = await Promise.all([
         api.collectionHealth(id),
         api.searchConsoleStatus(id),
+        api.bingStatus(id),
         api.reportSubscriptions(id)
       ]);
       if (changes === searchConsoleChanges) setSearchConsole(id, status);
+      if (generation === bingGeneration) setBing(id, bingStatus);
     }
   }
   function connectSpy() {
@@ -785,6 +823,57 @@
       }
     } finally {
       finishSearchConsoleChange();
+    }
+  }
+  async function connectBing(event: SubmitEvent) {
+    event.preventDefault();
+    if (!site || !bingApiKey.trim()) return;
+    const id = site.id;
+    bingGeneration++;
+    bingBusy = true;
+    bingNotice = '';
+    try {
+      const status = await api.connectBing(id, bingApiKey.trim());
+      setBing(id, status);
+      bingApiKey = '';
+      if (status.siteUrl) {
+        bingNotice = 'Connected. Syncing search data…';
+        await api.syncBing(id);
+        setBing(id, await api.bingStatus(id));
+        bingNotice = 'Connected and synced.';
+      }
+    } catch (reason) {
+      bingNotice = reason instanceof Error ? reason.message : 'Could not connect Bing Webmaster Tools.';
+    } finally {
+      bingBusy = false;
+    }
+  }
+  async function syncBing() {
+    if (!site) return;
+    const id = site.id;
+    loading = true;
+    error = '';
+    try {
+      await api.syncBing(id);
+      if (view === 'bing') await refreshViewQuietly();
+      else setBing(id, await api.bingStatus(id));
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not sync Bing Webmaster Tools.';
+    } finally {
+      loading = false;
+    }
+  }
+  async function disconnectBing() {
+    if (!site || !confirm('Disconnect Bing Webmaster Tools and remove its cached metrics?')) return;
+    const id = site.id;
+    bingGeneration++;
+    bingBusy = true;
+    try {
+      await api.disconnectBing(id);
+      setBing(id, await api.bingStatus(id));
+      bingNotice = '';
+    } finally {
+      bingBusy = false;
     }
   }
   async function createBrief(event: SubmitEvent) {
@@ -1228,6 +1317,14 @@
           onSync={() => void syncSearchConsole()}
           syncing={loading}
         />
+      {:else if view === 'bing'}
+        <BingWebmasterView
+          status={bing}
+          reports={bingReports}
+          settingsHref={appHref(site.id, 'settings', range)}
+          onSync={() => void syncBing()}
+          syncing={loading}
+        />
       {:else if view === 'visitors'}
         <section class="panel">
           <div class="panel-head">
@@ -1506,6 +1603,57 @@
                   >Disconnect</button
                 >
               </div>
+            {/if}
+          </div>
+          <div class="panel settings-card">
+            <p class="eyebrow">Organic search</p>
+            <h2>Bing Webmaster Tools</h2>
+            {#if !bing?.configured}
+              <p class="muted">An integration encryption key is not configured on this deployment.</p>
+            {:else}
+              {#if bing.connected}
+                <dl>
+                  <div><dt>Site</dt><dd>{bing.siteUrl ?? 'No match'}</dd></div>
+                  <div>
+                    <dt>Last sync</dt>
+                    <dd>{bing.lastSyncedAt ? new Date(bing.lastSyncedAt).toLocaleString() : 'Never'}</dd>
+                  </div>
+                  {#if bing.lastError}
+                    <div><dt>Status</dt><dd>{bing.lastError}</dd></div>
+                  {/if}
+                </dl>
+              {:else}
+                <p class="muted">
+                  Bing data also covers DuckDuckGo, Yahoo, and Ecosia. In
+                  <a href="https://www.bing.com/webmasters" target="_blank" rel="noopener noreferrer">Bing Webmaster Tools</a>,
+                  add and verify {site.domain} (you can import it from Google Search Console), then open
+                  Settings → API access, generate an API key, and paste it here.
+                </p>
+              {/if}
+              {#if !bing.connected || !bing.siteUrl}
+                <form class="test-links" onsubmit={(event) => void connectBing(event)}>
+                  <input
+                    type="password"
+                    autocomplete="off"
+                    aria-label="Bing Webmaster API key"
+                    placeholder="Bing Webmaster API key"
+                    bind:value={bingApiKey}
+                  />
+                  <button class="primary" type="submit" disabled={bingBusy || !bingApiKey.trim()}
+                    >{bingBusy ? 'Connecting…' : bing.connected ? 'Reconnect' : 'Connect'}</button
+                  >
+                </form>
+              {/if}
+              {#if bingNotice}<p class="muted" role="status">{bingNotice}</p>{/if}
+              {#if bing.connected}
+                <div class="test-links">
+                  {#if bing.siteUrl}
+                    <a class="primary button" href={appHref(site.id, 'bing', range)}>View data</a>
+                    <button class="secondary" disabled={bingBusy} onclick={() => void syncBing()}>Sync now</button>
+                  {/if}
+                  <button class="secondary" disabled={bingBusy} onclick={() => void disconnectBing()}>Disconnect</button>
+                </div>
+              {/if}
             {/if}
           </div>
           <div class="panel settings-card installation-card">
