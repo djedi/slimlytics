@@ -836,8 +836,10 @@
     bingReportsByKey = Object.fromEntries(
       Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
     );
-    if (site?.id === id && view === 'bing') await refreshViewQuietly();
-    else setBing(id, await api.bingStatus(id));
+    if (site?.id === id && view === 'bing') return refreshViewQuietly();
+    const generation = bingGeneration;
+    const status = await api.bingStatus(id);
+    if (generation === bingGeneration) setBing(id, status);
   }
   async function connectBing(event: SubmitEvent) {
     event.preventDefault();
@@ -889,7 +891,7 @@
     bingBusy = true;
     try {
       await api.disconnectBing(id);
-      setBing(id, await api.bingStatus(id));
+      setBing(id, { configured: true, connected: false });
       if (site?.id === id && op === bingOp) bingNotice = '';
     } catch (reason) {
       if (site?.id === id && op === bingOp)
