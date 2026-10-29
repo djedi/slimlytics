@@ -861,6 +861,8 @@
     } catch (reason) {
       if (current()) bingNotice = reason instanceof Error ? reason.message : 'Could not connect Bing Webmaster Tools.';
     } finally {
+      // Loads that overlapped the change may hold an older status.
+      bingGeneration++;
       if (op === bingOp) bingBusy = false;
     }
   }
@@ -873,9 +875,10 @@
       await api.syncBing(id);
       await bingSynced(id);
     } catch (reason) {
-      error = reason instanceof Error ? reason.message : 'Could not sync Bing Webmaster Tools.';
+      // A sync started on another site must not report into this one.
+      if (site?.id === id) error = reason instanceof Error ? reason.message : 'Could not sync Bing Webmaster Tools.';
     } finally {
-      loading = false;
+      if (site?.id === id) loading = false;
     }
   }
   async function disconnectBing() {
@@ -892,6 +895,7 @@
       if (site?.id === id && op === bingOp)
         bingNotice = `Could not disconnect: ${reason instanceof Error ? reason.message : 'request failed'}. Bing is still connected.`;
     } finally {
+      bingGeneration++;
       if (op === bingOp) bingBusy = false;
     }
   }
