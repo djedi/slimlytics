@@ -154,6 +154,15 @@ export function countryLabel(code: string | null | undefined): string {
   return regionNames.of(code.toUpperCase()) ?? code.toUpperCase();
 }
 
+let languageNames: Intl.DisplayNames | undefined;
+/** "Spanish (es)" for a stored base language code; other labels ("unknown") pass through. */
+export function languageLabel(code: string): string {
+  if (!/^[a-z]{2,3}$/.test(code)) return code === 'unknown' ? 'Unknown' : code;
+  languageNames ??= new Intl.DisplayNames(['en'], { type: 'language', fallback: 'none' });
+  const name = languageNames.of(code);
+  return name && name !== code ? `${name} (${code})` : code;
+}
+
 /**
  * Absolute URL for a page path on the site's own origin, for "open in a new tab" links.
  * Labels that aren't paths ("(not set)") or that resolve to another host ("//other.host") get null.

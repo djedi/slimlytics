@@ -271,6 +271,10 @@ async fn auth_site_goal_and_collection_flow() {
     collect
         .headers_mut()
         .insert(header::USER_AGENT, "Mozilla/5.0".parse().unwrap());
+    collect.headers_mut().insert(
+        header::ACCEPT_LANGUAGE,
+        "es-MX,es;q=0.9,en-US;q=0.8".parse().unwrap(),
+    );
     collect.extensions_mut().insert(ConnectInfo(
         "203.0.113.10:443".parse::<std::net::SocketAddr>().unwrap(),
     ));
@@ -281,14 +285,15 @@ async fn auth_site_goal_and_collection_flow() {
         "https://example.com"
     );
 
-    let stored: (String, Option<String>) =
-        sqlx::query_as("SELECT url,utm_source FROM events WHERE site_id=$1 LIMIT 1")
+    let stored: (String, Option<String>, Option<String>) =
+        sqlx::query_as("SELECT url,utm_source,language FROM events WHERE site_id=$1 LIMIT 1")
             .bind(site_uuid)
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(stored.0, "https://example.com/thanks");
     assert_eq!(stored.1.as_deref(), Some("newsletter"));
+    assert_eq!(stored.2.as_deref(), Some("es"));
 
     let mut private_collect = json_request(
         "POST",
@@ -725,6 +730,23 @@ async fn auth_site_goal_and_collection_flow() {
         body_json(crawler_report.into_body()).await[0]["value"],
         "GPTBot"
     );
+    let language_report = router
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            &format!("/api/sites/{site_id}/reports/languages?from={today}&to={today}"),
+            Some(&token),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(language_report.status(), StatusCode::OK);
+    let language_rows = body_json(language_report.into_body()).await;
+    assert!(language_rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["value"] == "es" && row["views"] == 1));
 
     let revoked = router
         .clone()

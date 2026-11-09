@@ -16,6 +16,7 @@
     Eye,
     FileText,
     Gauge,
+    Languages,
     Goal as GoalIcon,
     Globe2,
     LayoutDashboard,
@@ -67,7 +68,7 @@
     type Site,
     type Visitor
   } from '$lib/api';
-  import { applyTheme, compactNumber, duration, flagEmoji, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
+  import { applyTheme, compactNumber, duration, flagEmoji, ignoreVisitsLinks, languageLabel, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
   import {
     DEFAULT_RANGE,
     appHref,
@@ -118,6 +119,7 @@
     { id: 'devices', label: 'Devices', icon: Monitor },
     { id: 'browsers', label: 'Browsers', icon: Compass },
     { id: 'operating-systems', label: 'Operating systems', icon: Smartphone },
+    { id: 'languages', label: 'Languages', icon: Languages },
     { id: 'campaigns', label: 'Campaigns', icon: Zap },
     { id: 'search', label: 'Search Console', icon: Search },
     { id: 'visitors', label: 'Visitors', icon: Users },
@@ -550,10 +552,13 @@
         'devices',
         'browsers',
         'operating-systems',
+        'languages',
         'campaigns'
       ].includes(view)
-    )
-      report = await api.report(site.id, view, range.period);
+    ) {
+      const rows = await api.report(site.id, view, range.period);
+      report = view === 'languages' ? rows.map((row) => ({ ...row, label: languageLabel(row.label) })) : rows;
+    }
     else if (view === 'visitors') visitors = await api.visitors(site.id, range.period);
     else if (view === 'spy') {
       events = await api.events(site.id);
@@ -1201,6 +1206,7 @@
           'devices',
           'browsers',
           'operating-systems',
+          'languages',
           'campaigns'
         ].includes(view)}
         <section class="page-head">

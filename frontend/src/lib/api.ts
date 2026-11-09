@@ -222,6 +222,7 @@ const reportLabels: Record<string, string[]> = {
   devices: ['Desktop · Chrome', 'Mobile · Safari', 'Desktop · Firefox', 'Mobile · Chrome', 'Tablet · Safari'],
   browsers: ['Chrome', 'Safari', 'Firefox', 'Edge', 'Brave'],
   'operating-systems': ['Windows', 'Mac OSX', 'iOS', 'Android', 'Linux'],
+  languages: ['en', 'es', 'de', 'fr', 'pt'],
   campaigns: ['spring_launch / email', 'docs_sidebar / referral', 'brand / search', 'july_digest / email', '(not set)']
 };
 const searchConsoleLabels: Record<Exclude<SearchConsoleDimension, 'date'>, string[]> = {

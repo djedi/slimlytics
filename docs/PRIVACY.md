@@ -37,6 +37,10 @@ Server-side ingestion follows the same rule: a supplied access-log IP is used tr
 
 Trusted edge location headers or an optional local GeoIP database can populate country, continent, region, and city. Region and city are discarded when Global Privacy Control is active. Slimlytics never stores coordinates. The default database is DB-IP City Lite (CC BY 4.0, "IP Geolocation by DB-IP"), downloaded with `make geoip`; lookups run locally and never send visitor IPs to a third party.
 
+## Language
+
+The collector keeps only the base language of the browser's top `Accept-Language` preference (`es` from `es-MX,es;q=0.9,en;q=0.8`). Regional variants and the rest of the preference list are discarded, because the full list adds fingerprinting entropy without answering which translations a site needs. The header is sent by every browser, so this works for existing installs and first-party proxies without tracker changes. Server-ingested events do not record a language.
+
 ## Data rights and retention
 
 Site owners can configure retention, export site data, delete site data, and delete an anonymous visitor’s events. Retention jobs should run regularly and report failures through operational monitoring.

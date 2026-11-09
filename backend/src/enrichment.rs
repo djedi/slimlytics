@@ -81,3 +81,41 @@ fn header_value<'a>(
             })
         })
 }
+
+/// The visitor's preferred base language ("es" for `es-MX,es;q=0.9,en;q=0.8`), from the
+/// `Accept-Language` header the browser already sends with every beacon. Only the primary
+/// language subtag is kept: regional variants and the rest of the preference list add
+/// fingerprinting entropy without telling a site owner which translations to offer.
+pub fn language_from_header(value: Option<&str>) -> Option<String> {
+    let value = value?;
+    if value.len() > 512 {
+        return None;
+    }
+    let mut best: Option<(String, u16)> = None;
+    for entry in value.split(',').take(16) {
+        let mut parts = entry.split(';');
+        let tag = parts.next().unwrap_or("").trim();
+        let quality = parts
+            .find_map(|part| part.trim().strip_prefix("q="))
+            .map_or(Some(1000), parse_quality);
+        let Some(quality) = quality.filter(|quality| *quality > 0) else {
+            continue;
+        };
+        let base = tag.split(['-', '_']).next().unwrap_or("");
+        if !(2..=3).contains(&base.len()) || !base.bytes().all(|byte| byte.is_ascii_alphabetic()) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(_, current)| quality > *current) {
+            best = Some((base.to_ascii_lowercase(), quality));
+        }
+    }
+    best.map(|(language, _)| language)
+}
+
+/// An HTTP quality value ("0.8") in thousandths, or `None` when it is malformed.
+fn parse_quality(raw: &str) -> Option<u16> {
+    let quality: f32 = raw.trim().parse().ok()?;
+    (0.0..=1.0)
+        .contains(&quality)
+        .then(|| (quality * 1000.0).round() as u16)
+}

@@ -92,6 +92,7 @@ Returns the complete JavaScript tracker plus a site initializer targeting the ex
 - `GET /api/sites/{siteId}/reports/referrers`
 - `GET /api/sites/{siteId}/reports/countries`
 - `GET /api/sites/{siteId}/reports/devices`
+- `GET /api/sites/{siteId}/reports/languages` (base language codes such as `en`, `es`; `unknown` for events without one)
 - `GET /api/sites/{siteId}/reports/campaigns`
 - `GET /api/sites/{siteId}/visitors`
 - `GET /api/sites/{siteId}/events`

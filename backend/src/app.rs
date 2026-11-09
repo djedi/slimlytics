@@ -17,7 +17,7 @@ use crate::{
         issue_session_token, verify_password, verify_token,
     },
     briefs::{build_marketing_brief, deliver_report},
-    enrichment::{location_from_headers, GeoIp},
+    enrichment::{language_from_header, location_from_headers, GeoIp},
     error::ApiError,
     identity::derive_ids,
     marketing::marketing_context,
@@ -1498,6 +1498,11 @@ async fn collect(
     let class = traffic_class(ua, ip, &state.internal_ips);
     let automation = automation_for(ua, ip);
     let client = client_metadata(ua);
+    let language = language_from_header(
+        headers
+            .get(header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok()),
+    );
     if !input.properties.is_object() {
         record_collection_rejection(&state.pool, site, "invalid_properties").await;
         return Err(ApiError::BadRequest("properties must be an object".into()));
@@ -1560,10 +1565,10 @@ async fn collect(
             title,country_code,region,city,continent_code,device_type,browser,browser_version,os,
             os_version,utm_source,utm_medium,utm_campaign,utm_term,utm_content,revenue_amount,
             revenue_currency,content_id,content_type,content_author,automation_name,
-            automation_category,properties,traffic_class,privacy_mode,tracker_version
+            automation_category,properties,traffic_class,privacy_mode,tracker_version,language
          ) VALUES(
             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-            $22,$23,$24,$25::numeric,$26,$27,$28,$29,$30,$31,$32,$33::traffic_class,$34,$35
+            $22,$23,$24,$25::numeric,$26,$27,$28,$29,$30,$31,$32,$33::traffic_class,$34,$35,$36
          ) RETURNING id",
     )
     .bind(site)
@@ -1601,6 +1606,7 @@ async fn collect(
     .bind(class)
     .bind(privacy_mode)
     .bind(tracker_version.as_deref())
+    .bind(language.as_deref())
     .fetch_one(&mut *tx)
     .await?;
     complete_goals(
@@ -2301,6 +2307,7 @@ async fn report(
         "cities" => "COALESCE(city, 'unknown')",
         "devices" => "COALESCE(device_type, 'unknown')",
         "browsers" => "COALESCE(browser, 'unknown')",
+        "languages" => "COALESCE(language, 'unknown')",
         "operating-systems" => "COALESCE(os, 'unknown')",
         "campaigns" => "COALESCE(utm_campaign, '(none)')",
         "sources" => "COALESCE(utm_source, referrer_host, '(direct)')",
@@ -3560,7 +3567,7 @@ fn mcp_tools() -> Value {
             "siteId":{"type":"string","format":"uuid"},
             "from":{"type":"string","format":"date"},
             "to":{"type":"string","format":"date"},
-            "dimension":{"type":"string","enum":["page","referrer","country","region","city","device","browser","os","campaign","source","medium","content"]},
+            "dimension":{"type":"string","enum":["page","referrer","country","region","city","device","browser","language","os","campaign","source","medium","content"]},
             "limit":{"type":"integer","minimum":1,"maximum":500,"default":100}
           }
         },
@@ -3707,6 +3714,7 @@ async fn mcp_dimension_report(
         "city" => "COALESCE(city,'unknown')",
         "device" => "COALESCE(device_type,'unknown')",
         "browser" => "COALESCE(browser,'unknown')",
+        "language" => "COALESCE(language,'unknown')",
         "os" => "COALESCE(os,'unknown')",
         "campaign" => "COALESCE(utm_campaign,'(none)')",
         "source" => "COALESCE(utm_source,referrer_host,'(direct)')",

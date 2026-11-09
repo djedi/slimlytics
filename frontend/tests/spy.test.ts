@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { activeVisitorCount, countryLabel, flagEmoji, minuteBuckets, relativeTime } from '../src/lib/ui';
+import { activeVisitorCount, countryLabel, flagEmoji, languageLabel, minuteBuckets, relativeTime } from '../src/lib/ui';
 
 const now = new Date('2026-10-01T12:00:00Z').getTime();
 const at = (secondsAgo: number) => new Date(now - secondsAgo * 1000).toISOString();
+
+describe('languageLabel', () => {
+  it('names stored base language codes and keeps unknowns readable', () => {
+    expect(languageLabel('es')).toBe('Spanish (es)');
+    expect(languageLabel('pt')).toBe('Portuguese (pt)');
+    expect(languageLabel('unknown')).toBe('Unknown');
+    expect(languageLabel('qaa')).toBe('qaa');
+  });
+});
 
 describe('spy helpers', () => {
   it('turns country codes into flags and names, with an honest unknown', () => {
