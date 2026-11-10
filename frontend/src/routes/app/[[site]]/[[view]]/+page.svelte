@@ -217,6 +217,13 @@
   let bingNotice = $state('');
   // The verification records for a site just added to Bing; cleared when the site changes.
   let bingSiteSetup = $state<BingSiteSetup | null>(null);
+  // Shown only while it still matches the site's domain: records for an old domain can't verify the new one.
+  const bingSetup = $derived(
+    bingSiteSetup && site &&
+      bingSiteSetup.siteUrl.replace(/\/+$/, '').toLowerCase() === `https://${site.domain.toLowerCase()}`
+      ? bingSiteSetup
+      : null
+  );
   /** Where a Bing sign-in keeps its state across the redirect, to check against the one Bing returns. */
   const bingOAuthKey = 'slimlytics:bing-oauth';
   // Bumped by each Bing load and change, so an older load never overwrites a newer result.
@@ -1806,28 +1813,28 @@
                 </p>
               {/if}
               {#if bing.connected && !bing.siteUrl}
-                {#if bingSiteSetup}
+                {#if bingSetup}
                   <p class="muted">
-                    Added <code>{bingSiteSetup.siteUrl}</code> to Bing. Publish one of these, then verify.
+                    Added <code>{bingSetup.siteUrl}</code> to Bing. Publish one of these, then verify.
                     The DNS record is usually easiest; DNS changes can take a few minutes to appear.
                   </p>
                   <dl aria-label="Bing DNS verification record">
-                    <div><dt>Type</dt><dd><code>{bingSiteSetup.dnsRecord.type}</code></dd></div>
-                    <div><dt>Name</dt><dd><code>{bingSiteSetup.dnsRecord.name}</code></dd></div>
-                    <div><dt>Value</dt><dd><code>{bingSiteSetup.dnsRecord.value}</code></dd></div>
+                    <div><dt>Type</dt><dd><code>{bingSetup.dnsRecord.type}</code></dd></div>
+                    <div><dt>Name</dt><dd><code>{bingSetup.dnsRecord.name}</code></dd></div>
+                    <div><dt>Value</dt><dd><code>{bingSetup.dnsRecord.value}</code></dd></div>
                   </dl>
                   <details>
                     <summary>Or use a meta tag or file</summary>
                     <p class="muted">Add this tag to the <code>&lt;head&gt;</code> of your home page:</p>
-                    <pre>{bingSiteSetup.metaTag}</pre>
-                    <p class="muted">Or serve this at <code>{bingSiteSetup.xmlFile.path}</code>:</p>
-                    <pre>{bingSiteSetup.xmlFile.content}</pre>
+                    <pre>{bingSetup.metaTag}</pre>
+                    <p class="muted">Or serve this at <code>{bingSetup.xmlFile.path}</code>:</p>
+                    <pre>{bingSetup.xmlFile.content}</pre>
                   </details>
                 {:else}
                   <p class="muted">Slimlytics can add {site.domain} to your Bing account and verify it for you.</p>
                 {/if}
                 <div class="test-links">
-                  {#if bingSiteSetup}
+                  {#if bingSetup}
                     <button class="primary" disabled={bingBusy} onclick={() => void verifyBingSite()}
                       >{bingBusy ? 'Checking…' : 'Verify'}</button
                     >
