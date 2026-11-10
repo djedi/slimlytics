@@ -102,26 +102,52 @@ mod flow {
     use axum::{
         body::{to_bytes, Body},
         extract::Query,
-        http::{Request, StatusCode},
-        routing::get,
-        Json, Router,
+        http::{HeaderMap, Request, StatusCode},
+        routing::{get, post},
+        Form, Json, Router,
     };
     use serde_json::{json, Value};
-    use slimlytics_backend::{app, bing_webmaster::BingConfig, AppState};
+    use slimlytics_backend::{
+        app,
+        bing_webmaster::{BingConfig, BingOAuthConfig},
+        AppState,
+    };
     use sqlx::postgres::PgPoolOptions;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    /// Whether the OAuth flow's site has been added to the fake Bing account, and how many times
+    /// it has been asked to verify it (the first attempt fails, like a DNS record not yet live).
+    static NEW_SITE_ADDED: AtomicBool = AtomicBool::new(false);
+    static VERIFY_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// The only refresh token the fake accepts is `refresh-{n}`; each refresh rotates it, so two
+    /// exchanges of the same token cannot both succeed.
+    static REFRESH: AtomicUsize = AtomicUsize::new(1);
+    const SITES: [&str; 2] = ["https://bing-flow.example/", "https://bing-new.example/"];
     use tower::ServiceExt;
 
-    /// Answers like Bing's JSON API for one key and one verified site.
+    /// Answers like Bing's JSON API and OAuth server for one key, one OAuth grant, one verified
+    /// site, and one site the OAuth flow adds and verifies.
     async fn fake_bing() -> String {
         type Params = Query<HashMap<String, String>>;
+        type Failure = (StatusCode, Json<Value>);
+        fn authorized(params: &HashMap<String, String>, headers: &HeaderMap) -> bool {
+            params.get("apikey").map(String::as_str) == Some("good-key")
+                || headers
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok())
+                    == Some("Bearer good-token")
+        }
         fn checked(
             params: &HashMap<String, String>,
+            headers: &HeaderMap,
             site: bool,
-        ) -> Result<(), (StatusCode, Json<Value>)> {
-            let key_ok = params.get("apikey").map(String::as_str) == Some("good-key");
+        ) -> Result<(), Failure> {
+            let key_ok = authorized(params, headers);
             let site_ok = !site
-                || params.get("siteUrl").map(String::as_str) == Some("https://bing-flow.example/");
+                || params
+                    .get("siteUrl")
+                    .is_some_and(|url| SITES.contains(&url.as_str()));
             if key_ok && site_ok {
                 Ok(())
             } else {
@@ -132,29 +158,86 @@ mod flow {
             }
         }
         let router = Router::new()
-            .route("/json/GetUserSites", get(|Query(p): Params| async move {
-                checked(&p, false)?;
-                Ok::<_, (StatusCode, Json<Value>)>(Json(json!({"d":[
-                    {"Url":"https://bing-flow.example/","IsVerified":true},
-                    {"Url":"https://other.example/","IsVerified":true}
-                ]})))
+            .route("/json/GetUserSites", get(|headers: HeaderMap, Query(p): Params| async move {
+                checked(&p, &headers, false)?;
+                let mut sites = vec![
+                    json!({"Url":"https://bing-flow.example/","IsVerified":true,
+                           "AuthenticationCode":"AAA","DnsVerificationCode":"aaa"}),
+                    json!({"Url":"https://other.example/","IsVerified":true}),
+                ];
+                if NEW_SITE_ADDED.load(Ordering::SeqCst) {
+                    sites.push(json!({
+                        "Url":"https://bing-new.example/",
+                        "IsVerified":VERIFY_CALLS.load(Ordering::SeqCst) > 1,
+                        "AuthenticationCode":"CODE123",
+                        "DnsVerificationCode":"dns123"
+                    }));
+                }
+                Ok::<_, Failure>(Json(json!({"d":sites})))
             }))
-            .route("/json/GetQueryStats", get(|Query(p): Params| async move {
-                checked(&p, true)?;
+            .route("/json/GetQueryStats", get(|headers: HeaderMap, Query(p): Params| async move {
+                checked(&p, &headers, true)?;
                 Ok::<_, (StatusCode, Json<Value>)>(Json(json!({"d":[
                     {"Query":"privacy analytics","Date":"/Date(1760857200000-0700)/","Clicks":3,"Impressions":30,"AvgImpressionPosition":2.0,"AvgClickPosition":2.0},
                     {"Query":"privacy analytics","Date":"/Date(1761462000000-0700)/","Clicks":1,"Impressions":10,"AvgImpressionPosition":6.0,"AvgClickPosition":6.0},
                     {"Query":"slimlytics","Date":"/Date(1761462000000-0700)/","Clicks":2,"Impressions":8,"AvgImpressionPosition":-1,"AvgClickPosition":-1}
                 ]})))
             }))
-            .route("/json/GetPageStats", get(|Query(p): Params| async move {
-                checked(&p, true)?;
+            .route("/json/GetPageStats", get(|headers: HeaderMap, Query(p): Params| async move {
+                checked(&p, &headers, true)?;
                 Ok::<_, (StatusCode, Json<Value>)>(Json(json!({"d":[
                     {"Query":"https://bing-flow.example/","Date":"/Date(1761462000000-0700)/","Clicks":9,"Impressions":40,"AvgImpressionPosition":3.0,"AvgClickPosition":3.0}
                 ]})))
             }))
-            .route("/json/GetRankAndTrafficStats", get(|Query(p): Params| async move {
-                checked(&p, true)?;
+            .route("/json/AddSite", post(|headers: HeaderMap, Query(p): Params, Json(body): Json<Value>| async move {
+                checked(&p, &headers, false)?;
+                if body["siteUrl"] == "https://bing-new.example/" {
+                    NEW_SITE_ADDED.store(true, Ordering::SeqCst);
+                }
+                Ok::<_, Failure>(Json(json!({"d":null})))
+            }))
+            .route("/json/VerifySite", post(|headers: HeaderMap, Query(p): Params, Json(body): Json<Value>| async move {
+                checked(&p, &headers, false)?;
+                let calls = if body["siteUrl"] == "https://bing-new.example/" {
+                    VERIFY_CALLS.fetch_add(1, Ordering::SeqCst) + 1
+                } else {
+                    0
+                };
+                Ok::<_, Failure>(Json(json!({"d":calls > 1})))
+            }))
+            .route("/oauth/token", post(|Form(form): Form<HashMap<String, String>>| async move {
+                let client = form.get("client_id").map(String::as_str) == Some("client")
+                    && form.get("client_secret").map(String::as_str) == Some("secret");
+                let refresh = match form.get("grant_type").map(String::as_str) {
+                    Some("authorization_code")
+                        if form.get("code").map(String::as_str) == Some("good-code")
+                            && form.get("redirect_uri").map(String::as_str)
+                                == Some("https://slimlytics.test/app")
+                            && form.get("code_verifier").is_some_and(|v| v.len() >= 43) =>
+                    {
+                        Some(REFRESH.load(Ordering::SeqCst))
+                    }
+                    Some("refresh_token") => {
+                        let current = REFRESH.load(Ordering::SeqCst);
+                        let presented = form.get("refresh_token").cloned().unwrap_or_default();
+                        (presented == format!("refresh-{current}")
+                            && REFRESH
+                                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok())
+                        .then_some(current + 1)
+                    }
+                    _ => None,
+                };
+                match refresh.filter(|_| client) {
+                    Some(refresh) => Ok(Json(json!({
+                        "access_token":"good-token","token_type":"bearer","expires_in":3600,
+                        "refresh_token":format!("refresh-{refresh}")
+                    }))),
+                    None => Err((StatusCode::BAD_REQUEST, Json(json!({"error":"invalid_grant"})))),
+                }
+            }))
+            .route("/json/GetRankAndTrafficStats", get(|headers: HeaderMap, Query(p): Params| async move {
+                checked(&p, &headers, true)?;
                 // Slow enough for a disconnect to land while a sync waits on Bing.
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 Ok::<_, (StatusCode, Json<Value>)>(Json(json!({"d":[
@@ -165,7 +248,7 @@ mod flow {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        format!("http://{address}/json")
+        format!("http://{address}")
     }
 
     fn request(method: &str, uri: &str, token: &str, body: Value) -> Request<Body> {
@@ -197,8 +280,9 @@ mod flow {
             b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
         )
         .with_bing(BingConfig {
-            api_base: fake_bing().await,
+            api_base: format!("{}/json", fake_bing().await),
             encryption_key: [9_u8; 32],
+            oauth: None,
         }));
         sqlx::query(
             "DELETE FROM sites WHERE domain IN ('bing-flow.example','bing-renamed.example')",
@@ -241,7 +325,10 @@ mod flow {
             ),
         )
         .await;
-        assert_eq!(status_before, json!({"configured":true,"connected":false}));
+        assert_eq!(
+            status_before,
+            json!({"configured":true,"oauthConfigured":false,"connected":false})
+        );
 
         let (status, rejected) = send(
             &router,
@@ -416,6 +503,144 @@ mod flow {
         let (_, rows) = send(&router, report("query")).await;
         assert_eq!(rows, json!([]));
     }
+
+    #[tokio::test]
+    #[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+    async fn signs_in_adds_verifies_and_syncs_a_new_site() {
+        let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL required");
+        let pool = PgPoolOptions::new().connect(&url).await.unwrap();
+        sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+        let bing = fake_bing().await;
+        let router = app(AppState::new(
+            pool.clone(),
+            "01234567890123456789012345678901".into(),
+            b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
+        )
+        .with_bing(BingConfig {
+            api_base: format!("{bing}/json"),
+            encryption_key: [9_u8; 32],
+            oauth: Some(BingOAuthConfig {
+                client_id: "client".into(),
+                client_secret: "secret".into(),
+                redirect_uri: "https://slimlytics.test/app".into(),
+                oauth_base: bing.clone(),
+            }),
+        }));
+        sqlx::query("DELETE FROM sites WHERE domain='bing-new.example'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let email = format!("bing-oauth+{}@example.com", uuid::Uuid::new_v4());
+        let (_, registered) = send(
+            &router,
+            request(
+                "POST",
+                "/api/auth/register",
+                "",
+                json!({"email":email,"password":"long-enough-password"}),
+            ),
+        )
+        .await;
+        let token = registered["token"].as_str().unwrap().to_owned();
+        let (_, site) = send(
+            &router,
+            request(
+                "POST",
+                "/api/sites",
+                &token,
+                json!({"name":"New","domain":"bing-new.example","timezone":"UTC"}),
+            ),
+        )
+        .await;
+        let base = format!("/api/sites/{}", site["id"].as_str().unwrap());
+        let call = |method: &str, path: &str, body: Value| {
+            request(method, &format!("{base}{path}"), &token, body)
+        };
+
+        let (_, status) = send(&router, call("GET", "/integrations/bing", json!({}))).await;
+        assert_eq!(status["oauthConfigured"], true);
+
+        let (status, started) =
+            send(&router, call("POST", "/integrations/bing/oauth", json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{started}");
+        let state = started["state"].as_str().unwrap().to_owned();
+        let authorize = started["authorizationUrl"].as_str().unwrap();
+        assert!(
+            authorize.starts_with(&format!("{bing}/OAuth/authorize?")),
+            "{authorize}"
+        );
+        assert!(authorize.contains("scope=webmaster.manage"), "{authorize}");
+        // The challenge in the URL is the S256 of the verifier kept on the server.
+        let verifier: String = sqlx::query_scalar(
+            "SELECT code_verifier FROM oauth_states WHERE provider='bing' AND state_hash=$1",
+        )
+        .bind(slimlytics_backend::search_console::state_hash(&state))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(authorize.contains(&format!(
+            "code_challenge={}&code_challenge_method=S256",
+            slimlytics_backend::bing_webmaster::pkce_challenge(&verifier)
+        )));
+        assert!(!authorize.contains(&verifier));
+
+        let complete = |state: &str| {
+            call(
+                "POST",
+                "/integrations/bing/oauth/complete",
+                json!({"code":"good-code","state":state}),
+            )
+        };
+        let (status, _) = send(&router, complete("forged-state")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, connected) = send(&router, complete(&state)).await;
+        assert_eq!(status, StatusCode::OK, "{connected}");
+        assert_eq!(connected["authKind"], "oauth");
+        assert_eq!(connected["siteUrl"], Value::Null);
+        let (status, _) = send(&router, complete(&state)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "a state is single-use");
+        let stored: String = sqlx::query_scalar(
+            "SELECT api_key_encrypted FROM bing_webmaster_integrations i JOIN sites s ON s.id=i.site_id WHERE s.domain='bing-new.example'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!stored.contains("refresh-"));
+
+        let (status, added) =
+            send(&router, call("POST", "/integrations/bing/site", json!({}))).await;
+        assert_eq!(status, StatusCode::OK, "{added}");
+        assert_eq!(added["siteUrl"], "https://bing-new.example/");
+        assert_eq!(
+            added["dnsRecord"],
+            json!({"type":"CNAME","name":"dns123","fqdn":"dns123.bing-new.example.","value":"verify.bing.com"})
+        );
+        assert_eq!(
+            added["metaTag"],
+            r#"<meta name="msvalidate.01" content="CODE123" />"#
+        );
+
+        let verify = || call("POST", "/integrations/bing/site/verify", json!({}));
+        let (status, pending) = send(&router, verify()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{pending}");
+        let (status, verified) = send(&router, verify()).await;
+        assert_eq!(status, StatusCode::OK, "{verified}");
+        assert_eq!(verified["siteUrl"], "https://bing-new.example/");
+
+        // Every call rotates the refresh token; concurrent calls take turns, so none presents a
+        // token the other already spent.
+        let (first, second) = tokio::join!(
+            send(&router, call("POST", "/integrations/bing/site", json!({}))),
+            send(&router, call("POST", "/integrations/bing/site", json!({}))),
+        );
+        assert_eq!(first.0, StatusCode::OK, "{}", first.1);
+        assert_eq!(second.0, StatusCode::OK, "{}", second.1);
+        for _ in 0..2 {
+            let (status, synced) =
+                send(&router, call("POST", "/integrations/bing/sync", json!({}))).await;
+            assert_eq!(status, StatusCode::OK, "{synced}");
+        }
+    }
 }
 
 #[test]
@@ -451,4 +676,14 @@ fn error_messages_never_carry_the_api_key() {
         "{message}"
     );
     assert_eq!(bing_error_message("not json", key), None);
+}
+
+#[test]
+fn pkce_challenge_matches_rfc_7636() {
+    assert_eq!(
+        slimlytics_backend::bing_webmaster::pkce_challenge(
+            "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        ),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
 }

@@ -17,8 +17,11 @@ use crate::{
         issue_session_token, verify_password, verify_token,
     },
     bing_webmaster::{
-        api_url, bing_error_message, matching_site_url, merge_metrics, parse_date, position,
-        report_value, BingConfig, Metric as BingMetric,
+        api_url, authorization_url as bing_authorization_url, bing_error_message,
+        matching_site_url, merge_metrics, method_url, parse_date, pkce_challenge, position,
+        report_value, same_site_url, site_url_for, token_url as bing_token_url,
+        verification_methods, BingConfig, BingOAuthConfig, Credential as BingCredential,
+        Metric as BingMetric,
     },
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
@@ -481,6 +484,22 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/sites/{site_id}/integrations/bing/sync",
             post(sync_bing),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/bing/oauth",
+            post(start_bing_oauth),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/bing/oauth/complete",
+            post(complete_bing_oauth),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/bing/site",
+            post(add_bing_site),
+        )
+        .route(
+            "/api/sites/{site_id}/integrations/bing/site/verify",
+            post(verify_bing_site),
         )
         .route("/api/sites/{site_id}/reports/bing", get(bing_report))
         .route(
@@ -3083,7 +3102,7 @@ async fn search_console_callback(
 ) -> Result<Redirect, ApiError> {
     let config = search_console_config(&s)?;
     let state_row: Option<(Uuid, Uuid)> = sqlx::query_as(
-        "DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>now()
+        "DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>now() AND provider='google'
          RETURNING user_id,site_id",
     )
     .bind(state_hash(&q.state))
@@ -3557,7 +3576,8 @@ struct BingConnectRequest {
 #[derive(Deserialize)]
 struct BingResponse<T> {
     // Required: a success without `d` is malformed and must not wipe the cache as "no data".
-    d: Vec<T>,
+    // (AddSite answers `{"d":null}`, which a `Value` accepts.)
+    d: T,
 }
 
 #[derive(Deserialize)]
@@ -3566,6 +3586,10 @@ struct BingSite {
     url: String,
     #[serde(default)]
     is_verified: bool,
+    #[serde(default)]
+    authentication_code: Option<String>,
+    #[serde(default)]
+    dns_verification_code: Option<String>,
 }
 
 /// A row of GetQueryStats or GetPageStats; for pages, `query` holds the page URL.
@@ -3589,22 +3613,33 @@ struct BingTrafficRow {
 }
 
 /// Calls a Bing Webmaster API method, turning a rejection into a message the user can act on.
+/// With a `body` the call is a JSON POST; otherwise a GET with the site as a query parameter.
 async fn bing_request<T: serde::de::DeserializeOwned>(
     state: &AppState,
     config: &BingConfig,
     method: &str,
-    api_key: &str,
+    credential: &BingCredential<'_>,
     site_url: Option<&str>,
-) -> Result<Vec<T>, ApiError> {
-    let response = state
-        .http
-        .get(api_url(&config.api_base, method, api_key, site_url))
+    body: Option<Value>,
+) -> Result<T, ApiError> {
+    let url = match credential {
+        BingCredential::ApiKey(key) => api_url(&config.api_base, method, key, site_url),
+        BingCredential::Bearer(_) => method_url(&config.api_base, method, site_url).into(),
+    };
+    let mut request = match &body {
+        Some(body) => state.http.post(url).json(body),
+        None => state.http.get(url),
+    };
+    if let BingCredential::Bearer(token) = credential {
+        request = request.bearer_auth(token);
+    }
+    let response = request
         // Bound how long connect and sync can hang (and keep the site's controls disabled).
         .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|error| {
-            // The URL carries the API key, so it must never reach the logs.
+            // The URL may carry the API key, so it must never reach the logs.
             let error = error.without_url();
             tracing::warn!(%error, method, "Bing Webmaster request failed");
             ApiError::Internal
@@ -3614,11 +3649,11 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
         // The raw body may echo the request URL and its key in any encoding, so it is never
         // logged; only Bing's decoded message, redacted, is logged and shown.
         let body = response.text().await.unwrap_or_default();
-        let message = bing_error_message(&body, api_key);
+        let message = bing_error_message(&body, credential.secret());
         tracing::warn!(%status, method, message, "Bing Webmaster request rejected");
         return Err(ApiError::BadRequest(match message {
             Some(message) => format!("Bing Webmaster Tools rejected the request: {message}"),
-            None => "Bing Webmaster Tools rejected the request. Check the API key.".into(),
+            None => "Bing Webmaster Tools rejected the request. Check the connection.".into(),
         }));
     }
     Ok(response
@@ -3632,6 +3667,185 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
         .d)
 }
 
+#[derive(Deserialize)]
+struct BingTokenResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+}
+
+/// Calls Bing's OAuth token endpoint (authorization code or refresh token grant).
+async fn bing_token_request(
+    state: &AppState,
+    oauth: &BingOAuthConfig,
+    parameters: &[(&str, &str)],
+) -> Result<BingTokenResponse, ApiError> {
+    let mut form = vec![
+        ("client_id", oauth.client_id.as_str()),
+        ("client_secret", oauth.client_secret.as_str()),
+    ];
+    form.extend_from_slice(parameters);
+    let response = state
+        .http
+        .post(bing_token_url(oauth))
+        .form(&form)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error.without_url(), "Bing token request failed");
+            ApiError::Internal
+        })?;
+    if !response.status().is_success() {
+        // The body is not logged: it could echo the code or tokens.
+        tracing::warn!(status = %response.status(), "Bing token request rejected");
+        return Err(ApiError::BadRequest(
+            "Bing did not accept the sign-in. Connect Bing Webmaster Tools again.".into(),
+        ));
+    }
+    response.json().await.map_err(|_| {
+        tracing::warn!("invalid Bing token response");
+        ApiError::Internal
+    })
+}
+
+/// A Bing connection, ready to make API calls.
+struct BingConnection {
+    connection_id: Uuid,
+    site_url: Option<String>,
+    domain: String,
+    oauth: bool,
+    /// The API key, or a fresh OAuth access token.
+    secret: String,
+}
+
+impl BingConnection {
+    fn credential(&self) -> BingCredential<'_> {
+        if self.oauth {
+            BingCredential::Bearer(&self.secret)
+        } else {
+            BingCredential::ApiKey(&self.secret)
+        }
+    }
+}
+
+/// Exchanges a connection's stored refresh token for an access token, saving a rotated refresh
+/// token in the same transaction.
+async fn refresh_bing_token(
+    state: AppState,
+    encryption_key: [u8; 32],
+    client: BingOAuthConfig,
+    site: Uuid,
+    connection_id: Uuid,
+) -> Result<String, ApiError> {
+    // One refresh at a time per site: if Bing rotates refresh tokens, a concurrent exchange of
+    // the same token could invalidate the other or save an older token over a newer one. The
+    // token is re-read under the lock, so a waiting refresh uses the one just saved.
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('bing-refresh:' || $1::uuid::text, 0))",
+    )
+    .bind(site)
+    .execute(&mut *tx)
+    .await?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT api_key_encrypted FROM bing_webmaster_integrations
+         WHERE site_id=$1 AND connection_id=$2",
+    )
+    .bind(site)
+    .bind(connection_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let current = current.ok_or_else(|| {
+        ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or disconnected; try again".into(),
+        )
+    })?;
+    let refresh = decrypt_token(&encryption_key, &current).map_err(|error| {
+        tracing::error!(
+            error,
+            "stored Bing Webmaster credential could not be decrypted"
+        );
+        ApiError::Internal
+    })?;
+    let tokens = bing_token_request(
+        &state,
+        &client,
+        &[("grant_type", "refresh_token"), ("refresh_token", &refresh)],
+    )
+    .await?;
+    if let Some(rotated) = tokens.refresh_token.filter(|token| *token != refresh) {
+        let encrypted = encrypt_token(&encryption_key, &rotated).map_err(|_| ApiError::Internal)?;
+        sqlx::query(
+            "UPDATE bing_webmaster_integrations SET api_key_encrypted=$3,updated_at=now()
+             WHERE site_id=$1 AND connection_id=$2",
+        )
+        .bind(site)
+        .bind(connection_id)
+        .bind(encrypted)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(tokens.access_token)
+}
+
+/// Loads a site's Bing connection, decrypting the API key or exchanging the stored refresh token
+/// for an access token (saving a rotated refresh token for this same connection).
+async fn bing_connection(
+    state: &AppState,
+    config: &BingConfig,
+    site: Uuid,
+) -> Result<BingConnection, ApiError> {
+    let row: Option<(Uuid, Option<String>, String, String, String)> = sqlx::query_as(
+        "SELECT i.connection_id,i.site_url,s.domain,i.auth_kind,i.api_key_encrypted
+         FROM bing_webmaster_integrations i JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&state.pool)
+    .await?;
+    let (connection_id, site_url, domain, auth_kind, encrypted) =
+        row.ok_or_else(|| ApiError::BadRequest("Connect Bing Webmaster Tools first".into()))?;
+    let stored = decrypt_token(&config.encryption_key, &encrypted).map_err(|error| {
+        tracing::error!(
+            error,
+            "stored Bing Webmaster credential could not be decrypted"
+        );
+        ApiError::Internal
+    })?;
+    let oauth = auth_kind == "oauth";
+    let secret = if oauth {
+        let client = config.oauth.as_ref().ok_or_else(|| {
+            ApiError::BadRequest(
+                "Bing sign-in is no longer configured on this deployment; connect with an API key"
+                    .into(),
+            )
+        })?;
+        // Spawned, so a client that disconnects mid-refresh cannot cancel it between Bing
+        // rotating the refresh token and Slimlytics saving the new one.
+        tokio::spawn(refresh_bing_token(
+            state.clone(),
+            config.encryption_key,
+            client.clone(),
+            site,
+            connection_id,
+        ))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Bing token refresh task failed");
+            ApiError::Internal
+        })??
+    } else {
+        stored
+    };
+    Ok(BingConnection {
+        connection_id,
+        site_url,
+        domain,
+        oauth,
+        secret,
+    })
+}
+
 async fn bing_status(
     State(s): State<AppState>,
     CurrentUser(u): CurrentUser,
@@ -3639,9 +3853,15 @@ async fn bing_status(
 ) -> Result<Json<Value>, ApiError> {
     require_site(&s.pool, u, site, false).await?;
     let configured = s.bing.is_some();
-    type BingStatusRow = (Option<String>, Option<DateTime<Utc>>, Option<String>);
+    let oauth = s.bing.as_ref().is_some_and(|config| config.oauth.is_some());
+    type BingStatusRow = (
+        Option<String>,
+        Option<DateTime<Utc>>,
+        Option<String>,
+        String,
+    );
     let row: Option<BingStatusRow> = sqlx::query_as(
-        "SELECT site_url,last_synced_at,last_error
+        "SELECT site_url,last_synced_at,last_error,auth_kind
          FROM bing_webmaster_integrations WHERE site_id=$1",
     )
     .bind(site)
@@ -3649,10 +3869,10 @@ async fn bing_status(
     .await?;
     Ok(Json(match row {
         Some(row) => json!({
-            "configured":configured,"connected":true,"siteUrl":row.0,
-            "lastSyncedAt":row.1,"lastError":row.2
+            "configured":configured,"oauthConfigured":oauth,"connected":true,"siteUrl":row.0,
+            "lastSyncedAt":row.1,"lastError":row.2,"authKind":row.3
         }),
-        None => json!({"configured":configured,"connected":false}),
+        None => json!({"configured":configured,"oauthConfigured":oauth,"connected":false}),
     }))
 }
 
@@ -3673,7 +3893,29 @@ async fn connect_bing(
             "Enter a Bing Webmaster API key".into(),
         ));
     }
-    let sites: Vec<BingSite> = bing_request(&s, config, "GetUserSites", api_key, None).await?;
+    let sites: Vec<BingSite> = bing_request(
+        &s,
+        config,
+        "GetUserSites",
+        &BingCredential::ApiKey(api_key),
+        None,
+        None,
+    )
+    .await?;
+    save_bing_connection(&s, config, site, u, "api_key", api_key, sites).await
+}
+
+/// Stores a checked Bing credential (an API key or OAuth refresh token) as the site's connection,
+/// matched to the verified Bing site for its domain. Every connect starts a new connection.
+async fn save_bing_connection(
+    s: &AppState,
+    config: &BingConfig,
+    site: Uuid,
+    user: Uuid,
+    auth_kind: &str,
+    credential: &str,
+    sites: Vec<BingSite>,
+) -> Result<Json<Value>, ApiError> {
     let domain: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1")
         .bind(site)
         .fetch_one(&s.pool)
@@ -3684,10 +3926,10 @@ async fn connect_bing(
         .collect();
     let site_url = matching_site_url(&domain, &sites);
     let error = site_url.is_none().then(|| {
-        format!("No verified Bing Webmaster site matches {domain}. Add and verify it in Bing Webmaster Tools, then connect again.")
+        format!("No verified Bing Webmaster site matches {domain}. Add it to Bing below, or add and verify it in Bing Webmaster Tools and connect again.")
     });
     let encrypted =
-        encrypt_token(&config.encryption_key, api_key).map_err(|_| ApiError::Internal)?;
+        encrypt_token(&config.encryption_key, credential).map_err(|_| ApiError::Internal)?;
     // The integration row is written first so its lock orders this against a running sync.
     let mut tx = s.pool.begin().await?;
     // The match is only valid for the domain it was made against.
@@ -3703,30 +3945,286 @@ async fn connect_bing(
     }
     sqlx::query(
         "INSERT INTO bing_webmaster_integrations(
-           site_id,site_url,api_key_encrypted,connected_by,last_error
-         ) VALUES($1,$2,$3,$4,$5)
+           site_id,site_url,api_key_encrypted,connected_by,last_error,auth_kind
+         ) VALUES($1,$2,$3,$4,$5,$6)
          ON CONFLICT(site_id) DO UPDATE SET
            site_url=EXCLUDED.site_url,api_key_encrypted=EXCLUDED.api_key_encrypted,
            connected_by=EXCLUDED.connected_by,last_error=EXCLUDED.last_error,
+           auth_kind=EXCLUDED.auth_kind,connection_id=gen_random_uuid(),
            last_synced_at=NULL,updated_at=now()",
     )
     .bind(site)
     .bind(&site_url)
     .bind(encrypted)
-    .bind(u)
+    .bind(user)
     .bind(error.as_deref())
+    .bind(auth_kind)
     .execute(&mut *tx)
     .await?;
-    // A different key or site makes earlier cached metrics another account's data.
+    // A different credential or site makes earlier cached metrics another account's data.
     sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
         .bind(site)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
     Ok(Json(json!({
-        "configured":true,"connected":true,"siteUrl":site_url,
-        "lastSyncedAt":null,"lastError":error
+        "configured":true,"oauthConfigured":config.oauth.is_some(),"connected":true,
+        "siteUrl":site_url,"lastSyncedAt":null,"lastError":error,"authKind":auth_kind
     })))
+}
+
+/// Starts a Bing sign-in for the site. Bing does not document returning `state`, so the browser
+/// keeps it and hands it back with the code to `complete_bing_oauth`, which checks it.
+async fn start_bing_oauth(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let oauth = bing_config(&s)?
+        .oauth
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("Bing sign-in is not configured".into()))?;
+    let state = oauth_state();
+    // Kept server-side: the browser never sees the verifier, so a code issued for this attempt
+    // can only be redeemed by it.
+    let verifier = oauth_state();
+    sqlx::query(
+        "INSERT INTO oauth_states(state_hash,user_id,site_id,expires_at,provider,code_verifier)
+         VALUES($1,$2,$3,now()+interval '10 minutes','bing',$4)",
+    )
+    .bind(state_hash(&state))
+    .bind(u)
+    .bind(site)
+    .bind(&verifier)
+    .execute(&s.pool)
+    .await?;
+    Ok(Json(json!({
+        "authorizationUrl":bing_authorization_url(oauth,&state,&pkce_challenge(&verifier)),
+        "state":state
+    })))
+}
+
+#[derive(Deserialize)]
+struct BingOAuthComplete {
+    code: String,
+    state: String,
+}
+
+/// Finishes a Bing sign-in: the state must be one this user started for this site, and the
+/// code is exchanged for a refresh token that becomes the site's connection.
+#[axum::debug_handler]
+async fn complete_bing_oauth(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+    Json(body): Json<BingOAuthComplete>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let config = bing_config(&s)?;
+    let oauth = config
+        .oauth
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("Bing sign-in is not configured".into()))?;
+    let verifier: Option<String> = sqlx::query_scalar(
+        "DELETE FROM oauth_states WHERE state_hash=$1 AND user_id=$2 AND site_id=$3
+           AND provider='bing' AND expires_at>now() AND code_verifier IS NOT NULL
+         RETURNING code_verifier",
+    )
+    .bind(state_hash(&body.state))
+    .bind(u)
+    .bind(site)
+    .fetch_optional(&s.pool)
+    .await?;
+    let verifier = verifier.ok_or_else(|| {
+        ApiError::BadRequest("This Bing sign-in expired or was already used. Connect again.".into())
+    })?;
+    let tokens = bing_token_request(
+        &s,
+        oauth,
+        &[
+            ("grant_type", "authorization_code"),
+            ("code", &body.code),
+            ("redirect_uri", &oauth.redirect_uri),
+            ("code_verifier", &verifier),
+        ],
+    )
+    .await?;
+    let refresh_token = tokens.refresh_token.ok_or_else(|| {
+        ApiError::BadRequest("Bing did not grant ongoing access. Connect again.".into())
+    })?;
+    let sites: Vec<BingSite> = bing_request(
+        &s,
+        config,
+        "GetUserSites",
+        &BingCredential::Bearer(&tokens.access_token),
+        None,
+        None,
+    )
+    .await?;
+    save_bing_connection(&s, config, site, u, "oauth", &refresh_token, sites).await
+}
+
+/// Adds the site's domain to the connected Bing account and returns what to publish to verify it.
+#[axum::debug_handler]
+async fn add_bing_site(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let config = bing_config(&s)?;
+    let connection = bing_connection(&s, config, site).await?;
+    let site_url = site_url_for(&connection.domain);
+    let credential = connection.credential();
+    // AddSite is a no-op for a site already in the account.
+    bing_request::<Value>(
+        &s,
+        config,
+        "AddSite",
+        &credential,
+        None,
+        Some(json!({"siteUrl":site_url})),
+    )
+    .await?;
+    let sites: Vec<BingSite> =
+        bing_request(&s, config, "GetUserSites", &credential, None, None).await?;
+    let entry = sites
+        .iter()
+        .find(|entry| same_site_url(&entry.url, &site_url))
+        .ok_or_else(|| {
+            ApiError::BadRequest("Bing added the site but did not list it; try again".into())
+        })?;
+    // A site Bing already has verified needs no records; it is attached below.
+    let codes = match (&entry.authentication_code, &entry.dns_verification_code) {
+        _ if entry.is_verified => None,
+        (Some(code), Some(dns_code)) => Some((code, dns_code)),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "Bing did not provide verification codes for the site".into(),
+            ))
+        }
+    };
+    // The records are only good for the connection and domain they were issued for; site, then
+    // connection, the lock order connect, sync, and domain changes use.
+    let mut tx = s.pool.begin().await?;
+    let domain: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+        .bind(site)
+        .fetch_one(&mut *tx)
+        .await?;
+    let current: Option<Uuid> = sqlx::query_scalar(
+        "SELECT connection_id FROM bing_webmaster_integrations WHERE site_id=$1 FOR UPDATE",
+    )
+    .bind(site)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if domain != connection.domain || current != Some(connection.connection_id) {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or the site changed while adding it; try again"
+                .into(),
+        ));
+    }
+    let Some((code, dns_code)) = codes else {
+        sqlx::query(
+            "UPDATE bing_webmaster_integrations
+             SET site_url=$2,last_error=NULL,last_synced_at=NULL,updated_at=now()
+             WHERE site_id=$1",
+        )
+        .bind(site)
+        .bind(&entry.url)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+            .bind(site)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"siteUrl":entry.url,"verified":true})));
+    };
+    sqlx::query(
+        "UPDATE bing_webmaster_integrations
+         SET last_error='Publish one of the verification records, then verify the site',
+             updated_at=now()
+         WHERE site_id=$1 AND site_url IS NULL",
+    )
+    .bind(site)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    let mut response = verification_methods(&connection.domain, code, dns_code);
+    response["siteUrl"] = json!(entry.url);
+    response["verified"] = json!(false);
+    Ok(Json(response))
+}
+
+/// Asks Bing to verify the added site, then matches the connection to it.
+#[axum::debug_handler]
+async fn verify_bing_site(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, true).await?;
+    let config = bing_config(&s)?;
+    let connection = bing_connection(&s, config, site).await?;
+    let credential = connection.credential();
+    let site_url = site_url_for(&connection.domain);
+    let verified: bool = bing_request(
+        &s,
+        config,
+        "VerifySite",
+        &credential,
+        None,
+        Some(json!({"siteUrl":site_url})),
+    )
+    .await?;
+    if !verified {
+        return Err(ApiError::BadRequest(
+            "Bing could not find the verification record yet. DNS changes can take a while to appear; try again shortly.".into(),
+        ));
+    }
+    let sites: Vec<BingSite> =
+        bing_request(&s, config, "GetUserSites", &credential, None, None).await?;
+    // Save the property that was just verified, not some other verified variant of the domain.
+    let matched = sites
+        .into_iter()
+        .find(|entry| entry.is_verified && same_site_url(&entry.url, &site_url))
+        .map(|entry| entry.url)
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "Bing verified the site but does not list it as verified yet; try again shortly"
+                    .into(),
+            )
+        })?;
+    // Site, then connection: the lock order connect, sync, and domain changes use. Only the
+    // connection that was verified, for the domain it was verified against, takes the match.
+    let mut tx = s.pool.begin().await?;
+    let domain: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+        .bind(site)
+        .fetch_one(&mut *tx)
+        .await?;
+    let updated = sqlx::query(
+        "UPDATE bing_webmaster_integrations
+         SET site_url=$3,last_error=NULL,last_synced_at=NULL,updated_at=now()
+         WHERE site_id=$1 AND connection_id=$2",
+    )
+    .bind(site)
+    .bind(connection.connection_id)
+    .bind(&matched)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if domain != connection.domain || updated == 0 {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or the site changed during verification; verify again".into(),
+        ));
+    }
+    sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({"siteUrl":matched,"verified":true})))
 }
 
 async fn disconnect_bing(
@@ -3760,26 +4258,33 @@ async fn sync_bing(
     let config = bing_config(&s)?;
     // Claim a sync generation up front so an older sync that finishes last cannot replace the
     // results of a newer one.
-    let integration: Option<(Option<String>, String, i64)> = sqlx::query_as(
+    let claimed: Option<(i64, Uuid)> = sqlx::query_as(
         "UPDATE bing_webmaster_integrations SET sync_generation=sync_generation+1
-         WHERE site_id=$1 RETURNING site_url,api_key_encrypted,sync_generation",
+         WHERE site_id=$1 RETURNING sync_generation,connection_id",
     )
     .bind(site)
     .fetch_optional(&s.pool)
     .await?;
-    let (site_url, encrypted, generation) = integration.ok_or(ApiError::NotFound)?;
-    let site_url =
-        site_url.ok_or_else(|| ApiError::BadRequest("No matching Bing Webmaster site".into()))?;
-    let api_key = decrypt_token(&config.encryption_key, &encrypted).map_err(|error| {
-        tracing::error!(error, "stored Bing Webmaster key could not be decrypted");
-        ApiError::Internal
-    })?;
-    let key = api_key.as_str();
+    let (generation, claimed_connection) = claimed.ok_or(ApiError::NotFound)?;
+    let connection = bing_connection(&s, config, site).await?;
+    // The generation belongs to the connection that claimed it; a reconnect since then starts
+    // its own count, so this sync must not run against (or save into) the new connection.
+    if connection.connection_id != claimed_connection {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected during sync; sync again".into(),
+        ));
+    }
+    let site_url = connection
+        .site_url
+        .clone()
+        .ok_or_else(|| ApiError::BadRequest("No matching Bing Webmaster site".into()))?;
+    let credential = connection.credential();
+    let key = &credential;
     let url = Some(site_url.as_str());
     let (queries, pages, traffic) = tokio::try_join!(
-        bing_request::<BingStatsRow>(&s, config, "GetQueryStats", key, url),
-        bing_request::<BingStatsRow>(&s, config, "GetPageStats", key, url),
-        bing_request::<BingTrafficRow>(&s, config, "GetRankAndTrafficStats", key, url),
+        bing_request::<Vec<BingStatsRow>>(&s, config, "GetQueryStats", key, url, None),
+        bing_request::<Vec<BingStatsRow>>(&s, config, "GetPageStats", key, url, None),
+        bing_request::<Vec<BingTrafficRow>>(&s, config, "GetRankAndTrafficStats", key, url, None),
     )?;
     // An unreadable date means Bing's format changed; fail rather than replace the cache with less.
     let bucket = |value: &str| {
@@ -3831,19 +4336,21 @@ async fn sync_bing(
         .await?;
     // Locking the connection orders this against connect and disconnect, and a key that changed
     // (or a disconnect) while Bing was answering means these results belong to no connection.
-    let current: Option<(String, Option<String>, i64)> = sqlx::query_as(
-        "SELECT api_key_encrypted,site_url,sync_generation FROM bing_webmaster_integrations
+    let current: Option<(Uuid, Option<String>, i64)> = sqlx::query_as(
+        "SELECT connection_id,site_url,sync_generation FROM bing_webmaster_integrations
          WHERE site_id=$1 FOR UPDATE",
     )
     .bind(site)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((current_key, current_url, current_generation)) = current else {
+    let Some((current_connection, current_url, current_generation)) = current else {
         return Err(ApiError::BadRequest(
             "Bing Webmaster Tools was disconnected during sync".into(),
         ));
     };
-    if current_key != encrypted || current_url.as_deref() != Some(site_url.as_str()) {
+    if current_connection != connection.connection_id
+        || current_url.as_deref() != Some(site_url.as_str())
+    {
         return Err(ApiError::BadRequest(
             "Bing Webmaster Tools was reconnected or the site domain changed during sync; sync again".into(),
         ));

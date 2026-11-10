@@ -62,6 +62,7 @@
     type BingDimension,
     type BingRow,
     type BingStatus,
+    type BingSiteSetup,
     type SearchConsoleDimension,
     type SearchConsoleProperty,
     type SearchConsoleRow,
@@ -214,12 +215,25 @@
   const bingBusy = $derived(Boolean(site && bingPending[site.id]));
   const setBingPending = (id: string, pending: boolean) => (bingPending = { ...bingPending, [id]: pending });
   let bingNotice = $state('');
+  // The verification records for a site just added to Bing; cleared when the site changes.
+  let bingSiteSetup = $state<Extract<BingSiteSetup, { verified: false }> | null>(null);
+  // Shown only while it still matches the site's domain: records for an old domain can't verify the new one.
+  const bingSetup = $derived(
+    bingSiteSetup && site &&
+      bingSiteSetup.siteUrl.replace(/\/+$/, '').toLowerCase() === `https://${site.domain.toLowerCase()}`
+      ? bingSiteSetup
+      : null
+  );
+  /** Where a Bing sign-in keeps its state across the redirect (Bing may not return it). */
+  const bingOAuthKey = 'slimlytics:bing-oauth';
   // Bumped by each Bing load and change, so an older load never overwrites a newer result.
   const bingGenerations: Record<string, number> = {};
   const bumpBing = (id: string) => (bingGenerations[id] = (bingGenerations[id] ?? 0) + 1);
   /** Ends a connect or disconnect: loads of that site that overlapped it are discarded, so reload. */
   function finishBingChange(id: string) {
     bumpBing(id);
+    // Verification records belong to the connection that added the site.
+    if (site?.id === id) bingSiteSetup = null;
     // The server drops a site's metrics on connect and disconnect, so its cached reports are stale.
     bingReportsByKey = Object.fromEntries(
       Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
@@ -323,6 +337,9 @@
     menuOpen = false;
     error = routeNotice;
     routeNotice = '';
+    if (!siteId && (page.url.searchParams.has('code') || page.url.searchParams.has('error'))) {
+      if (await finishBingOAuth()) return;
+    }
     if (!siteId) {
       // Search Console's OAuth callback returns to /app?site={id}; send it to that site's settings.
       const returning = page.url.searchParams.get('site');
@@ -640,6 +657,7 @@
         searchConsoleNotice = '';
         bingNotice = '';
         bingApiKey = '';
+        bingSiteSetup = null;
         bingOp++;
         searchConsoleSetupSite = site.id;
       }
@@ -858,6 +876,130 @@
     const generation = bingGenerations[id];
     const status = await api.bingStatus(id);
     if (generation === bingGenerations[id]) setBing(id, status);
+  }
+  /** Sends the browser to Bing's sign-in; it returns to /app with a code. */
+  async function signInToBing() {
+    if (!site || bingPending[site.id]) return;
+    const id = site.id;
+    bingNotice = '';
+    // Pending until the browser leaves for Bing, so a second click cannot start a competing sign-in.
+    setBingPending(id, true);
+    try {
+      const { authorizationUrl, state } = await api.startBingOAuth(id);
+      try {
+        sessionStorage.setItem(bingOAuthKey, JSON.stringify({ siteId: id, state }));
+      } catch {
+        bingNotice = 'Bing sign-in needs browser storage; allow it for this site, or use an API key.';
+        setBingPending(id, false);
+        return;
+      }
+      location.assign(authorizationUrl);
+    } catch (reason) {
+      setBingPending(id, false);
+      if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not start the Bing sign-in.';
+    }
+  }
+  /**
+   * Finishes a Bing sign-in that returned to /app. Returns false when the code is not ours (no
+   * pending Bing sign-in in this tab), leaving the URL to the other handlers.
+   */
+  async function finishBingOAuth(): Promise<boolean> {
+    let pending: { siteId: string; state: string } | null = null;
+    try {
+      pending = JSON.parse(sessionStorage.getItem(bingOAuthKey) ?? 'null');
+      sessionStorage.removeItem(bingOAuthKey);
+    } catch { /* storage unavailable */ }
+    if (!pending?.siteId || !pending.state) return false;
+    const params = page.url.searchParams;
+    const code = params.get('code');
+    const returned = params.get('state');
+    let notice: string;
+    if (!code) {
+      notice = params.get('error') === 'access_denied' ? 'Bing sign-in was cancelled.' : 'Bing sign-in failed. Try again.';
+    } else if (returned !== null && returned !== pending.state) {
+      // Bing does not document echoing state, so a callback without it is completed with this
+      // tab's stored state; the server's single-use state and PKCE verifier bind the code to the
+      // attempt. A state that is present must match, though.
+      notice = 'That Bing sign-in did not match the one started here. Try again.';
+    } else {
+      setBingPending(pending.siteId, true);
+      try {
+        const status = await api.completeBingOAuth(pending.siteId, code, pending.state);
+        setBing(pending.siteId, status);
+        notice = status.siteUrl
+          ? 'Connected to Bing. Use Sync now to load search data.'
+          : `Connected to Bing. ${site?.domain ?? 'This site'} isn’t in your Bing account yet; add it below.`;
+      } catch (reason) {
+        notice = reason instanceof Error ? reason.message : 'Could not finish the Bing sign-in.';
+      } finally {
+        setBingPending(pending.siteId, false);
+        bumpBing(pending.siteId);
+      }
+    }
+    // Keep the notice through the settings load, which clears notices for a newly shown site.
+    searchConsoleSetupSite = pending.siteId;
+    bingSiteSetup = null;
+    bingNotice = notice;
+    await goto(appHref(pending.siteId, 'settings', range), { replaceState: true });
+    return true;
+  }
+  async function addBingSite() {
+    if (!site || bingPending[site.id]) return;
+    const id = site.id;
+    const version = bingVersions[id];
+    setBingPending(id, true);
+    bingNotice = '';
+    try {
+      const setup = await api.addBingSite(id);
+      // Records from before a reconnect or disconnect belong to the old connection.
+      if (site?.id !== id || bingVersions[id] !== version) return;
+      if (!setup.verified) {
+        bingSiteSetup = setup;
+        return;
+      }
+      // Bing already had it verified, so the connection is matched: load its data.
+      finishBingChange(id);
+      bingNotice = 'Already verified in Bing. Syncing search data…';
+      try {
+        await api.syncBing(id);
+        await bingSynced(id);
+        if (site?.id === id) bingNotice = 'Connected and synced.';
+      } catch (reason) {
+        if (site?.id === id)
+          bingNotice = `Connected, but the first sync failed: ${reason instanceof Error ? reason.message : 'unknown error'}. Try Sync now.`;
+      }
+    } catch (reason) {
+      if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not add the site to Bing.';
+    } finally {
+      setBingPending(id, false);
+    }
+  }
+  async function verifyBingSite() {
+    if (!site || bingPending[site.id]) return;
+    const id = site.id;
+    setBingPending(id, true);
+    bingNotice = '';
+    try {
+      try {
+        await api.verifyBingSite(id);
+      } catch (reason) {
+        if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not verify the site.';
+        return;
+      }
+      // The connection now has its Bing site: reload its status (a failed verify keeps the records).
+      finishBingChange(id);
+      if (site?.id === id) bingNotice = 'Verified. Syncing search data…';
+      try {
+        await api.syncBing(id);
+        await bingSynced(id);
+        if (site?.id === id) bingNotice = 'Verified and synced. New sites can take a couple of days to show data in Bing.';
+      } catch (reason) {
+        if (site?.id === id)
+          bingNotice = `Verified, but the first sync failed: ${reason instanceof Error ? reason.message : 'unknown error'}. Try Sync now.`;
+      }
+    } finally {
+      setBingPending(id, false);
+    }
   }
   async function connectBing(event: SubmitEvent) {
     event.preventDefault();
@@ -1676,16 +1818,56 @@
                     <div><dt>Status</dt><dd>{bing.lastError}</dd></div>
                   {/if}
                 </dl>
+              {:else if bing.oauthConfigured}
+                <p class="muted">
+                  Bing data also covers DuckDuckGo, Yahoo, and Ecosia. Sign in with the Microsoft account
+                  you use for Bing Webmaster Tools; if {site.domain} isn’t in Bing yet, Slimlytics can add
+                  and verify it for you.
+                </p>
               {:else}
                 <p class="muted">
                   Bing data also covers DuckDuckGo, Yahoo, and Ecosia. In
                   <a href="https://www.bing.com/webmasters" target="_blank" rel="noopener noreferrer">Bing Webmaster Tools</a>,
-                  add and verify {site.domain} (you can import it from Google Search Console), then open
-                  Settings → API access, generate an API key, and paste it here.
+                  open Settings → API access, generate an API key, and paste it here. One key works for
+                  every site in your Bing account, and Slimlytics can add and verify {site.domain} for you.
                 </p>
               {/if}
-              <!-- Always offered, so a revoked or rotated key can be replaced without disconnecting. -->
-              {#if bing}
+              {#if bing.connected && !bing.siteUrl}
+                {#if bingSetup}
+                  <p class="muted">
+                    Added <code>{bingSetup.siteUrl}</code> to Bing. Publish one of these, then verify.
+                    The DNS record is usually easiest; DNS changes can take a few minutes to appear.
+                  </p>
+                  <dl aria-label="Bing DNS verification record">
+                    <div><dt>Type</dt><dd><code>{bingSetup.dnsRecord.type}</code></dd></div>
+                    <div><dt>Name</dt><dd><code>{bingSetup.dnsRecord.name}</code></dd></div>
+                    <div><dt>Full name</dt><dd><code>{bingSetup.dnsRecord.fqdn}</code></dd></div>
+                    <div><dt>Value</dt><dd><code>{bingSetup.dnsRecord.value}</code></dd></div>
+                  </dl>
+                  <details>
+                    <summary>Or use a meta tag or file</summary>
+                    <p class="muted">Add this tag to the <code>&lt;head&gt;</code> of your home page:</p>
+                    <pre>{bingSetup.metaTag}</pre>
+                    <p class="muted">Or serve this at <code>{bingSetup.xmlFile.path}</code>:</p>
+                    <pre>{bingSetup.xmlFile.content}</pre>
+                  </details>
+                {:else}
+                  <p class="muted">Slimlytics can add {site.domain} to your Bing account and verify it for you.</p>
+                {/if}
+                <div class="test-links">
+                  {#if bingSetup}
+                    <button class="primary" disabled={bingBusy} onclick={() => void verifyBingSite()}
+                      >{bingBusy ? 'Checking…' : 'Verify'}</button
+                    >
+                  {:else}
+                    <button class="primary" disabled={bingBusy} onclick={() => void addBingSite()}
+                      >{bingBusy ? 'Adding…' : 'Add to Bing'}</button
+                    >
+                  {/if}
+                </div>
+              {/if}
+              <!-- The key form is always offered, so a revoked or rotated key can be replaced without disconnecting. -->
+              {#snippet bingKeyForm()}
                 <form class="test-links" onsubmit={(event) => void connectBing(event)}>
                   <input
                     type="password"
@@ -1698,6 +1880,19 @@
                     >{bingBusy ? 'Connecting…' : bing.siteUrl ? 'Replace key' : bing.connected ? 'Reconnect' : 'Connect'}</button
                   >
                 </form>
+              {/snippet}
+              {#if bing.oauthConfigured}
+                <div class="test-links">
+                  <button class={bing.connected ? 'secondary' : 'primary'} disabled={bingBusy} onclick={() => void signInToBing()}
+                    >{bing.connected ? 'Reconnect with Bing' : 'Connect with Bing'}</button
+                  >
+                </div>
+                <details>
+                  <summary>Use an API key instead</summary>
+                  {@render bingKeyForm()}
+                </details>
+              {:else}
+                {@render bingKeyForm()}
               {/if}
               {#if bingNotice}<p class="muted" role="status">{bingNotice}</p>{/if}
               {#if bing.connected}

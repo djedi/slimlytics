@@ -4046,7 +4046,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Configuration, connection, matched Bing site, and sync status"
+            "description": "Configuration (including whether Bing sign-in is available), connection and its kind (API key or OAuth), matched Bing site, and sync status"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -4159,6 +4159,171 @@
         "responses": {
           "200": {
             "description": "Sync result and cached row count"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/sites/{siteId}/integrations/bing/oauth": {
+      "post": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Start a Bing Webmaster Tools sign-in",
+        "description": "Available when the deployment has a Bing OAuth client. Returns Bing's authorization URL and a single-use state, valid for ten minutes, that the client keeps and returns with the authorization code.",
+        "operationId": "startBingOAuth",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorization URL and state"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/sites/{siteId}/integrations/bing/oauth/complete": {
+      "post": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Finish a Bing Webmaster Tools sign-in",
+        "description": "Exchanges the authorization code for a refresh token, stores it encrypted, and matches a verified Bing site to the site's domain. The state must be one this user started for this site. Replaces any earlier connection and its cached metrics.",
+        "operationId": "completeBingOAuth",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "state"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "description": "Authorization code Bing returned"
+                  },
+                  "state": {
+                    "type": "string",
+                    "description": "State returned by startBingOAuth"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connection status"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/sites/{siteId}/integrations/bing/site": {
+      "post": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Add the site to the connected Bing account",
+        "description": "Adds https://{domain}/ to Bing Webmaster Tools (a no-op if it is already there) and returns what to publish to verify it: a DNS CNAME record (name relative to the domain, and the absolute name), a msvalidate.01 meta tag, or a BingSiteAuth.xml file. If Bing already has the site verified, the connection is matched to it and the response is just the site URL with verified true.",
+        "operationId": "addBingSite",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bing site URL, verification state, and verification methods"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/sites/{siteId}/integrations/bing/site/verify": {
+      "post": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Verify the site in Bing",
+        "description": "Asks Bing to verify the added site and, once verified, matches the connection to it. Fails with 400 while Bing cannot find a verification record yet.",
+        "operationId": "verifyBingSite",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matched Bing site URL"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
