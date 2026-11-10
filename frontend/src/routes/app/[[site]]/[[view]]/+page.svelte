@@ -849,6 +849,8 @@
   }
   /** Drops a site's cached Bing reports after a sync and reloads the one on screen. */
   async function bingSynced(id: string) {
+    // Loads that started before the sync finished must not repopulate the cache with old reports.
+    bumpBing(id);
     bingReportsByKey = Object.fromEntries(
       Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
     );
@@ -893,6 +895,7 @@
     const id = site.id;
     loading = true;
     error = '';
+    bingNotice = '';
     try {
       await api.syncBing(id);
       await bingSynced(id);
