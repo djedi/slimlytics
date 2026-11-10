@@ -979,6 +979,8 @@
       if (await verify()) return;
       if (site?.id !== id || !active()) return;
     }
+    // A verify the user started is still running; it reports its own outcome.
+    if (busy() || site?.id !== id || !active()) return;
     say(`Porkbun has the record, but ${provider} can’t see it yet. DNS can take a while; click Verify in a few minutes.`);
   }
   async function addBingSite() {
