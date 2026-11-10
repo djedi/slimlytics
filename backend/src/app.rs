@@ -4135,15 +4135,17 @@ async fn verify_bing_site(
     }
     let sites: Vec<BingSite> =
         bing_request(&s, config, "GetUserSites", &credential, None, None).await?;
-    let sites: Vec<(String, bool)> = sites
+    // Save the property that was just verified, not some other verified variant of the domain.
+    let matched = sites
         .into_iter()
-        .map(|entry| (entry.url, entry.is_verified))
-        .collect();
-    let matched = matching_site_url(&connection.domain, &sites).ok_or_else(|| {
-        ApiError::BadRequest(
-            "Bing verified the site but does not list it as verified yet; try again shortly".into(),
-        )
-    })?;
+        .find(|entry| entry.is_verified && same_site_url(&entry.url, &site_url))
+        .map(|entry| entry.url)
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "Bing verified the site but does not list it as verified yet; try again shortly"
+                    .into(),
+            )
+        })?;
     // Site, then connection: the lock order connect, sync, and domain changes use. Only the
     // connection that was verified, for the domain it was verified against, takes the match.
     let mut tx = s.pool.begin().await?;
