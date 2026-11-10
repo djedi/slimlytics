@@ -3614,7 +3614,11 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
             .text()
             .await
             .unwrap_or_default()
-            .replace(api_key, "[redacted]");
+            .replace(api_key, "[redacted]")
+            .replace(
+                &url::form_urlencoded::byte_serialize(api_key.as_bytes()).collect::<String>(),
+                "[redacted]",
+            );
         tracing::warn!(%status, method, body, "Bing Webmaster request rejected");
         let message = serde_json::from_str::<Value>(&body)
             .ok()
@@ -3898,6 +3902,10 @@ async fn bing_rows(
     dimension: &str,
     limit: i64,
 ) -> Result<Vec<Value>, ApiError> {
+    // Shared by REST and MCP, so both get the same range check (and never a negative LIMIT).
+    if to < from || (to - from).num_days() > 366 {
+        return Err(ApiError::BadRequest("invalid date range".into()));
+    }
     let (kind, column, order) = match dimension {
         "query" => ("query", "value", "sum(clicks) DESC, sum(impressions) DESC"),
         "page" => ("page", "value", "sum(clicks) DESC, sum(impressions) DESC"),
