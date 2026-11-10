@@ -1,6 +1,7 @@
 use chrono::NaiveDate;
 use slimlytics_backend::bing_webmaster::{
-    api_url, matching_site_url, merge_metrics, parse_date, position, Metric,
+    api_url, matching_site_url, merge_metrics, parse_date, position, report_value, Metric,
+    MAX_VALUE_BYTES,
 };
 
 #[test]
@@ -415,4 +416,25 @@ mod flow {
         let (_, rows) = send(&router, report("query")).await;
         assert_eq!(rows, json!([]));
     }
+}
+
+#[test]
+fn page_values_drop_query_strings_and_fragments() {
+    assert_eq!(
+        report_value(
+            "page",
+            "https://example.com/reset?token=secret&email=a@b.c#top"
+        ),
+        "https://example.com/reset"
+    );
+    assert_eq!(report_value("page", "not a url?token=secret"), "not a url");
+    assert_eq!(report_value("query", "what is a?b"), "what is a?b");
+}
+
+#[test]
+fn values_are_bounded_on_a_char_boundary() {
+    let long = "é".repeat(MAX_VALUE_BYTES);
+    let value = report_value("query", &long);
+    assert!(value.len() <= MAX_VALUE_BYTES);
+    assert!(value.chars().all(|c| c == 'é'));
 }

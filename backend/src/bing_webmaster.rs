@@ -81,6 +81,30 @@ pub fn parse_date(value: &str) -> Option<NaiveDate> {
     )
 }
 
+/// Longest query or page value cached, in bytes. The value is part of the metrics primary key, and
+/// PostgreSQL rejects B-tree entries over roughly 2.7 KB, so one huge value would fail a sync.
+pub const MAX_VALUE_BYTES: usize = 1024;
+
+/// The value cached for a Bing query or page row. Page URLs lose their query string and fragment,
+/// like every other URL Slimlytics stores, and every value is cut to `MAX_VALUE_BYTES`. Rows that
+/// end up equal are merged by `merge_metrics`.
+pub fn report_value(kind: &str, raw: &str) -> String {
+    let mut value = if kind == "page" {
+        crate::privacy::sanitize_url(raw)
+            .unwrap_or_else(|_| raw.split(['?', '#']).next().unwrap_or_default().to_owned())
+    } else {
+        raw.to_owned()
+    };
+    if value.len() > MAX_VALUE_BYTES {
+        let mut end = MAX_VALUE_BYTES;
+        while !value.is_char_boundary(end) {
+            end -= 1;
+        }
+        value.truncate(end);
+    }
+    value
+}
+
 /// Bing reports a position of -1 or 0 when a row has no ranking; those carry no position.
 pub fn position(value: f64) -> Option<f64> {
     (value > 0.0).then_some(value)

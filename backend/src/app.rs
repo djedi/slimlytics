@@ -17,7 +17,7 @@ use crate::{
         issue_session_token, verify_password, verify_token,
     },
     bing_webmaster::{
-        api_url, matching_site_url, merge_metrics, parse_date, position, BingConfig,
+        api_url, matching_site_url, merge_metrics, parse_date, position, report_value, BingConfig,
         Metric as BingMetric,
     },
     briefs::{build_marketing_brief, deliver_report},
@@ -3783,7 +3783,7 @@ async fn sync_bing(
                 rows.push(BingMetric {
                     kind,
                     date,
-                    value: row.query.clone(),
+                    value: report_value(kind, &row.query),
                     clicks: row.clicks,
                     impressions: row.impressions,
                     position: position(row.avg_impression_position),
