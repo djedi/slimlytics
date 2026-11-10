@@ -220,6 +220,10 @@
   /** Ends a connect or disconnect: loads of that site that overlapped it are discarded, so reload. */
   function finishBingChange(id: string) {
     bumpBing(id);
+    // The server drops a site's metrics on connect and disconnect, so its cached reports are stale.
+    bingReportsByKey = Object.fromEntries(
+      Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
+    );
     if (site?.id === id && (view === 'bing' || view === 'settings')) void refreshViewQuietly().catch(() => {});
   }
   // Bumped by each connect and disconnect; only the latest, on the still-selected site, may touch

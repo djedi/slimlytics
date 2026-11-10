@@ -3556,7 +3556,7 @@ struct BingConnectRequest {
 
 #[derive(Deserialize)]
 struct BingResponse<T> {
-    #[serde(default = "Vec::new")]
+    // Required: a success without `d` is malformed and must not wipe the cache as "no data".
     d: Vec<T>,
 }
 
@@ -3887,6 +3887,12 @@ async fn bing_rows(
         "page" => ("page", "value", "sum(clicks) DESC, sum(impressions) DESC"),
         "date" => ("total", "metric_date::text", "1"),
         _ => return Err(ApiError::BadRequest("invalid dimension".into())),
+    };
+    // Daily totals have one row per day, so return the whole range rather than truncating it.
+    let limit = if kind == "total" {
+        (to - from).num_days() + 1
+    } else {
+        limit
     };
     let sql = format!(
         "SELECT {column},sum(clicks)::float8,sum(impressions)::float8,

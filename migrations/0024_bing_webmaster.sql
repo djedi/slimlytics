@@ -14,7 +14,8 @@ CREATE TABLE bing_webmaster_integrations (
 -- Bing reports queries and pages separately, each in its own (roughly weekly) date buckets, and
 -- site totals by day; `kind` keeps the three series apart so they are never summed together.
 CREATE TABLE bing_webmaster_metrics (
-  site_id uuid NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  -- Tied to the connection, so metrics go whenever it does (disconnect, or its user deleted).
+  site_id uuid NOT NULL REFERENCES bing_webmaster_integrations(site_id) ON DELETE CASCADE,
   metric_date date NOT NULL,
   kind text NOT NULL CHECK (kind IN ('query','page','total')),
   value text NOT NULL DEFAULT '',
