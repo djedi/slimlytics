@@ -3741,10 +3741,12 @@ async fn refresh_bing_token(
     // the same token could invalidate the other or save an older token over a newer one. The
     // token is re-read under the lock, so a waiting refresh uses the one just saved.
     let mut tx = state.pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('bing-refresh:' || $1::text, 0))")
-        .bind(site)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended('bing-refresh:' || $1::uuid::text, 0))",
+    )
+    .bind(site)
+    .execute(&mut *tx)
+    .await?;
     let current: Option<String> = sqlx::query_scalar(
         "SELECT api_key_encrypted FROM bing_webmaster_integrations
          WHERE site_id=$1 AND connection_id=$2",
