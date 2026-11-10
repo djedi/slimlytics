@@ -3599,6 +3599,8 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
     let response = state
         .http
         .get(api_url(&config.api_base, method, api_key, site_url))
+        // Bound how long connect and sync can hang (and keep the site's controls disabled).
+        .timeout(Duration::from_secs(30))
         .send()
         .await
         .map_err(|error| {

@@ -1684,7 +1684,8 @@
                   Settings → API access, generate an API key, and paste it here.
                 </p>
               {/if}
-              {#if !bing.connected || !bing.siteUrl}
+              <!-- Always offered, so a revoked or rotated key can be replaced without disconnecting. -->
+              {#if bing}
                 <form class="test-links" onsubmit={(event) => void connectBing(event)}>
                   <input
                     type="password"
@@ -1694,7 +1695,7 @@
                     bind:value={bingApiKey}
                   />
                   <button class="primary" type="submit" disabled={bingBusy || !bingApiKey.trim()}
-                    >{bingBusy ? 'Connecting…' : bing.connected ? 'Reconnect' : 'Connect'}</button
+                    >{bingBusy ? 'Connecting…' : bing.siteUrl ? 'Replace key' : bing.connected ? 'Reconnect' : 'Connect'}</button
                   >
                 </form>
               {/if}
