@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use base64::Engine;
+use slimlytics_backend::bing_webmaster::{BingConfig, BING_API_BASE};
 use slimlytics_backend::search_console::SearchConsoleConfig;
 use slimlytics_backend::{
     app,
@@ -167,21 +168,32 @@ async fn main() -> Result<()> {
     let google_client_id = optional_env("GOOGLE_CLIENT_ID");
     let google_client_secret = optional_env("GOOGLE_CLIENT_SECRET");
     let google_redirect_uri = optional_env("GOOGLE_REDIRECT_URI");
-    let integration_key = optional_env("INTEGRATION_ENCRYPTION_KEY");
+    let integration_key = optional_env("INTEGRATION_ENCRYPTION_KEY")
+        .map(|key| -> anyhow::Result<[u8; 32]> {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(key)
+                .context("INTEGRATION_ENCRYPTION_KEY must be base64")?;
+            decoded
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("INTEGRATION_ENCRYPTION_KEY must decode to 32 bytes"))
+        })
+        .transpose()?;
+    // Bing Webmaster Tools uses per-site API keys, so the integration key alone enables it.
+    if let Some(encryption_key) = integration_key {
+        state = state.with_bing(BingConfig {
+            api_base: optional_env("BING_WEBMASTER_API_BASE")
+                .unwrap_or_else(|| BING_API_BASE.into()),
+            encryption_key,
+        });
+    }
     match (
         google_client_id,
         google_client_secret,
         google_redirect_uri,
         integration_key,
     ) {
-        (None, None, None, None) => {}
-        (Some(client_id), Some(client_secret), Some(redirect_uri), Some(key)) => {
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(key)
-                .context("INTEGRATION_ENCRYPTION_KEY must be base64")?;
-            let encryption_key: [u8; 32] = decoded.try_into().map_err(|_| {
-                anyhow::anyhow!("INTEGRATION_ENCRYPTION_KEY must decode to 32 bytes")
-            })?;
+        (None, None, None, _) => {}
+        (Some(client_id), Some(client_secret), Some(redirect_uri), Some(encryption_key)) => {
             let return_uri = format!(
                 "{}/app",
                 env::var("SLIMLYTICS_BASE_URL")
@@ -197,8 +209,8 @@ async fn main() -> Result<()> {
             });
         }
         _ => anyhow::bail!(
-            "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, and \
-             INTEGRATION_ENCRYPTION_KEY must be configured together"
+            "GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URI must be \
+             configured together, along with INTEGRATION_ENCRYPTION_KEY"
         ),
     }
     let report_pool = pool;

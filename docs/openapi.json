@@ -4032,6 +4032,206 @@
         }
       }
     },
+    "/api/sites/{siteId}/integrations/bing": {
+      "get": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Get Bing Webmaster Tools connection status",
+        "operationId": "getBingStatus",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configuration, connection, matched Bing site, and sync status"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Connect Bing Webmaster Tools with an API key",
+        "description": "Checks the key against Bing, stores it encrypted, and matches a verified Bing site to the site's domain. Replaces any earlier connection and its cached metrics.",
+        "operationId": "connectBing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "apiKey"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "description": "API key from Bing Webmaster Tools settings"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connection status"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Disconnect Bing Webmaster Tools and delete cached Bing metrics",
+        "operationId": "disconnectBing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Bing Webmaster Tools disconnected"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/sites/{siteId}/integrations/bing/sync": {
+      "post": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Sync Bing Webmaster Tools metrics",
+        "description": "Replaces cached Bing metrics with all history Bing currently retains (about six months).",
+        "operationId": "syncBing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sync result and cached row count"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/api/sites/{siteId}/reports/bing": {
+      "get": {
+        "tags": [
+          "Reporting"
+        ],
+        "summary": "Report cached Bing search performance",
+        "description": "Query and page rows come from Bing's roughly weekly buckets; date rows are daily site totals.",
+        "operationId": "getBingReport",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SiteId"
+          },
+          {
+            "$ref": "#/components/parameters/FromDate"
+          },
+          {
+            "$ref": "#/components/parameters/ToDate"
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "query",
+                "page",
+                "date"
+              ],
+              "default": "query"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Clicks, impressions, CTR, weighted position, and rankedImpressions (the impressions that position averages over)"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/integrations/search-console/callback": {
       "get": {
         "tags": ["Reporting"],
