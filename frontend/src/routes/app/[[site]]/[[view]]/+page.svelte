@@ -882,16 +882,20 @@
     if (!site || bingPending[site.id]) return;
     const id = site.id;
     bingNotice = '';
+    // Pending until the browser leaves for Bing, so a second click cannot start a competing sign-in.
+    setBingPending(id, true);
     try {
       const { authorizationUrl, state } = await api.startBingOAuth(id);
       try {
         sessionStorage.setItem(bingOAuthKey, JSON.stringify({ siteId: id, state }));
       } catch {
         bingNotice = 'Bing sign-in needs browser storage; allow it for this site, or use an API key.';
+        setBingPending(id, false);
         return;
       }
       location.assign(authorizationUrl);
     } catch (reason) {
+      setBingPending(id, false);
       if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not start the Bing sign-in.';
     }
   }

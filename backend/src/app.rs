@@ -3727,6 +3727,65 @@ impl BingConnection {
     }
 }
 
+/// Exchanges a connection's stored refresh token for an access token, saving a rotated refresh
+/// token in the same transaction.
+async fn refresh_bing_token(
+    state: AppState,
+    encryption_key: [u8; 32],
+    client: BingOAuthConfig,
+    site: Uuid,
+    connection_id: Uuid,
+) -> Result<String, ApiError> {
+    // One refresh at a time per site: if Bing rotates refresh tokens, a concurrent exchange of
+    // the same token could invalidate the other or save an older token over a newer one. The
+    // token is re-read under the lock, so a waiting refresh uses the one just saved.
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('bing-refresh:' || $1::text, 0))")
+        .bind(site)
+        .execute(&mut *tx)
+        .await?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT api_key_encrypted FROM bing_webmaster_integrations
+         WHERE site_id=$1 AND connection_id=$2",
+    )
+    .bind(site)
+    .bind(connection_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let current = current.ok_or_else(|| {
+        ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or disconnected; try again".into(),
+        )
+    })?;
+    let refresh = decrypt_token(&encryption_key, &current).map_err(|error| {
+        tracing::error!(
+            error,
+            "stored Bing Webmaster credential could not be decrypted"
+        );
+        ApiError::Internal
+    })?;
+    let tokens = bing_token_request(
+        &state,
+        &client,
+        &[("grant_type", "refresh_token"), ("refresh_token", &refresh)],
+    )
+    .await?;
+    if let Some(rotated) = tokens.refresh_token.filter(|token| *token != refresh) {
+        let encrypted = encrypt_token(&encryption_key, &rotated).map_err(|_| ApiError::Internal)?;
+        sqlx::query(
+            "UPDATE bing_webmaster_integrations SET api_key_encrypted=$3,updated_at=now()
+             WHERE site_id=$1 AND connection_id=$2",
+        )
+        .bind(site)
+        .bind(connection_id)
+        .bind(encrypted)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(tokens.access_token)
+}
+
 /// Loads a site's Bing connection, decrypting the API key or exchanging the stored refresh token
 /// for an access token (saving a rotated refresh token for this same connection).
 async fn bing_connection(
@@ -3758,57 +3817,20 @@ async fn bing_connection(
                     .into(),
             )
         })?;
-        // One refresh at a time per site: if Bing rotates refresh tokens, a concurrent exchange of
-        // the same token could invalidate the other or save an older token over a newer one. The
-        // token is re-read under the lock, so a waiting refresh uses the one just saved.
-        let mut tx = state.pool.begin().await?;
-        sqlx::query(
-            "SELECT pg_advisory_xact_lock(hashtextextended('bing-refresh:' || $1::text, 0))",
-        )
-        .bind(site)
-        .execute(&mut *tx)
-        .await?;
-        let current: Option<String> = sqlx::query_scalar(
-            "SELECT api_key_encrypted FROM bing_webmaster_integrations
-             WHERE site_id=$1 AND connection_id=$2",
-        )
-        .bind(site)
-        .bind(connection_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let current = current.ok_or_else(|| {
-            ApiError::BadRequest(
-                "Bing Webmaster Tools was reconnected or disconnected; try again".into(),
-            )
-        })?;
-        let refresh = decrypt_token(&config.encryption_key, &current).map_err(|error| {
-            tracing::error!(
-                error,
-                "stored Bing Webmaster credential could not be decrypted"
-            );
+        // Spawned, so a client that disconnects mid-refresh cannot cancel it between Bing
+        // rotating the refresh token and Slimlytics saving the new one.
+        tokio::spawn(refresh_bing_token(
+            state.clone(),
+            config.encryption_key,
+            client.clone(),
+            site,
+            connection_id,
+        ))
+        .await
+        .map_err(|error| {
+            tracing::error!(%error, "Bing token refresh task failed");
             ApiError::Internal
-        })?;
-        let tokens = bing_token_request(
-            state,
-            client,
-            &[("grant_type", "refresh_token"), ("refresh_token", &refresh)],
-        )
-        .await?;
-        if let Some(rotated) = tokens.refresh_token.filter(|token| *token != refresh) {
-            let encrypted =
-                encrypt_token(&config.encryption_key, &rotated).map_err(|_| ApiError::Internal)?;
-            sqlx::query(
-                "UPDATE bing_webmaster_integrations SET api_key_encrypted=$3,updated_at=now()
-                 WHERE site_id=$1 AND connection_id=$2",
-            )
-            .bind(site)
-            .bind(connection_id)
-            .bind(encrypted)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        tokens.access_token
+        })??
     } else {
         stored
     };
