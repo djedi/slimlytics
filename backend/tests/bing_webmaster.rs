@@ -1,7 +1,7 @@
 use chrono::NaiveDate;
 use slimlytics_backend::bing_webmaster::{
-    api_url, matching_site_url, merge_metrics, parse_date, position, report_value, Metric,
-    MAX_VALUE_BYTES,
+    api_url, bing_error_message, matching_site_url, merge_metrics, parse_date, position,
+    report_value, Metric, MAX_VALUE_BYTES,
 };
 
 #[test]
@@ -439,4 +439,16 @@ fn values_are_bounded_on_a_char_boundary() {
     let value = report_value("query", &long).unwrap();
     assert!(value.len() <= MAX_VALUE_BYTES);
     assert!(value.chars().all(|c| c == 'é'));
+}
+
+#[test]
+fn error_messages_never_carry_the_api_key() {
+    let key = "k\"ey&a";
+    let body = r#"{"Message":"bad call /GetUserSites?apikey=k%22ey%26a and \u006b\"ey&a"}"#;
+    let message = bing_error_message(body, key).unwrap();
+    assert!(
+        !message.contains(key) && !message.contains("k%22ey%26a"),
+        "{message}"
+    );
+    assert_eq!(bing_error_message("not json", key), None);
 }

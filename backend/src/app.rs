@@ -17,8 +17,8 @@ use crate::{
         issue_session_token, verify_password, verify_token,
     },
     bing_webmaster::{
-        api_url, matching_site_url, merge_metrics, parse_date, position, report_value, BingConfig,
-        Metric as BingMetric,
+        api_url, bing_error_message, matching_site_url, merge_metrics, parse_date, position,
+        report_value, BingConfig, Metric as BingMetric,
     },
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
@@ -3609,20 +3609,11 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
         })?;
     let status = response.status();
     if !status.is_success() {
-        // Bing or a proxy may echo the request URL, which carries the key, so redact it.
-        let body = response
-            .text()
-            .await
-            .unwrap_or_default()
-            .replace(api_key, "[redacted]")
-            .replace(
-                &url::form_urlencoded::byte_serialize(api_key.as_bytes()).collect::<String>(),
-                "[redacted]",
-            );
-        tracing::warn!(%status, method, body, "Bing Webmaster request rejected");
-        let message = serde_json::from_str::<Value>(&body)
-            .ok()
-            .and_then(|error| error["Message"].as_str().map(str::to_owned));
+        // The raw body may echo the request URL and its key in any encoding, so it is never
+        // logged; only Bing's decoded message, redacted, is logged and shown.
+        let body = response.text().await.unwrap_or_default();
+        let message = bing_error_message(&body, api_key);
+        tracing::warn!(%status, method, message, "Bing Webmaster request rejected");
         return Err(ApiError::BadRequest(match message {
             Some(message) => format!("Bing Webmaster Tools rejected the request: {message}"),
             None => "Bing Webmaster Tools rejected the request. Check the API key.".into(),

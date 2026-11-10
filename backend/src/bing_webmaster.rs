@@ -25,6 +25,19 @@ pub fn api_url(base: &str, method: &str, api_key: &str, site_url: Option<&str>) 
     url.into()
 }
 
+/// Bing's `Message` from an error body, decoded and with the API key (raw or URL-encoded)
+/// redacted, since Bing or a proxy may echo the request URL that carries it.
+pub fn bing_error_message(body: &str, api_key: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    let message = value["Message"].as_str()?;
+    let encoded: String = url::form_urlencoded::byte_serialize(api_key.as_bytes()).collect();
+    Some(
+        message
+            .replace(api_key, "[redacted]")
+            .replace(&encoded, "[redacted]"),
+    )
+}
+
 /// The verified Bing site that matches a Slimlytics domain, preferring HTTPS over HTTP and the
 /// bare domain over `www.`.
 pub fn matching_site_url(domain: &str, sites: &[(String, bool)]) -> Option<String> {
