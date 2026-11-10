@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use base64::Engine;
-use slimlytics_backend::bing_webmaster::{BingConfig, BING_API_BASE};
+use slimlytics_backend::bing_webmaster::{
+    BingConfig, BingOAuthConfig, BING_API_BASE, BING_OAUTH_BASE,
+};
 use slimlytics_backend::search_console::SearchConsoleConfig;
 use slimlytics_backend::{
     app,
@@ -178,12 +180,33 @@ async fn main() -> Result<()> {
                 .map_err(|_| anyhow::anyhow!("INTEGRATION_ENCRYPTION_KEY must decode to 32 bytes"))
         })
         .transpose()?;
-    // Bing Webmaster Tools uses per-site API keys, so the integration key alone enables it.
+    // Bing Webmaster Tools works with per-site API keys, so the integration key alone enables it;
+    // a registered Bing OAuth client adds one-click sign-in.
+    let bing_oauth = match (
+        optional_env("BING_CLIENT_ID"),
+        optional_env("BING_CLIENT_SECRET"),
+        optional_env("BING_REDIRECT_URI"),
+    ) {
+        (None, None, None) => None,
+        (Some(client_id), Some(client_secret), Some(redirect_uri)) => Some(BingOAuthConfig {
+            client_id,
+            client_secret,
+            redirect_uri,
+            oauth_base: optional_env("BING_OAUTH_BASE").unwrap_or_else(|| BING_OAUTH_BASE.into()),
+        }),
+        _ => anyhow::bail!(
+            "BING_CLIENT_ID, BING_CLIENT_SECRET, and BING_REDIRECT_URI must be configured together"
+        ),
+    };
+    if bing_oauth.is_some() && integration_key.is_none() {
+        anyhow::bail!("Bing OAuth needs INTEGRATION_ENCRYPTION_KEY to store refresh tokens");
+    }
     if let Some(encryption_key) = integration_key {
         state = state.with_bing(BingConfig {
             api_base: optional_env("BING_WEBMASTER_API_BASE")
                 .unwrap_or_else(|| BING_API_BASE.into()),
             encryption_key,
+            oauth: bing_oauth,
         });
     }
     match (

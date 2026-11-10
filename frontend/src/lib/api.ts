@@ -151,10 +151,21 @@ export interface SearchConsoleProperty {
 }
 export interface BingStatus {
   configured: boolean;
+  /** This deployment has a Bing OAuth client, so connecting is a Bing sign-in. */
+  oauthConfigured?: boolean;
+  authKind?: 'api_key' | 'oauth';
   connected: boolean;
   siteUrl?: string | null;
   lastSyncedAt?: string | null;
   lastError?: string | null;
+}
+/** A site Slimlytics added to Bing, and the ways to prove ownership so Bing can verify it. */
+export interface BingSiteSetup {
+  siteUrl: string;
+  verified: boolean;
+  dnsRecord: { type: 'CNAME'; name: string; value: string };
+  metaTag: string;
+  xmlFile: { path: string; content: string };
 }
 /** Bing reports queries and pages but no countries or devices; `date` is daily site totals. */
 export type BingDimension = 'query' | 'page' | 'date';
@@ -541,6 +552,10 @@ export class ApiClient {
   verifySearchConsoleProperty(id: string) { return this.request<{ propertyUrl: string; verified: boolean }>(`/sites/${id}/integrations/search-console/property/verify`, { method: 'POST' }); }
   bingStatus(id: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing`, {}, () => ({ configured: true, connected: true, siteUrl: 'https://docs.northstar.dev/', lastSyncedAt: new Date().toISOString() })); }
   connectBing(id: string, apiKey: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing`, { method: 'POST', body: JSON.stringify({ apiKey }) }); }
+  startBingOAuth(id: string) { return this.request<{ authorizationUrl: string; state: string }>(`/sites/${id}/integrations/bing/oauth`, { method: 'POST' }); }
+  completeBingOAuth(id: string, code: string, state: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing/oauth/complete`, { method: 'POST', body: JSON.stringify({ code, state }) }); }
+  addBingSite(id: string) { return this.request<BingSiteSetup>(`/sites/${id}/integrations/bing/site`, { method: 'POST' }); }
+  verifyBingSite(id: string) { return this.request<{ siteUrl: string; verified: boolean }>(`/sites/${id}/integrations/bing/site/verify`, { method: 'POST' }); }
   disconnectBing(id: string) { return this.request<void>(`/sites/${id}/integrations/bing`, { method: 'DELETE' }); }
   syncBing(id: string) { return this.request<{ status: string; rows: number }>(`/sites/${id}/integrations/bing/sync`, { method: 'POST' }); }
   bingReport(id: string, dimension: BingDimension = 'query', period: Period = 28) { return this.request<BingRow[]>(`/sites/${id}/reports/bing?${dateQuery(period, this.zone(id))}&dimension=${dimension}`, {}, () => demoSearchConsole(dimension, periodDays(period)).map((row) => { const impressions = Math.round(row.impressions / 6); return { ...row, clicks: Math.round(row.clicks / 6), impressions, rankedImpressions: dimension === 'date' ? 0 : impressions }; })); }
