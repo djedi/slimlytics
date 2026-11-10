@@ -217,7 +217,7 @@
   let bingNotice = $state('');
   // The verification records for a site just added to Bing; cleared when the site changes.
   let bingSiteSetup = $state<BingSiteSetup | null>(null);
-  /** Where a Bing sign-in keeps its state across the redirect, since Bing may not return it. */
+  /** Where a Bing sign-in keeps its state across the redirect, to check against the one Bing returns. */
   const bingOAuthKey = 'slimlytics:bing-oauth';
   // Bumped by each Bing load and change, so an older load never overwrites a newer result.
   const bingGenerations: Record<string, number> = {};
@@ -903,7 +903,9 @@
     let notice: string;
     if (!code) {
       notice = params.get('error') === 'access_denied' ? 'Bing sign-in was cancelled.' : 'Bing sign-in failed. Try again.';
-    } else if (returned && returned !== pending.state) {
+    } else if (returned !== pending.state) {
+      // Only a response carrying the state this tab started is accepted, so a code from someone
+      // else's sign-in cannot connect their Bing account here.
       notice = 'That Bing sign-in did not match the one started here. Try again.';
     } else {
       setBingPending(pending.siteId, true);

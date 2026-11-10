@@ -120,6 +120,9 @@ mod flow {
     /// it has been asked to verify it (the first attempt fails, like a DNS record not yet live).
     static NEW_SITE_ADDED: AtomicBool = AtomicBool::new(false);
     static VERIFY_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// The only refresh token the fake accepts is `refresh-{n}`; each refresh rotates it, so two
+    /// exchanges of the same token cannot both succeed.
+    static REFRESH: AtomicUsize = AtomicUsize::new(1);
     const SITES: [&str; 2] = ["https://bing-flow.example/", "https://bing-new.example/"];
     use tower::ServiceExt;
 
@@ -205,26 +208,32 @@ mod flow {
             .route("/oauth/token", post(|Form(form): Form<HashMap<String, String>>| async move {
                 let client = form.get("client_id").map(String::as_str) == Some("client")
                     && form.get("client_secret").map(String::as_str) == Some("secret");
-                let granted = match form.get("grant_type").map(String::as_str) {
-                    Some("authorization_code") => {
-                        form.get("code").map(String::as_str) == Some("good-code")
+                let refresh = match form.get("grant_type").map(String::as_str) {
+                    Some("authorization_code")
+                        if form.get("code").map(String::as_str) == Some("good-code")
                             && form.get("redirect_uri").map(String::as_str)
-                                == Some("https://slimlytics.test/app")
+                                == Some("https://slimlytics.test/app") =>
+                    {
+                        Some(REFRESH.load(Ordering::SeqCst))
                     }
-                    // Bing rotates the refresh token; the first and the rotated one both work.
-                    Some("refresh_token") => matches!(
-                        form.get("refresh_token").map(String::as_str),
-                        Some("refresh-1" | "refresh-2")
-                    ),
-                    _ => false,
+                    Some("refresh_token") => {
+                        let current = REFRESH.load(Ordering::SeqCst);
+                        let presented = form.get("refresh_token").cloned().unwrap_or_default();
+                        (presented == format!("refresh-{current}")
+                            && REFRESH
+                                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                                .is_ok())
+                        .then_some(current + 1)
+                    }
+                    _ => None,
                 };
-                if !(client && granted) {
-                    return Err((StatusCode::BAD_REQUEST, Json(json!({"error":"invalid_grant"}))));
+                match refresh.filter(|_| client) {
+                    Some(refresh) => Ok(Json(json!({
+                        "access_token":"good-token","token_type":"bearer","expires_in":3600,
+                        "refresh_token":format!("refresh-{refresh}")
+                    }))),
+                    None => Err((StatusCode::BAD_REQUEST, Json(json!({"error":"invalid_grant"})))),
                 }
-                Ok(Json(json!({
-                    "access_token":"good-token","token_type":"bearer","expires_in":3600,
-                    "refresh_token":if form["grant_type"] == "authorization_code" { "refresh-1" } else { "refresh-2" }
-                })))
             }))
             .route("/json/GetRankAndTrafficStats", get(|headers: HeaderMap, Query(p): Params| async move {
                 checked(&p, &headers, true)?;
@@ -582,7 +591,7 @@ mod flow {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert!(!stored.contains("refresh-1"));
+        assert!(!stored.contains("refresh-"));
 
         let (status, added) =
             send(&router, call("POST", "/integrations/bing/site", json!({}))).await;
@@ -604,7 +613,14 @@ mod flow {
         assert_eq!(status, StatusCode::OK, "{verified}");
         assert_eq!(verified["siteUrl"], "https://bing-new.example/");
 
-        // The refresh token rotates on the first sync; the second sync uses the rotated one.
+        // Every call rotates the refresh token; concurrent calls take turns, so none presents a
+        // token the other already spent.
+        let (first, second) = tokio::join!(
+            send(&router, call("POST", "/integrations/bing/site", json!({}))),
+            send(&router, call("POST", "/integrations/bing/site", json!({}))),
+        );
+        assert_eq!(first.0, StatusCode::OK, "{}", first.1);
+        assert_eq!(second.0, StatusCode::OK, "{}", second.1);
         for _ in 0..2 {
             let (status, synced) =
                 send(&router, call("POST", "/integrations/bing/sync", json!({}))).await;

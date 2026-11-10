@@ -211,7 +211,10 @@ async fn openapi_document_covers_every_public_backend_route() {
         ("/api/sites/{siteId}/integrations/bing", "delete"),
         ("/api/sites/{siteId}/integrations/bing/sync", "post"),
         ("/api/sites/{siteId}/integrations/bing/oauth", "post"),
-        ("/api/sites/{siteId}/integrations/bing/oauth/complete", "post"),
+        (
+            "/api/sites/{siteId}/integrations/bing/oauth/complete",
+            "post",
+        ),
         ("/api/sites/{siteId}/integrations/bing/site", "post"),
         ("/api/sites/{siteId}/integrations/bing/site/verify", "post"),
         ("/api/sites/{siteId}/reports/bing", "get"),
