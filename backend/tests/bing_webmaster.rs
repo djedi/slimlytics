@@ -212,7 +212,8 @@ mod flow {
                     Some("authorization_code")
                         if form.get("code").map(String::as_str) == Some("good-code")
                             && form.get("redirect_uri").map(String::as_str)
-                                == Some("https://slimlytics.test/app") =>
+                                == Some("https://slimlytics.test/app")
+                            && form.get("code_verifier").is_some_and(|v| v.len() >= 43) =>
                     {
                         Some(REFRESH.load(Ordering::SeqCst))
                     }
@@ -569,6 +570,19 @@ mod flow {
             "{authorize}"
         );
         assert!(authorize.contains("scope=webmaster.manage"), "{authorize}");
+        // The challenge in the URL is the S256 of the verifier kept on the server.
+        let verifier: String = sqlx::query_scalar(
+            "SELECT code_verifier FROM oauth_states WHERE provider='bing' AND state_hash=$1",
+        )
+        .bind(slimlytics_backend::search_console::state_hash(&state))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(authorize.contains(&format!(
+            "code_challenge={}&code_challenge_method=S256",
+            slimlytics_backend::bing_webmaster::pkce_challenge(&verifier)
+        )));
+        assert!(!authorize.contains(&verifier));
 
         let complete = |state: &str| {
             call(
@@ -662,4 +676,14 @@ fn error_messages_never_carry_the_api_key() {
         "{message}"
     );
     assert_eq!(bing_error_message("not json", key), None);
+}
+
+#[test]
+fn pkce_challenge_matches_rfc_7636() {
+    assert_eq!(
+        slimlytics_backend::bing_webmaster::pkce_challenge(
+            "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+        ),
+        "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    );
 }

@@ -41,8 +41,16 @@ impl Credential<'_> {
     }
 }
 
+/// The S256 PKCE challenge for a code verifier (RFC 7636): base64url(SHA-256(verifier)).
+pub fn pkce_challenge(verifier: &str) -> String {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use sha2::{Digest, Sha256};
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
 /// Bing's sign-in page; `webmaster.manage` lets Slimlytics add and verify sites as well as read.
-pub fn authorization_url(config: &BingOAuthConfig, state: &str) -> String {
+/// The PKCE challenge binds the code Bing issues to this attempt's verifier.
+pub fn authorization_url(config: &BingOAuthConfig, state: &str, code_challenge: &str) -> String {
     let mut url = Url::parse(&format!(
         "{}/OAuth/authorize",
         config.oauth_base.trim_end_matches('/')
@@ -53,7 +61,9 @@ pub fn authorization_url(config: &BingOAuthConfig, state: &str) -> String {
         .append_pair("client_id", &config.client_id)
         .append_pair("redirect_uri", &config.redirect_uri)
         .append_pair("scope", "webmaster.manage")
-        .append_pair("state", state);
+        .append_pair("state", state)
+        .append_pair("code_challenge", code_challenge)
+        .append_pair("code_challenge_method", "S256");
     url.into()
 }
 

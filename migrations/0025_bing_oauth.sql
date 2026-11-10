@@ -1,5 +1,7 @@
 -- OAuth states are shared by Google and Bing sign-ins; each callback only consumes its own.
 ALTER TABLE oauth_states ADD COLUMN provider text NOT NULL DEFAULT 'google';
+-- The PKCE verifier for a Bing sign-in, so only the attempt that started it can redeem its code.
+ALTER TABLE oauth_states ADD COLUMN code_verifier text;
 
 -- A Bing connection authenticates with an API key or an OAuth refresh token, both stored
 -- encrypted in api_key_encrypted. connection_id changes on every connect, so work started for one

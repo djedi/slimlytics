@@ -18,9 +18,10 @@ use crate::{
     },
     bing_webmaster::{
         api_url, authorization_url as bing_authorization_url, bing_error_message,
-        matching_site_url, merge_metrics, method_url, parse_date, position, report_value,
-        same_site_url, site_url_for, token_url as bing_token_url, verification_methods, BingConfig,
-        BingOAuthConfig, Credential as BingCredential, Metric as BingMetric,
+        matching_site_url, merge_metrics, method_url, parse_date, pkce_challenge, position,
+        report_value, same_site_url, site_url_for, token_url as bing_token_url,
+        verification_methods, BingConfig, BingOAuthConfig, Credential as BingCredential,
+        Metric as BingMetric,
     },
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
@@ -3983,17 +3984,22 @@ async fn start_bing_oauth(
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("Bing sign-in is not configured".into()))?;
     let state = oauth_state();
+    // Kept server-side: the browser never sees the verifier, so a code issued for this attempt
+    // can only be redeemed by it.
+    let verifier = oauth_state();
     sqlx::query(
-        "INSERT INTO oauth_states(state_hash,user_id,site_id,expires_at,provider)
-         VALUES($1,$2,$3,now()+interval '10 minutes','bing')",
+        "INSERT INTO oauth_states(state_hash,user_id,site_id,expires_at,provider,code_verifier)
+         VALUES($1,$2,$3,now()+interval '10 minutes','bing',$4)",
     )
     .bind(state_hash(&state))
     .bind(u)
     .bind(site)
+    .bind(&verifier)
     .execute(&s.pool)
     .await?;
     Ok(Json(json!({
-        "authorizationUrl":bing_authorization_url(oauth,&state),"state":state
+        "authorizationUrl":bing_authorization_url(oauth,&state,&pkce_challenge(&verifier)),
+        "state":state
     })))
 }
 
@@ -4018,21 +4024,19 @@ async fn complete_bing_oauth(
         .oauth
         .as_ref()
         .ok_or_else(|| ApiError::BadRequest("Bing sign-in is not configured".into()))?;
-    let claimed = sqlx::query(
+    let verifier: Option<String> = sqlx::query_scalar(
         "DELETE FROM oauth_states WHERE state_hash=$1 AND user_id=$2 AND site_id=$3
-           AND provider='bing' AND expires_at>now()",
+           AND provider='bing' AND expires_at>now() AND code_verifier IS NOT NULL
+         RETURNING code_verifier",
     )
     .bind(state_hash(&body.state))
     .bind(u)
     .bind(site)
-    .execute(&s.pool)
-    .await?
-    .rows_affected();
-    if claimed == 0 {
-        return Err(ApiError::BadRequest(
-            "This Bing sign-in expired or was already used. Connect again.".into(),
-        ));
-    }
+    .fetch_optional(&s.pool)
+    .await?;
+    let verifier = verifier.ok_or_else(|| {
+        ApiError::BadRequest("This Bing sign-in expired or was already used. Connect again.".into())
+    })?;
     let tokens = bing_token_request(
         &s,
         oauth,
@@ -4040,6 +4044,7 @@ async fn complete_bing_oauth(
             ("grant_type", "authorization_code"),
             ("code", &body.code),
             ("redirect_uri", &oauth.redirect_uri),
+            ("code_verifier", &verifier),
         ],
     )
     .await?;
