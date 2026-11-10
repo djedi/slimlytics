@@ -260,9 +260,11 @@ mod flow {
             }))
             .route("/porkbun/domain/listAll", post(|Json(body): Json<Value>| async move {
                 porkbun_auth(&body)?;
-                let held = body["domain"] == "bing-new.example";
-                Ok::<_, Failure>(Json(json!({"status":"SUCCESS","count":u8::from(held),
-                    "domains": if held { json!([{"domain":"bing-new.example","apiAccess":"yes"}]) } else { json!([]) }})))
+                // Ignores the filter and lists the whole account, so the caller must match names.
+                Ok::<_, Failure>(Json(json!({"status":"SUCCESS","count":2,"domains":[
+                    {"domain":"bing-new.example","apiAccess":"yes"},
+                    {"domain":"unrelated.example","apiAccess":"yes"}
+                ]})))
             }))
             .route(
                 "/porkbun/dns/retrieveByNameType/{zone}/{kind}/{name}",

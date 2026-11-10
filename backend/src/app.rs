@@ -3714,19 +3714,25 @@ async fn porkbun_add_record(
     let Some((key, secret)) = row else {
         return Ok(None);
     };
-    let decrypt = |value: &str| {
-        decrypt_token(&config.encryption_key, value).map_err(|error| {
-            tracing::error!(error, "stored Porkbun key could not be decrypted");
-            ApiError::Internal
-        })
-    };
-    let (key, secret) = (decrypt(&key)?, decrypt(&secret)?);
-    let keys = (key.as_str(), secret.as_str());
     let failed = |message: String| {
         Ok(Some(
             json!({"provider":"porkbun","status":"failed","message":message}),
         ))
     };
+    // Unreadable keys (e.g. a rotated integration key) must not cost the user the manual record.
+    let (key, secret) = match (
+        decrypt_token(&config.encryption_key, &key),
+        decrypt_token(&config.encryption_key, &secret),
+    ) {
+        (Ok(key), Ok(secret)) => (key, secret),
+        _ => {
+            tracing::error!("stored Porkbun keys could not be decrypted");
+            return failed(
+                "Your saved Porkbun keys can't be read. Enter them again in your account.".into(),
+            );
+        }
+    };
+    let keys = (key.as_str(), secret.as_str());
     // The zone is the longest of the site domain's parents that this Porkbun account holds; a
     // record name never sits above the site's own domain.
     let mut zone = None;
@@ -3740,10 +3746,15 @@ async fn porkbun_add_record(
         )
         .await
         {
+            // Compare the names returned, rather than trusting the filter alone.
             Ok(value)
-                if value["domains"]
-                    .as_array()
-                    .is_some_and(|list| !list.is_empty()) =>
+                if value["domains"].as_array().is_some_and(|list| {
+                    list.iter().any(|entry| {
+                        entry["domain"]
+                            .as_str()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(&candidate))
+                    })
+                }) =>
             {
                 zone = Some(candidate);
                 break;
@@ -3780,12 +3791,14 @@ async fn porkbun_add_record(
     let same = |record: &Value| {
         record["content"]
             .as_str()
-            // TXT values may come back quoted, CNAME targets with a trailing dot.
+            // TXT values may come back quoted and are case-sensitive (Google's tokens are);
+            // CNAME targets are host names, compared without case or a trailing dot.
             .is_some_and(|value| {
-                value
-                    .trim_matches('"')
-                    .trim_end_matches('.')
-                    .eq_ignore_ascii_case(content)
+                if record_type == "TXT" {
+                    value.trim_matches('"') == content
+                } else {
+                    value.trim_end_matches('.').eq_ignore_ascii_case(content)
+                }
             })
     };
     if records.iter().any(same) {

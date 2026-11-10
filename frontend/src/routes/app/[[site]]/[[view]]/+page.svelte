@@ -800,7 +800,9 @@
         searchConsoleNotice = `Porkbun couldn’t add the record: ${automation.message ?? 'unknown error'}. Add it below, then verify.`;
       } else if (automation) {
         // Not awaited: the add ends (and releases its busy state) while the verify attempts run.
-        void autoVerify(id, 'Google', () => searchConsoleProperty === property, verifySearchConsoleProperty, (text) => {
+        // Compared by value: the stored property is a state proxy, not this object.
+        const token = property.dnsRecord.value;
+        void autoVerify(id, 'Google', () => searchConsoleProperty?.dnsRecord.value === token, verifySearchConsoleProperty, (text) => {
           if (site?.id === id) searchConsoleNotice = text;
         });
         return;
@@ -993,7 +995,9 @@
           bingNotice = `Porkbun couldn’t add the record: ${automation.message ?? 'unknown error'}. Add it below, then verify.`;
         } else if (automation) {
           // Not awaited: the add is done, so its busy state ends while the verify attempts run.
-          void autoVerify(id, 'Bing', () => bingSiteSetup === setup, verifyBingSite, (text) => {
+          // Compared by value: the stored setup is a state proxy, not this object.
+          const record = setup.dnsRecord.fqdn;
+          void autoVerify(id, 'Bing', () => bingSiteSetup?.dnsRecord.fqdn === record, verifyBingSite, (text) => {
             if (site?.id === id) bingNotice = text;
           });
         }
