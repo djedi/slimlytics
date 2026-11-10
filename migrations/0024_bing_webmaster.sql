@@ -5,6 +5,8 @@ CREATE TABLE bing_webmaster_integrations (
   connected_by uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   last_synced_at timestamptz,
   last_error text,
+  -- Bumped when a sync starts; a sync only saves results if no newer one has started.
+  sync_generation bigint NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );

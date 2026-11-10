@@ -3756,13 +3756,16 @@ async fn sync_bing(
 ) -> Result<Json<Value>, ApiError> {
     require_site(&s.pool, u, site, true).await?;
     let config = bing_config(&s)?;
-    let integration: Option<(Option<String>, String)> = sqlx::query_as(
-        "SELECT site_url,api_key_encrypted FROM bing_webmaster_integrations WHERE site_id=$1",
+    // Claim a sync generation up front so an older sync that finishes last cannot replace the
+    // results of a newer one.
+    let integration: Option<(Option<String>, String, i64)> = sqlx::query_as(
+        "UPDATE bing_webmaster_integrations SET sync_generation=sync_generation+1
+         WHERE site_id=$1 RETURNING site_url,api_key_encrypted,sync_generation",
     )
     .bind(site)
     .fetch_optional(&s.pool)
     .await?;
-    let (site_url, encrypted) = integration.ok_or(ApiError::NotFound)?;
+    let (site_url, encrypted, generation) = integration.ok_or(ApiError::NotFound)?;
     let site_url =
         site_url.ok_or_else(|| ApiError::BadRequest("No matching Bing Webmaster site".into()))?;
     let api_key = decrypt_token(&config.encryption_key, &encrypted).map_err(|error| {
@@ -3815,16 +3818,26 @@ async fn sync_bing(
         .await?;
     // Locking the connection orders this against connect and disconnect, and a key that changed
     // (or a disconnect) while Bing was answering means these results belong to no connection.
-    let current: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT api_key_encrypted,site_url FROM bing_webmaster_integrations
+    let current: Option<(String, Option<String>, i64)> = sqlx::query_as(
+        "SELECT api_key_encrypted,site_url,sync_generation FROM bing_webmaster_integrations
          WHERE site_id=$1 FOR UPDATE",
     )
     .bind(site)
     .fetch_optional(&mut *tx)
     .await?;
-    if current != Some((encrypted.clone(), Some(site_url.clone()))) {
+    let Some((current_key, current_url, current_generation)) = current else {
         return Err(ApiError::BadRequest(
-            "Bing Webmaster Tools was reconnected, disconnected, or the site domain changed during sync; sync again".into(),
+            "Bing Webmaster Tools was disconnected during sync".into(),
+        ));
+    };
+    if current_key != encrypted || current_url.as_deref() != Some(site_url.as_str()) {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or the site domain changed during sync; sync again".into(),
+        ));
+    }
+    if current_generation != generation {
+        return Err(ApiError::BadRequest(
+            "A newer Bing Webmaster sync started for this site; its results will be kept".into(),
         ));
     }
     sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
