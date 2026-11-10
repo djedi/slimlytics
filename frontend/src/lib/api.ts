@@ -144,10 +144,20 @@ export interface SearchConsoleRow {
   position: number;
 }
 export type SearchConsoleDimension = 'query' | 'page' | 'country' | 'device' | 'date';
+/** What Slimlytics did about a verification record with the user's Porkbun keys. */
+export interface DnsAutomation {
+  provider: 'porkbun';
+  status: 'created' | 'exists' | 'failed';
+  zone?: string;
+  message?: string;
+}
+export interface PorkbunStatus { configured: boolean; connected: boolean; apiKeyHint?: string | null }
 export interface SearchConsoleProperty {
   propertyUrl: string;
   verificationMethod: 'DNS_TXT';
   dnsRecord: { type: 'TXT'; name: string; value: string };
+  /** Absent or null when the user has not connected Porkbun. */
+  dnsAutomation?: DnsAutomation | null;
 }
 export interface BingStatus {
   configured: boolean;
@@ -170,6 +180,7 @@ export type BingSiteSetup =
       dnsRecord: { type: 'CNAME'; name: string; fqdn: string; value: string };
       metaTag: string;
       xmlFile: { path: string; content: string };
+      dnsAutomation?: DnsAutomation | null;
     };
 /** Bing reports queries and pages but no countries or devices; `date` is daily site totals. */
 export type BingDimension = 'query' | 'page' | 'date';
@@ -556,6 +567,9 @@ export class ApiClient {
   verifySearchConsoleProperty(id: string) { return this.request<{ propertyUrl: string; verified: boolean }>(`/sites/${id}/integrations/search-console/property/verify`, { method: 'POST' }); }
   bingStatus(id: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing`, {}, () => ({ configured: true, connected: true, siteUrl: 'https://docs.northstar.dev/', lastSyncedAt: new Date().toISOString() })); }
   connectBing(id: string, apiKey: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing`, { method: 'POST', body: JSON.stringify({ apiKey }) }); }
+  porkbunStatus() { return this.request<PorkbunStatus>('/account/integrations/porkbun', {}, () => ({ configured: true, connected: false })); }
+  savePorkbun(apiKey: string, secretApiKey: string) { return this.request<PorkbunStatus>('/account/integrations/porkbun', { method: 'PUT', body: JSON.stringify({ apiKey, secretApiKey }) }); }
+  deletePorkbun() { return this.request<void>('/account/integrations/porkbun', { method: 'DELETE' }); }
   startBingOAuth(id: string) { return this.request<{ authorizationUrl: string; state: string }>(`/sites/${id}/integrations/bing/oauth`, { method: 'POST' }); }
   completeBingOAuth(id: string, code: string, state: string) { return this.request<BingStatus>(`/sites/${id}/integrations/bing/oauth/complete`, { method: 'POST', body: JSON.stringify({ code, state }) }); }
   addBingSite(id: string) { return this.request<BingSiteSetup>(`/sites/${id}/integrations/bing/site`, { method: 'POST' }); }

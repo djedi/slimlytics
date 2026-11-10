@@ -110,6 +110,7 @@ mod flow {
     use slimlytics_backend::{
         app,
         bing_webmaster::{BingConfig, BingOAuthConfig},
+        porkbun::PorkbunConfig,
         AppState,
     };
     use sqlx::postgres::PgPoolOptions;
@@ -123,6 +124,23 @@ mod flow {
     /// The only refresh token the fake accepts is `refresh-{n}`; each refresh rotates it, so two
     /// exchanges of the same token cannot both succeed.
     static REFRESH: AtomicUsize = AtomicUsize::new(1);
+    /// Records the fake Porkbun holds: (zone, relative name, type, content).
+    static PORKBUN_RECORDS: std::sync::Mutex<Vec<(String, String, String, String)>> =
+        std::sync::Mutex::new(Vec::new());
+    type Failure = (StatusCode, Json<Value>);
+
+    fn porkbun_auth(body: &Value) -> Result<(), Failure> {
+        if body["apikey"] == "pk1_good" && body["secretapikey"] == "sk1_good" {
+            Ok(())
+        } else {
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({"status":"ERROR","code":"INVALID_API_KEYS","message":"Invalid API key."}),
+                ),
+            ))
+        }
+    }
     const SITES: [&str; 2] = ["https://bing-flow.example/", "https://bing-new.example/"];
     use tower::ServiceExt;
 
@@ -130,7 +148,6 @@ mod flow {
     /// site, and one site the OAuth flow adds and verifies.
     async fn fake_bing() -> String {
         type Params = Query<HashMap<String, String>>;
-        type Failure = (StatusCode, Json<Value>);
         fn authorized(params: &HashMap<String, String>, headers: &HeaderMap) -> bool {
             params.get("apikey").map(String::as_str) == Some("good-key")
                 || headers
@@ -235,6 +252,43 @@ mod flow {
                     }))),
                     None => Err((StatusCode::BAD_REQUEST, Json(json!({"error":"invalid_grant"})))),
                 }
+            }))
+            // A Porkbun account holding bing-new.example (and not its subdomains).
+            .route("/porkbun/ping", post(|Json(body): Json<Value>| async move {
+                porkbun_auth(&body)?;
+                Ok::<_, Failure>(Json(json!({"status":"SUCCESS","yourIp":"127.0.0.1"})))
+            }))
+            .route("/porkbun/domain/listAll", post(|Json(body): Json<Value>| async move {
+                porkbun_auth(&body)?;
+                let held = body["domain"] == "bing-new.example";
+                Ok::<_, Failure>(Json(json!({"status":"SUCCESS","count":u8::from(held),
+                    "domains": if held { json!([{"domain":"bing-new.example","apiAccess":"yes"}]) } else { json!([]) }})))
+            }))
+            .route(
+                "/porkbun/dns/retrieveByNameType/{zone}/{kind}/{name}",
+                post(|axum::extract::Path((zone, kind, name)): axum::extract::Path<(String, String, String)>, Json(body): Json<Value>| async move {
+                    porkbun_auth(&body)?;
+                    let records: Vec<Value> = PORKBUN_RECORDS.lock().unwrap().iter()
+                        .filter(|r| r.0 == zone && r.1 == name && r.2 == kind)
+                        .map(|r| json!({"id":"1","name":format!("{}.{}", r.1, r.0),"type":r.2,"content":r.3,"ttl":"600"}))
+                        .collect();
+                    Ok::<_, Failure>(Json(json!({"status":"SUCCESS","records":records})))
+                }),
+            )
+            .route("/porkbun/dns/create/{zone}", post(|axum::extract::Path(zone): axum::extract::Path<String>, Json(body): Json<Value>| async move {
+                porkbun_auth(&body)?;
+                let record = (
+                    zone,
+                    body["name"].as_str().unwrap_or_default().to_owned(),
+                    body["type"].as_str().unwrap_or_default().to_owned(),
+                    body["content"].as_str().unwrap_or_default().to_owned(),
+                );
+                let mut records = PORKBUN_RECORDS.lock().unwrap();
+                if records.contains(&record) {
+                    return Err((StatusCode::BAD_REQUEST, Json(json!({"status":"ERROR","code":"DUPLICATE_RECORD","message":"Duplicate record."}))));
+                }
+                records.push(record);
+                Ok(Json(json!({"status":"SUCCESS","id":1})))
             }))
             .route("/json/GetRankAndTrafficStats", get(|headers: HeaderMap, Query(p): Params| async move {
                 checked(&p, &headers, true)?;
@@ -525,6 +579,10 @@ mod flow {
                 redirect_uri: "https://slimlytics.test/app".into(),
                 oauth_base: bing.clone(),
             }),
+        })
+        .with_porkbun(PorkbunConfig {
+            api_base: format!("{bing}/porkbun"),
+            encryption_key: [9_u8; 32],
         }));
         sqlx::query("DELETE FROM sites WHERE domain='bing-new.example'")
             .execute(&pool)
@@ -607,6 +665,24 @@ mod flow {
         .unwrap();
         assert!(!stored.contains("refresh-"));
 
+        // Porkbun keys are checked before they are stored, and only the hint is ever returned.
+        let porkbun =
+            |body: Value| request("PUT", "/api/account/integrations/porkbun", &token, body);
+        let (status, _) = send(
+            &router,
+            porkbun(json!({"apiKey":"pk1_bad","secretApiKey":"sk1_bad"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, saved) = send(
+            &router,
+            porkbun(json!({"apiKey":" pk1_good ","secretApiKey":"sk1_good"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        assert_eq!(saved["apiKeyHint"], "good");
+        assert!(!saved.to_string().contains("sk1_good"));
+
         let (status, added) =
             send(&router, call("POST", "/integrations/bing/site", json!({}))).await;
         assert_eq!(status, StatusCode::OK, "{added}");
@@ -615,6 +691,17 @@ mod flow {
             added["dnsRecord"],
             json!({"type":"CNAME","name":"dns123","fqdn":"dns123.bing-new.example.","value":"verify.bing.com"})
         );
+        assert_eq!(added["dnsAutomation"]["status"], "created", "{added}");
+        assert_eq!(added["dnsAutomation"]["zone"], "bing-new.example");
+        // Adding again finds the record already in place instead of creating another.
+        let (_, again) = send(&router, call("POST", "/integrations/bing/site", json!({}))).await;
+        assert_eq!(again["dnsAutomation"]["status"], "exists", "{again}");
+        assert!(PORKBUN_RECORDS.lock().unwrap().contains(&(
+            "bing-new.example".into(),
+            "dns123".into(),
+            "CNAME".into(),
+            "verify.bing.com".into()
+        )));
         assert_eq!(
             added["metaTag"],
             r#"<meta name="msvalidate.01" content="CODE123" />"#
@@ -686,4 +773,26 @@ fn pkce_challenge_matches_rfc_7636() {
         ),
         "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
     );
+}
+
+#[test]
+fn porkbun_zones_and_names() {
+    use slimlytics_backend::porkbun::{is_dns_label, relative_name, zone_candidates};
+    assert_eq!(
+        zone_candidates("Docs.Example.co.uk."),
+        vec!["docs.example.co.uk", "example.co.uk", "co.uk"]
+    );
+    assert_eq!(zone_candidates("com"), Vec::<String>::new());
+    assert_eq!(
+        relative_name("abc.docs.example.com", "example.com").as_deref(),
+        Some("abc.docs")
+    );
+    assert_eq!(
+        relative_name("example.com.", "example.com").as_deref(),
+        Some("")
+    );
+    assert_eq!(relative_name("example.org", "example.com"), None);
+    assert_eq!(relative_name("badexample.com", "example.com"), None);
+    assert!(is_dns_label("7c69828857bf17add8ec212638faeea4"));
+    assert!(!is_dns_label("a.b") && !is_dns_label("") && !is_dns_label("-a"));
 }

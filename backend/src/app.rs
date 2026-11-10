@@ -29,6 +29,7 @@ use crate::{
     identity::derive_ids,
     marketing::marketing_context,
     models::*,
+    porkbun::{is_dns_label, key_hint, relative_name, zone_candidates, PorkbunConfig},
     privacy::sanitize_url,
     reporting::{compare_bounds, compare_shift, date_bounds, hour_slots, DateBounds},
     search_console::{
@@ -106,6 +107,7 @@ pub struct AppState {
     geoip: Option<Arc<GeoIp>>,
     search_console: Option<Arc<SearchConsoleConfig>>,
     bing: Option<Arc<BingConfig>>,
+    porkbun: Option<Arc<PorkbunConfig>>,
     /// Hosted-plan billing; `None` (the default) means no plans or limits.
     billing: Option<Arc<crate::billing::BillingConfig>>,
     http: reqwest::Client,
@@ -132,6 +134,7 @@ impl AppState {
             geoip: None,
             search_console: None,
             bing: None,
+            porkbun: None,
             billing: None,
             http: reqwest::Client::new(),
             previous_visitors: Arc::new(DashMap::new()),
@@ -174,6 +177,10 @@ impl AppState {
     }
     pub fn with_search_console(mut self, config: SearchConsoleConfig) -> Self {
         self.search_console = Some(Arc::new(config));
+        self
+    }
+    pub fn with_porkbun(mut self, config: PorkbunConfig) -> Self {
+        self.porkbun = Some(Arc::new(config));
         self
     }
     pub fn with_bing(mut self, config: BingConfig) -> Self {
@@ -378,6 +385,10 @@ pub fn app(state: AppState) -> Router {
             delete(revoke_current_api_token),
         )
         .route("/api/account/tokens/{token_id}", delete(revoke_api_token))
+        .route(
+            "/api/account/integrations/porkbun",
+            get(porkbun_status).put(save_porkbun).delete(delete_porkbun),
+        )
         .route("/api/sites", get(list_sites).post(create_site))
         .route("/api/sites/ensure", post(ensure_site))
         .route(
@@ -3346,10 +3357,13 @@ async fn add_search_console_property(
     .bind(site)
     .execute(&s.pool)
     .await?;
+    let automation =
+        porkbun_add_record(&s, u, &domain, &domain, "TXT", &verification.token).await?;
     Ok(Json(json!({
         "propertyUrl":property,
         "verificationMethod":"DNS_TXT",
-        "dnsRecord":{"type":"TXT","name":domain,"value":verification.token}
+        "dnsRecord":{"type":"TXT","name":domain,"value":verification.token},
+        "dnsAutomation":automation
     })))
 }
 
@@ -3559,6 +3573,247 @@ async fn search_console_report(
             })
             .collect(),
     ))
+}
+
+fn porkbun_config(state: &AppState) -> Result<&PorkbunConfig, ApiError> {
+    state.porkbun.as_deref().ok_or_else(|| {
+        ApiError::BadRequest("Porkbun DNS automation is not configured on this deployment".into())
+    })
+}
+
+/// A Porkbun API call's outcome: the parsed body on success, or Porkbun's error code and a
+/// message safe to show (both keys redacted). Response bodies are never logged.
+async fn porkbun_call(
+    state: &AppState,
+    config: &PorkbunConfig,
+    path: &str,
+    keys: (&str, &str),
+    mut body: Value,
+) -> Result<Value, (String, String)> {
+    body["apikey"] = json!(keys.0);
+    body["secretapikey"] = json!(keys.1);
+    let response = state
+        .http
+        .post(format!("{}/{path}", config.api_base.trim_end_matches('/')))
+        .json(&body)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|error| {
+            tracing::warn!(error = %error.without_url(), path, "Porkbun request failed");
+            (
+                "UNREACHABLE".to_string(),
+                "Porkbun could not be reached".to_string(),
+            )
+        })?;
+    let status = response.status();
+    let value: Value = response.json().await.unwrap_or(Value::Null);
+    if status.is_success() && value["status"] == "SUCCESS" {
+        return Ok(value);
+    }
+    let code = value["code"].as_str().unwrap_or("ERROR").to_string();
+    tracing::warn!(%status, path, code, "Porkbun request rejected");
+    let message = value["message"]
+        .as_str()
+        .unwrap_or("Porkbun rejected the request")
+        .replace(keys.0, "[redacted]")
+        .replace(keys.1, "[redacted]");
+    Err((code, message))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PorkbunKeysInput {
+    api_key: String,
+    secret_api_key: String,
+}
+
+async fn porkbun_status(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    let hint: Option<String> =
+        sqlx::query_scalar("SELECT api_key_hint FROM porkbun_credentials WHERE user_id=$1")
+            .bind(u)
+            .fetch_optional(&s.pool)
+            .await?;
+    Ok(Json(json!({
+        "configured":s.porkbun.is_some(),"connected":hint.is_some(),"apiKeyHint":hint
+    })))
+}
+
+/// Checks the keys with Porkbun's ping and stores them encrypted for this user.
+async fn save_porkbun(
+    State(s): State<AppState>,
+    SessionUser(u): SessionUser,
+    Json(input): Json<PorkbunKeysInput>,
+) -> Result<Json<Value>, ApiError> {
+    let config = porkbun_config(&s)?;
+    let (api_key, secret) = (input.api_key.trim(), input.secret_api_key.trim());
+    if api_key.is_empty() || secret.is_empty() || api_key.len() > 200 || secret.len() > 200 {
+        return Err(ApiError::BadRequest(
+            "Enter your Porkbun API key and secret key".into(),
+        ));
+    }
+    porkbun_call(&s, config, "ping", (api_key, secret), json!({}))
+        .await
+        .map_err(|(_, message)| ApiError::BadRequest(format!("Porkbun: {message}")))?;
+    let encrypt =
+        |value: &str| encrypt_token(&config.encryption_key, value).map_err(|_| ApiError::Internal);
+    let hint = key_hint(api_key);
+    sqlx::query(
+        "INSERT INTO porkbun_credentials(user_id,api_key_encrypted,secret_key_encrypted,api_key_hint)
+         VALUES($1,$2,$3,$4)
+         ON CONFLICT(user_id) DO UPDATE SET api_key_encrypted=EXCLUDED.api_key_encrypted,
+           secret_key_encrypted=EXCLUDED.secret_key_encrypted,
+           api_key_hint=EXCLUDED.api_key_hint,updated_at=now()",
+    )
+    .bind(u)
+    .bind(encrypt(api_key)?)
+    .bind(encrypt(secret)?)
+    .bind(&hint)
+    .execute(&s.pool)
+    .await?;
+    Ok(Json(
+        json!({"configured":true,"connected":true,"apiKeyHint":hint}),
+    ))
+}
+
+async fn delete_porkbun(
+    State(s): State<AppState>,
+    SessionUser(u): SessionUser,
+) -> Result<StatusCode, ApiError> {
+    sqlx::query("DELETE FROM porkbun_credentials WHERE user_id=$1")
+        .bind(u)
+        .execute(&s.pool)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Creates a verification record with the requesting user's Porkbun keys, in the longest zone of
+/// theirs that holds `fqdn`. Returns `None` when the user has not connected Porkbun, else
+/// `{provider, status: created|exists|failed, message?}`. Never fails the caller: a failure is
+/// reported so the user can add the record by hand.
+async fn porkbun_add_record(
+    state: &AppState,
+    user: Uuid,
+    site_domain: &str,
+    fqdn: &str,
+    record_type: &str,
+    content: &str,
+) -> Result<Option<Value>, ApiError> {
+    let Some(config) = state.porkbun.as_deref() else {
+        return Ok(None);
+    };
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT api_key_encrypted,secret_key_encrypted FROM porkbun_credentials WHERE user_id=$1",
+    )
+    .bind(user)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((key, secret)) = row else {
+        return Ok(None);
+    };
+    let decrypt = |value: &str| {
+        decrypt_token(&config.encryption_key, value).map_err(|error| {
+            tracing::error!(error, "stored Porkbun key could not be decrypted");
+            ApiError::Internal
+        })
+    };
+    let (key, secret) = (decrypt(&key)?, decrypt(&secret)?);
+    let keys = (key.as_str(), secret.as_str());
+    let failed = |message: String| {
+        Ok(Some(
+            json!({"provider":"porkbun","status":"failed","message":message}),
+        ))
+    };
+    // The zone is the longest of the site domain's parents that this Porkbun account holds; a
+    // record name never sits above the site's own domain.
+    let mut zone = None;
+    for candidate in zone_candidates(site_domain) {
+        match porkbun_call(
+            state,
+            config,
+            "domain/listAll",
+            keys,
+            json!({"domain":candidate}),
+        )
+        .await
+        {
+            Ok(value)
+                if value["domains"]
+                    .as_array()
+                    .is_some_and(|list| !list.is_empty()) =>
+            {
+                zone = Some(candidate);
+                break;
+            }
+            Ok(_) => {}
+            Err((_, message)) => return failed(message),
+        }
+    }
+    let Some(zone) = zone else {
+        return failed(format!("{site_domain} is not in your Porkbun account"));
+    };
+    let Some(name) = relative_name(fqdn, &zone) else {
+        return failed(format!("{fqdn} is outside {zone}"));
+    };
+    // Look before creating, so a record already in place counts as done.
+    let records = match porkbun_call(
+        state,
+        config,
+        &format!("dns/retrieveByNameType/{zone}/{record_type}/{name}"),
+        keys,
+        json!({}),
+    )
+    .await
+    {
+        Ok(value) => value["records"].as_array().cloned().unwrap_or_default(),
+        Err((code, message)) => {
+            return failed(if code == "API_ACCESS_DISABLED" {
+                format!("API access is off for {zone} in Porkbun. Turn it on in Porkbun's domain management, then try again.")
+            } else {
+                message
+            })
+        }
+    };
+    let same = |record: &Value| {
+        record["content"]
+            .as_str()
+            // TXT values may come back quoted, CNAME targets with a trailing dot.
+            .is_some_and(|value| {
+                value
+                    .trim_matches('"')
+                    .trim_end_matches('.')
+                    .eq_ignore_ascii_case(content)
+            })
+    };
+    if records.iter().any(same) {
+        return Ok(Some(
+            json!({"provider":"porkbun","status":"exists","zone":zone}),
+        ));
+    }
+    match porkbun_call(
+        state,
+        config,
+        &format!("dns/create/{zone}"),
+        keys,
+        json!({"name":name,"type":record_type,"content":content,"ttl":600}),
+    )
+    .await
+    {
+        Ok(_) => Ok(Some(
+            json!({"provider":"porkbun","status":"created","zone":zone}),
+        )),
+        Err((code, _)) if code == "DUPLICATE_RECORD" => Ok(Some(
+            json!({"provider":"porkbun","status":"exists","zone":zone}),
+        )),
+        Err((code, message)) => failed(if code == "API_ACCESS_DISABLED" {
+            format!("API access is off for {zone} in Porkbun. Turn it on in Porkbun's domain management, then try again.")
+        } else {
+            message
+        }),
+    }
 }
 
 fn bing_config(state: &AppState) -> Result<&BingConfig, ApiError> {
@@ -4152,6 +4407,26 @@ async fn add_bing_site(
     .await?;
     tx.commit().await?;
     let mut response = verification_methods(&connection.domain, code, dns_code);
+    let label = response["dnsRecord"]["name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    // Bing's code becomes a host name, so it must be a plain label.
+    response["dnsAutomation"] = if is_dns_label(&label) {
+        json!(
+            porkbun_add_record(
+                &s,
+                u,
+                &connection.domain,
+                &format!("{label}.{}", connection.domain),
+                "CNAME",
+                "verify.bing.com",
+            )
+            .await?
+        )
+    } else {
+        Value::Null
+    };
     response["siteUrl"] = json!(entry.url);
     response["verified"] = json!(false);
     Ok(Json(response))

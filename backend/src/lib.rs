@@ -10,6 +10,7 @@ pub mod identity;
 pub mod maintenance;
 pub mod marketing;
 pub mod models;
+pub mod porkbun;
 pub mod privacy;
 pub mod reporting;
 pub mod search_console;
