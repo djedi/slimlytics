@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { env } from '$env/dynamic/public';
@@ -961,6 +961,12 @@
    * catches up. Stops when verified, when `active` turns false (the setup was replaced, the site
    * changed, or the user verified by hand), or after about four minutes.
    */
+  // Set when this dashboard is torn down (e.g. navigating to /account), which ends any
+  // automatic verification it started.
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+  });
   async function autoVerify(
     id: string,
     provider: string,
@@ -973,14 +979,14 @@
     for (const seconds of [5, 10, 15, 20, 30, 45, 60, 60]) {
       say(waiting);
       await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
-      if (site?.id !== id || !active()) return;
+      if (destroyed || site?.id !== id || !active()) return;
       // A verify the user started is still running: let it finish, and try on the next tick.
       if (busy()) continue;
       if (await verify()) return;
-      if (site?.id !== id || !active()) return;
+      if (destroyed || site?.id !== id || !active()) return;
     }
     // A verify the user started is still running; it reports its own outcome.
-    if (busy() || site?.id !== id || !active()) return;
+    if (destroyed || busy() || site?.id !== id || !active()) return;
     say(`Porkbun has the record, but ${provider} can’t see it yet. DNS can take a while; click Verify in a few minutes.`);
   }
   async function addBingSite() {
