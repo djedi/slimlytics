@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { env } from '$env/dynamic/public';
@@ -795,6 +795,18 @@
       if (!current()) return;
       searchConsoleProperty = property;
       setSearchConsole(id, status);
+      const automation = property.dnsAutomation;
+      if (automation?.status === 'failed') {
+        searchConsoleNotice = `Porkbun couldn’t add the record: ${automation.message ?? 'unknown error'}. Add it below, then verify.`;
+      } else if (automation) {
+        // Not awaited: the add ends (and releases its busy state) while the verify attempts run.
+        // Compared by value: the stored property is a state proxy, not this object.
+        const token = property.dnsRecord.value;
+        void autoVerify(id, 'Google', () => searchConsoleProperty?.dnsRecord.value === token, () => searchConsoleBusy, verifySearchConsoleProperty, (text) => {
+          if (site?.id === id) searchConsoleNotice = text;
+        });
+        return;
+      }
     } catch (reason) {
       if (current())
         searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not add the property.';
@@ -802,8 +814,8 @@
       finishSearchConsoleChange(op);
     }
   }
-  async function verifySearchConsoleProperty() {
-    if (!site) return;
+  async function verifySearchConsoleProperty(): Promise<boolean> {
+    if (!site) return false;
     const id = site.id;
     const period = range.period;
     const op = ++searchConsoleOp;
@@ -818,7 +830,7 @@
       } catch (reason) {
         if (current())
           searchConsoleNotice = reason instanceof Error ? reason.message : 'Could not verify the property.';
-        return;
+        return false;
       }
       // Verification is saved; a failed first sync must not leave the card in the setup state.
       if (current()) {
@@ -837,6 +849,7 @@
             reason instanceof Error ? reason.message : 'unknown error'
           }. Try Sync now.`;
       }
+      return true;
     } finally {
       finishSearchConsoleChange(op);
     }
@@ -943,6 +956,39 @@
     await goto(appHref(pending.siteId, 'settings', range), { replaceState: true });
     return true;
   }
+  /**
+   * After Porkbun adds a verification record, keeps asking the provider to verify it while DNS
+   * catches up. Stops when verified, when `active` turns false (the setup was replaced, the site
+   * changed, or the user verified by hand), or after about four minutes.
+   */
+  // Set when this dashboard is torn down (e.g. navigating to /account), which ends any
+  // automatic verification it started.
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+  });
+  async function autoVerify(
+    id: string,
+    provider: string,
+    active: () => boolean,
+    busy: () => boolean,
+    verify: () => Promise<boolean>,
+    say: (text: string) => void
+  ) {
+    const waiting = `Added the DNS record in Porkbun. Waiting for ${provider} to see it…`;
+    for (const seconds of [5, 10, 15, 20, 30, 45, 60, 60]) {
+      say(waiting);
+      await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+      if (destroyed || site?.id !== id || !active()) return;
+      // A verify the user started is still running: let it finish, and try on the next tick.
+      if (busy()) continue;
+      if (await verify()) return;
+      if (destroyed || site?.id !== id || !active()) return;
+    }
+    // A verify the user started is still running; it reports its own outcome.
+    if (destroyed || busy() || site?.id !== id || !active()) return;
+    say(`Porkbun has the record, but ${provider} can’t see it yet. DNS can take a while; click Verify in a few minutes.`);
+  }
   async function addBingSite() {
     if (!site || bingPending[site.id]) return;
     const id = site.id;
@@ -955,6 +1001,17 @@
       if (site?.id !== id || bingVersions[id] !== version) return;
       if (!setup.verified) {
         bingSiteSetup = setup;
+        const automation = setup.dnsAutomation;
+        if (automation?.status === 'failed') {
+          bingNotice = `Porkbun couldn’t add the record: ${automation.message ?? 'unknown error'}. Add it below, then verify.`;
+        } else if (automation) {
+          // Not awaited: the add is done, so its busy state ends while the verify attempts run.
+          // Compared by value: the stored setup is a state proxy, not this object.
+          const record = setup.dnsRecord.fqdn;
+          void autoVerify(id, 'Bing', () => bingSiteSetup?.dnsRecord.fqdn === record, () => Boolean(bingPending[id]), verifyBingSite, (text) => {
+            if (site?.id === id) bingNotice = text;
+          });
+        }
         return;
       }
       // Bing already had it verified, so the connection is matched: load its data.
@@ -974,8 +1031,8 @@
       setBingPending(id, false);
     }
   }
-  async function verifyBingSite() {
-    if (!site || bingPending[site.id]) return;
+  async function verifyBingSite(): Promise<boolean> {
+    if (!site || bingPending[site.id]) return false;
     const id = site.id;
     setBingPending(id, true);
     bingNotice = '';
@@ -984,7 +1041,7 @@
         await api.verifyBingSite(id);
       } catch (reason) {
         if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not verify the site.';
-        return;
+        return false;
       }
       // The connection now has its Bing site: reload its status (a failed verify keeps the records).
       finishBingChange(id);
@@ -997,6 +1054,7 @@
         if (site?.id === id)
           bingNotice = `Verified, but the first sync failed: ${reason instanceof Error ? reason.message : 'unknown error'}. Try Sync now.`;
       }
+      return true;
     } finally {
       setBingPending(id, false);
     }
@@ -1766,6 +1824,9 @@
                     Added <code>{searchConsoleProperty.propertyUrl}</code>. Add this DNS record at your
                     domain’s DNS provider, then verify. DNS changes can take a few minutes to appear.
                   </p>
+                  {#if !searchConsoleProperty.dnsAutomation}
+                    <p class="muted">Use Porkbun? <a href="/account">Connect it in your account</a> and Slimlytics adds records like this for you.</p>
+                  {/if}
                   <dl aria-label="DNS verification record">
                     <div><dt>Type</dt><dd><code>{searchConsoleProperty.dnsRecord.type}</code></dd></div>
                     <div><dt>Name</dt><dd><code>{searchConsoleProperty.dnsRecord.name}</code></dd></div>
@@ -1785,6 +1846,12 @@
                     <button class="primary" disabled={searchConsoleBusy} onclick={() => void verifySearchConsoleProperty()}
                       >{searchConsoleBusy ? 'Checking…' : 'Verify'}</button
                     >
+                    {#if searchConsoleProperty.dnsAutomation?.status === 'failed'}
+                      <!-- Adding again is safe: Google reuses the property, Porkbun skips a record already there. -->
+                      <button class="secondary" disabled={searchConsoleBusy} onclick={() => void addSearchConsoleProperty()}
+                        >Retry Porkbun</button
+                      >
+                    {/if}
                   {:else}
                     <button class="primary" disabled={searchConsoleBusy} onclick={() => void addSearchConsoleProperty()}
                       >{searchConsoleBusy ? 'Adding…' : 'Add to Search Console'}</button
@@ -1838,6 +1905,9 @@
                     Added <code>{bingSetup.siteUrl}</code> to Bing. Publish one of these, then verify.
                     The DNS record is usually easiest; DNS changes can take a few minutes to appear.
                   </p>
+                  {#if !bingSetup.dnsAutomation}
+                    <p class="muted">Use Porkbun? <a href="/account">Connect it in your account</a> and Slimlytics adds records like this for you.</p>
+                  {/if}
                   <dl aria-label="Bing DNS verification record">
                     <div><dt>Type</dt><dd><code>{bingSetup.dnsRecord.type}</code></dd></div>
                     <div><dt>Name</dt><dd><code>{bingSetup.dnsRecord.name}</code></dd></div>
@@ -1859,6 +1929,9 @@
                     <button class="primary" disabled={bingBusy} onclick={() => void verifyBingSite()}
                       >{bingBusy ? 'Checking…' : 'Verify'}</button
                     >
+                    {#if bingSetup.dnsAutomation?.status === 'failed'}
+                      <button class="secondary" disabled={bingBusy} onclick={() => void addBingSite()}>Retry Porkbun</button>
+                    {/if}
                   {:else}
                     <button class="primary" disabled={bingBusy} onclick={() => void addBingSite()}
                       >{bingBusy ? 'Adding…' : 'Add to Bing'}</button

@@ -2115,6 +2115,92 @@
         ]
       }
     },
+    "/api/account/integrations/porkbun": {
+      "get": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Get Porkbun DNS automation status",
+        "description": "Whether this deployment supports Porkbun DNS automation and whether the user has connected Porkbun. Returns the last four characters of the API key, never the keys.",
+        "operationId": "getPorkbunStatus",
+        "responses": {
+          "200": {
+            "description": "Configured, connected, and API key hint"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Connect Porkbun DNS automation",
+        "description": "Checks the keys with Porkbun's ping and stores them encrypted. With them, adding a Search Console property or a Bing site also creates its verification record (create only, never edit or delete) in the user's Porkbun zone. Requires a browser session.",
+        "operationId": "savePorkbun",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "apiKey",
+                  "secretApiKey"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "secretApiKey": {
+                    "type": "string",
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connected status and API key hint"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Disconnect Porkbun and delete its keys",
+        "operationId": "deletePorkbun",
+        "responses": {
+          "204": {
+            "description": "Porkbun disconnected"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/api/account/tokens/{tokenId}": {
       "delete": {
         "tags": [
@@ -3973,7 +4059,7 @@
       "post": {
         "tags": ["Reporting"],
         "summary": "Add the site to Search Console as a domain property",
-        "description": "Adds `sc-domain:{domain}` to the connected Google account and returns the DNS TXT record Google needs to verify it.",
+        "description": "Adds `sc-domain:{domain}` to the connected Google account and returns the DNS TXT record Google needs to verify it. With Porkbun connected, the record is also created there and dnsAutomation reports created, exists, or failed.",
         "operationId": "addSearchConsoleProperty",
         "parameters": [{"$ref": "#/components/parameters/SiteId"}],
         "responses": {
@@ -4279,7 +4365,7 @@
           "Reporting"
         ],
         "summary": "Add the site to the connected Bing account",
-        "description": "Adds https://{domain}/ to Bing Webmaster Tools (a no-op if it is already there) and returns what to publish to verify it: a DNS CNAME record (name relative to the domain, and the absolute name), a msvalidate.01 meta tag, or a BingSiteAuth.xml file. If Bing already has the site verified, the connection is matched to it and the response is just the site URL with verified true.",
+        "description": "Adds https://{domain}/ to Bing Webmaster Tools (a no-op if it is already there) and returns what to publish to verify it: a DNS CNAME record (name relative to the domain, and the absolute name), a msvalidate.01 meta tag, or a BingSiteAuth.xml file. If Bing already has the site verified, the connection is matched to it and the response is just the site URL with verified true. With Porkbun connected, the CNAME is also created there and dnsAutomation reports created, exists, or failed.",
         "operationId": "addBingSite",
         "parameters": [
           {

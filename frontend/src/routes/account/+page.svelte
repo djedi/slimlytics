@@ -2,13 +2,14 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { env } from '$env/dynamic/public';
-  import { KeyRound, Laptop, ShieldCheck, Trash2 } from '@lucide/svelte';
+  import { Globe, KeyRound, Laptop, ShieldCheck, Trash2 } from '@lucide/svelte';
   import {
     ApiClient,
     ApiError,
     browserSession,
     type AccountSession,
     type PasskeySummary,
+    type PorkbunStatus,
     type User
   } from '$lib/api';
   import { createPasskey, getPasskey, passkeyErrorMessage, passkeysSupported } from '$lib/webauthn';
@@ -30,6 +31,9 @@
   let notice = $state('');
   let passkeyName = $state('Passkey');
   let password = $state('');
+  let porkbun = $state<PorkbunStatus | null>(null);
+  let porkbunKey = $state('');
+  let porkbunSecret = $state('');
 
   const mfa = $derived(account?.mfaVerified ?? false);
   // Adding a first passkey needs the password. Adding or removing one once any exist needs
@@ -47,9 +51,25 @@
   async function load() {
     try {
       [account, passkeys, sessions] = await Promise.all([api.me(), api.passkeys(), api.accountSessions()]);
+      // Optional: the page still works if this deployment has no integration key.
+      porkbun = await api.porkbunStatus().catch(() => null);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not load your account.';
     }
+  }
+
+  function savePorkbun(event: SubmitEvent) {
+    event.preventDefault();
+    const [key, secret] = [porkbunKey.trim(), porkbunSecret.trim()];
+    if (!key || !secret) return;
+    void run(async () => {
+      await api.savePorkbun(key, secret);
+      porkbunKey = '';
+      porkbunSecret = '';
+    }, 'Porkbun connected. Slimlytics will add verification records for you.');
+  }
+  function removePorkbun() {
+    void run(() => api.deletePorkbun(), 'Porkbun disconnected. Its keys were deleted.');
   }
 
   async function run(task: () => Promise<void>, success: string) {
@@ -182,6 +202,51 @@
         </p>
       {/if}
     </section>
+
+    <!-- Shown while connected even if the deployment dropped its integration key, so stored keys
+         can always be deleted; adding or replacing keys needs the key. -->
+    {#if porkbun?.configured || porkbun?.connected}
+      <section class="console-card" aria-labelledby="porkbun-title">
+        <div class="console-card-head">
+          <div>
+            <h2 id="porkbun-title">DNS automation (Porkbun)</h2>
+            <p class="card-intro">
+              With your Porkbun API keys, Slimlytics adds the DNS record Google Search Console or Bing
+              needs when you add a site there, then verifies it. It only ever creates records.
+            </p>
+          </div>
+          {#if porkbun.connected}
+            <button class="secondary" disabled={busy} onclick={removePorkbun}>Disconnect</button>
+          {/if}
+        </div>
+        {#if porkbun.connected}
+          <ul class="console-list" aria-label="Porkbun connection">
+            <li>
+              <span class="console-icon"><Globe size={17} aria-hidden="true" /></span>
+              <span class="grow">
+                <strong>Connected</strong>
+                <small>API key ending in {porkbun.apiKeyHint}. Enter new keys below to replace them.</small>
+              </span>
+            </li>
+          </ul>
+        {:else}
+          <p class="card-intro">
+            Create an API key at
+            <a href="https://porkbun.com/account/api" target="_blank" rel="noopener noreferrer">porkbun.com/account/api</a>,
+            then turn on <strong>API access</strong> for each domain in Porkbun's domain management.
+          </p>
+        {/if}
+        {#if porkbun.configured}
+        <form class="console-form" onsubmit={savePorkbun}>
+          <input type="password" autocomplete="off" aria-label="Porkbun API key" placeholder="API key (pk1_…)" bind:value={porkbunKey} />
+          <input type="password" autocomplete="off" aria-label="Porkbun secret key" placeholder="Secret key (sk1_…)" bind:value={porkbunSecret} />
+          <button class="primary" type="submit" disabled={busy || !porkbunKey.trim() || !porkbunSecret.trim()}
+            >{porkbun.connected ? 'Replace keys' : 'Connect Porkbun'}</button
+          >
+        </form>
+        {/if}
+      </section>
+    {/if}
 
     <section class="console-card" aria-labelledby="devices-title">
       <div class="console-card-head">

@@ -3,6 +3,7 @@ use base64::Engine;
 use slimlytics_backend::bing_webmaster::{
     BingConfig, BingOAuthConfig, BING_API_BASE, BING_OAUTH_BASE,
 };
+use slimlytics_backend::porkbun::{PorkbunConfig, PORKBUN_API_BASE};
 use slimlytics_backend::search_console::SearchConsoleConfig;
 use slimlytics_backend::{
     app,
@@ -202,6 +203,10 @@ async fn main() -> Result<()> {
         anyhow::bail!("Bing OAuth needs INTEGRATION_ENCRYPTION_KEY to store refresh tokens");
     }
     if let Some(encryption_key) = integration_key {
+        state = state.with_porkbun(PorkbunConfig {
+            api_base: PORKBUN_API_BASE.into(),
+            encryption_key,
+        });
         state = state.with_bing(BingConfig {
             api_base: optional_env("BING_WEBMASTER_API_BASE")
                 .unwrap_or_else(|| BING_API_BASE.into()),
