@@ -3781,6 +3781,32 @@ async fn porkbun_add_record(
     let Some(zone) = zone else {
         return failed(format!("{site_domain} is not in your Porkbun account"));
     };
+    // A record in Porkbun's zone is only public if Porkbun serves the domain's DNS.
+    if let Ok(value) = porkbun_call(
+        state,
+        config,
+        &format!("domain/getNs/{zone}"),
+        keys,
+        json!({}),
+    )
+    .await
+    {
+        let servers: Vec<String> = value["ns"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .map(|ns| ns.trim_end_matches('.').to_ascii_lowercase())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !servers.is_empty() && !servers.iter().all(|ns| ns.ends_with(".porkbun.com")) {
+            return failed(format!(
+                "{zone} uses nameservers outside Porkbun ({}), so add the record with that DNS provider",
+                servers.join(", ")
+            ));
+        }
+    }
     let Some(name) = relative_name(fqdn, &zone) else {
         return failed(format!("{fqdn} is outside {zone}"));
     };

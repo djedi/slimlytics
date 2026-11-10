@@ -277,6 +277,10 @@ mod flow {
                     Ok::<_, Failure>(Json(json!({"status":"SUCCESS","records":records})))
                 }),
             )
+            .route("/porkbun/domain/getNs/{zone}", post(|Json(body): Json<Value>| async move {
+                porkbun_auth(&body)?;
+                Ok::<_, Failure>(Json(json!({"status":"SUCCESS","ns":["curitiba.ns.porkbun.com","fortaleza.ns.porkbun.com"]})))
+            }))
             .route("/porkbun/dns/create/{zone}", post(|axum::extract::Path(zone): axum::extract::Path<String>, Json(body): Json<Value>| async move {
                 porkbun_auth(&body)?;
                 let record = (
