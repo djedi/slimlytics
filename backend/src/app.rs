@@ -3779,34 +3779,41 @@ async fn sync_bing(
         bing_request::<BingStatsRow>(&s, config, "GetPageStats", key, url),
         bing_request::<BingTrafficRow>(&s, config, "GetRankAndTrafficStats", key, url),
     )?;
+    // An unreadable date means Bing's format changed; fail rather than replace the cache with less.
+    let bucket = |value: &str| {
+        parse_date(value).ok_or_else(|| {
+            tracing::warn!(value, "unreadable Bing Webmaster date");
+            ApiError::BadRequest(
+                "Bing Webmaster Tools returned a date Slimlytics can't read".into(),
+            )
+        })
+    };
     let mut rows = Vec::new();
     for (kind, stats) in [("query", &queries), ("page", &pages)] {
         for row in stats {
-            if let Some(date) = parse_date(&row.date) {
-                rows.push(BingMetric {
-                    kind,
-                    date,
-                    value: report_value(kind, &row.query),
-                    clicks: row.clicks,
-                    impressions: row.impressions,
-                    position: position(row.avg_impression_position),
-                    ranked_impressions: 0.0,
-                });
-            }
-        }
-    }
-    for row in &traffic {
-        if let Some(date) = parse_date(&row.date) {
+            let date = bucket(&row.date)?;
             rows.push(BingMetric {
-                kind: "total",
+                kind,
                 date,
-                value: String::new(),
+                value: report_value(kind, &row.query),
                 clicks: row.clicks,
                 impressions: row.impressions,
-                position: None,
+                position: position(row.avg_impression_position),
                 ranked_impressions: 0.0,
             });
         }
+    }
+    for row in &traffic {
+        let date = bucket(&row.date)?;
+        rows.push(BingMetric {
+            kind: "total",
+            date,
+            value: String::new(),
+            clicks: row.clicks,
+            impressions: row.impressions,
+            position: None,
+            ranked_impressions: 0.0,
+        });
     }
     let rows = merge_metrics(rows);
     let mut tx = s.pool.begin().await?;

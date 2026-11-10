@@ -898,7 +898,12 @@
       await bingSynced(id);
     } catch (reason) {
       // A sync started on another site must not report into this one.
-      if (site?.id === id) error = reason instanceof Error ? reason.message : 'Could not sync Bing Webmaster Tools.';
+      if (site?.id === id) {
+        const message = reason instanceof Error ? reason.message : 'Could not sync Bing Webmaster Tools.';
+        error = message;
+        // Shown in the settings card too, where the last successful sync time would otherwise mislead.
+        bingNotice = `Sync failed: ${message}`;
+      }
     } finally {
       if (site?.id === id) loading = false;
     }
