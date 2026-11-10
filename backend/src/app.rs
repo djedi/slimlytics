@@ -3357,16 +3357,25 @@ async fn add_search_console_property(
     .bind(site)
     .execute(&s.pool)
     .await?;
-    // Recheck just before publishing: a token for a connection replaced (or a domain changed)
-    // while Google answered must not reach DNS, where it would let the old account verify.
-    let still_current: Option<(String, String)> = sqlx::query_as(
-        "SELECT i.refresh_token_encrypted,s.domain FROM search_console_integrations i
-         JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
+    // Publish under the site and connection locks (the order connect, sync, and domain changes
+    // use): a disconnect, reconnect, or domain change waits until the record is written, and
+    // one that came first means the old account's token must not reach DNS.
+    let mut tx = s.pool.begin().await?;
+    let current_domain: Option<String> =
+        sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+            .bind(site)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let current_connection: Option<String> = sqlx::query_scalar(
+        "SELECT refresh_token_encrypted FROM search_console_integrations
+         WHERE site_id=$1 FOR UPDATE",
     )
     .bind(site)
-    .fetch_optional(&s.pool)
+    .fetch_optional(&mut *tx)
     .await?;
-    if still_current != Some((connection, domain.clone())) {
+    if current_domain.as_deref() != Some(domain.as_str())
+        || current_connection.as_deref() != Some(connection.as_str())
+    {
         return Err(ApiError::BadRequest(
             "Search Console was reconnected or the site changed while adding the property; try again"
                 .into(),
@@ -3374,6 +3383,7 @@ async fn add_search_console_property(
     }
     let automation =
         porkbun_add_record(&s, u, &domain, &domain, "TXT", &verification.token).await?;
+    tx.commit().await?;
     Ok(Json(json!({
         "propertyUrl":property,
         "verificationMethod":"DNS_TXT",
@@ -3749,35 +3759,37 @@ async fn porkbun_add_record(
     };
     let keys = (key.as_str(), secret.as_str());
     // The zone is the longest of the site domain's parents that this Porkbun account holds; a
-    // record name never sits above the site's own domain.
-    let mut zone = None;
-    for candidate in zone_candidates(site_domain) {
-        match porkbun_call(
+    // record name never sits above the site's own domain. The account is listed once, page by
+    // page (Porkbun returns up to 1000 domains per page).
+    let mut held = std::collections::HashSet::new();
+    let mut start = 0_usize;
+    loop {
+        let page = match porkbun_call(
             state,
             config,
             "domain/listAll",
             keys,
-            json!({"domain":candidate}),
+            json!({"start":start}),
         )
         .await
         {
-            // Compare the names returned, rather than trusting the filter alone.
-            Ok(value)
-                if value["domains"].as_array().is_some_and(|list| {
-                    list.iter().any(|entry| {
-                        entry["domain"]
-                            .as_str()
-                            .is_some_and(|name| name.eq_ignore_ascii_case(&candidate))
-                    })
-                }) =>
-            {
-                zone = Some(candidate);
-                break;
-            }
-            Ok(_) => {}
+            Ok(value) => value["domains"].as_array().cloned().unwrap_or_default(),
             Err((_, message)) => return failed(message),
+        };
+        held.extend(
+            page.iter()
+                .filter_map(|entry| entry["domain"].as_str())
+                .map(str::to_ascii_lowercase),
+        );
+        // A short page is the last; the cap bounds a misbehaving API.
+        if page.len() < 1000 || start >= 50_000 {
+            break;
         }
+        start += page.len();
     }
+    let zone = zone_candidates(site_domain)
+        .into_iter()
+        .find(|candidate| held.contains(candidate));
     let Some(zone) = zone else {
         return failed(format!("{site_domain} is not in your Porkbun account"));
     };
@@ -4474,17 +4486,24 @@ async fn add_bing_site(
         .as_str()
         .unwrap_or_default()
         .to_owned();
-    // Recheck just before publishing anything: work for a connection or domain that changed
-    // while Bing answered is dropped. (A record left by a change after this point is inert: it
-    // only proves ownership to the Bing account that already added the site.)
-    let still_current: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT i.connection_id,s.domain FROM bing_webmaster_integrations i
-         JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
+    // Publish under the site and connection locks (the order connect, sync, and domain changes
+    // use): a disconnect, reconnect, or domain change waits until the record is written, and
+    // one that came first means this connection's record must not reach DNS.
+    let mut tx = s.pool.begin().await?;
+    let current_domain: Option<String> =
+        sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+            .bind(site)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let current_connection: Option<Uuid> = sqlx::query_scalar(
+        "SELECT connection_id FROM bing_webmaster_integrations WHERE site_id=$1 FOR UPDATE",
     )
     .bind(site)
-    .fetch_optional(&s.pool)
+    .fetch_optional(&mut *tx)
     .await?;
-    if still_current != Some((connection.connection_id, connection.domain.clone())) {
+    if current_domain.as_deref() != Some(connection.domain.as_str())
+        || current_connection != Some(connection.connection_id)
+    {
         return Err(ApiError::BadRequest(
             "Bing Webmaster Tools was reconnected or the site changed while adding it; try again"
                 .into(),
@@ -4506,6 +4525,7 @@ async fn add_bing_site(
     } else {
         Value::Null
     };
+    tx.commit().await?;
     response["siteUrl"] = json!(entry.url);
     response["verified"] = json!(false);
     Ok(Json(response))

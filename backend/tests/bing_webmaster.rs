@@ -260,7 +260,13 @@ mod flow {
             }))
             .route("/porkbun/domain/listAll", post(|Json(body): Json<Value>| async move {
                 porkbun_auth(&body)?;
-                // Ignores the filter and lists the whole account, so the caller must match names.
+                // A whole page of other domains first, so the caller must follow pagination.
+                if body["start"].as_u64().unwrap_or(0) == 0 {
+                    let filler: Vec<Value> = (0..1000)
+                        .map(|n| json!({"domain":format!("filler{n}.example"),"apiAccess":"yes"}))
+                        .collect();
+                    return Ok(Json(json!({"status":"SUCCESS","count":1000,"domains":filler})));
+                }
                 Ok::<_, Failure>(Json(json!({"status":"SUCCESS","count":2,"domains":[
                     {"domain":"bing-new.example","apiAccess":"yes"},
                     {"domain":"unrelated.example","apiAccess":"yes"}
