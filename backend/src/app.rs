@@ -4072,16 +4072,35 @@ async fn add_bing_site(
             "Bing did not provide verification codes for the site".into(),
         ));
     };
+    // The records are only good for the connection and domain they were issued for; site, then
+    // connection, the lock order connect, sync, and domain changes use.
+    let mut tx = s.pool.begin().await?;
+    let domain: String = sqlx::query_scalar("SELECT domain FROM sites WHERE id=$1 FOR SHARE")
+        .bind(site)
+        .fetch_one(&mut *tx)
+        .await?;
+    let current: Option<Uuid> = sqlx::query_scalar(
+        "SELECT connection_id FROM bing_webmaster_integrations WHERE site_id=$1 FOR UPDATE",
+    )
+    .bind(site)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if domain != connection.domain || current != Some(connection.connection_id) {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or the site changed while adding it; try again"
+                .into(),
+        ));
+    }
     sqlx::query(
         "UPDATE bing_webmaster_integrations
          SET last_error='Publish one of the verification records, then verify the site',
              updated_at=now()
-         WHERE site_id=$1 AND connection_id=$2 AND site_url IS NULL",
+         WHERE site_id=$1 AND site_url IS NULL",
     )
     .bind(site)
-    .bind(connection.connection_id)
-    .execute(&s.pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     let mut response = verification_methods(&connection.domain, code, dns_code);
     response["siteUrl"] = json!(entry.url);
     response["verified"] = json!(entry.is_verified);
