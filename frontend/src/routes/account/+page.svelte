@@ -203,7 +203,9 @@
       {/if}
     </section>
 
-    {#if porkbun?.configured}
+    <!-- Shown while connected even if the deployment dropped its integration key, so stored keys
+         can always be deleted; adding or replacing keys needs the key. -->
+    {#if porkbun?.configured || porkbun?.connected}
       <section class="console-card" aria-labelledby="porkbun-title">
         <div class="console-card-head">
           <div>
@@ -234,6 +236,7 @@
             then turn on <strong>API access</strong> for each domain in Porkbun's domain management.
           </p>
         {/if}
+        {#if porkbun.configured}
         <form class="console-form" onsubmit={savePorkbun}>
           <input type="password" autocomplete="off" aria-label="Porkbun API key" placeholder="API key (pk1_…)" bind:value={porkbunKey} />
           <input type="password" autocomplete="off" aria-label="Porkbun secret key" placeholder="Secret key (sk1_…)" bind:value={porkbunSecret} />
@@ -241,6 +244,7 @@
             >{porkbun.connected ? 'Replace keys' : 'Connect Porkbun'}</button
           >
         </form>
+        {/if}
       </section>
     {/if}
 
