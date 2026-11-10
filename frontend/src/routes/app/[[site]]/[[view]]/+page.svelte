@@ -802,7 +802,7 @@
         // Not awaited: the add ends (and releases its busy state) while the verify attempts run.
         // Compared by value: the stored property is a state proxy, not this object.
         const token = property.dnsRecord.value;
-        void autoVerify(id, 'Google', () => searchConsoleProperty?.dnsRecord.value === token, verifySearchConsoleProperty, (text) => {
+        void autoVerify(id, 'Google', () => searchConsoleProperty?.dnsRecord.value === token, () => searchConsoleBusy, verifySearchConsoleProperty, (text) => {
           if (site?.id === id) searchConsoleNotice = text;
         });
         return;
@@ -965,6 +965,7 @@
     id: string,
     provider: string,
     active: () => boolean,
+    busy: () => boolean,
     verify: () => Promise<boolean>,
     say: (text: string) => void
   ) {
@@ -973,6 +974,8 @@
       say(waiting);
       await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
       if (site?.id !== id || !active()) return;
+      // A verify the user started is still running: let it finish, and try on the next tick.
+      if (busy()) continue;
       if (await verify()) return;
       if (site?.id !== id || !active()) return;
     }
@@ -997,7 +1000,7 @@
           // Not awaited: the add is done, so its busy state ends while the verify attempts run.
           // Compared by value: the stored setup is a state proxy, not this object.
           const record = setup.dnsRecord.fqdn;
-          void autoVerify(id, 'Bing', () => bingSiteSetup?.dnsRecord.fqdn === record, verifyBingSite, (text) => {
+          void autoVerify(id, 'Bing', () => bingSiteSetup?.dnsRecord.fqdn === record, () => Boolean(bingPending[id]), verifyBingSite, (text) => {
             if (site?.id === id) bingNotice = text;
           });
         }
@@ -1835,6 +1838,12 @@
                     <button class="primary" disabled={searchConsoleBusy} onclick={() => void verifySearchConsoleProperty()}
                       >{searchConsoleBusy ? 'Checking…' : 'Verify'}</button
                     >
+                    {#if searchConsoleProperty.dnsAutomation?.status === 'failed'}
+                      <!-- Adding again is safe: Google reuses the property, Porkbun skips a record already there. -->
+                      <button class="secondary" disabled={searchConsoleBusy} onclick={() => void addSearchConsoleProperty()}
+                        >Retry Porkbun</button
+                      >
+                    {/if}
                   {:else}
                     <button class="primary" disabled={searchConsoleBusy} onclick={() => void addSearchConsoleProperty()}
                       >{searchConsoleBusy ? 'Adding…' : 'Add to Search Console'}</button
@@ -1912,6 +1921,9 @@
                     <button class="primary" disabled={bingBusy} onclick={() => void verifyBingSite()}
                       >{bingBusy ? 'Checking…' : 'Verify'}</button
                     >
+                    {#if bingSetup.dnsAutomation?.status === 'failed'}
+                      <button class="secondary" disabled={bingBusy} onclick={() => void addBingSite()}>Retry Porkbun</button>
+                    {/if}
                   {:else}
                     <button class="primary" disabled={bingBusy} onclick={() => void addBingSite()}
                       >{bingBusy ? 'Adding…' : 'Add to Bing'}</button

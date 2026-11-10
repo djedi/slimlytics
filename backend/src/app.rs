@@ -4424,6 +4424,22 @@ async fn add_bing_site(
         .as_str()
         .unwrap_or_default()
         .to_owned();
+    // Recheck just before publishing anything: work for a connection or domain that changed
+    // while Bing answered is dropped. (A record left by a change after this point is inert: it
+    // only proves ownership to the Bing account that already added the site.)
+    let still_current: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT i.connection_id,s.domain FROM bing_webmaster_integrations i
+         JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&s.pool)
+    .await?;
+    if still_current != Some((connection.connection_id, connection.domain.clone())) {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected or the site changed while adding it; try again"
+                .into(),
+        ));
+    }
     // Bing's code becomes a host name, so it must be a plain label.
     response["dnsAutomation"] = if is_dns_label(&label) {
         json!(
