@@ -420,21 +420,23 @@ mod flow {
 
 #[test]
 fn page_values_drop_query_strings_and_fragments() {
+    let page = |raw| report_value("page", raw);
     assert_eq!(
-        report_value(
-            "page",
-            "https://example.com/reset?token=secret&email=a@b.c#top"
-        ),
-        "https://example.com/reset"
+        page("https://example.com/reset?token=secret&email=a@b.c#top").as_deref(),
+        Some("https://example.com/reset")
     );
-    assert_eq!(report_value("page", "not a url?token=secret"), "not a url");
-    assert_eq!(report_value("query", "what is a?b"), "what is a?b");
+    assert_eq!(page("not a url?token=secret"), None);
+    assert_eq!(page("javascript:alert(1)"), None);
+    assert_eq!(
+        report_value("query", "what is a?b").as_deref(),
+        Some("what is a?b")
+    );
 }
 
 #[test]
 fn values_are_bounded_on_a_char_boundary() {
     let long = "é".repeat(MAX_VALUE_BYTES);
-    let value = report_value("query", &long);
+    let value = report_value("query", &long).unwrap();
     assert!(value.len() <= MAX_VALUE_BYTES);
     assert!(value.chars().all(|c| c == 'é'));
 }

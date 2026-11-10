@@ -3609,7 +3609,12 @@ async fn bing_request<T: serde::de::DeserializeOwned>(
         })?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
+        // Bing or a proxy may echo the request URL, which carries the key, so redact it.
+        let body = response
+            .text()
+            .await
+            .unwrap_or_default()
+            .replace(api_key, "[redacted]");
         tracing::warn!(%status, method, body, "Bing Webmaster request rejected");
         let message = serde_json::from_str::<Value>(&body)
             .ok()
@@ -3792,10 +3797,14 @@ async fn sync_bing(
     for (kind, stats) in [("query", &queries), ("page", &pages)] {
         for row in stats {
             let date = bucket(&row.date)?;
+            // A page that is not an http(s) URL is skipped: it would be rendered as a link.
+            let Some(value) = report_value(kind, &row.query) else {
+                continue;
+            };
             rows.push(BingMetric {
                 kind,
                 date,
-                value: report_value(kind, &row.query),
+                value,
                 clicks: row.clicks,
                 impressions: row.impressions,
                 position: position(row.avg_impression_position),

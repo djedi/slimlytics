@@ -161,7 +161,7 @@
                 {#each rows as row (row.value)}
                   <tr>
                     <th scope="row" class="search-label">
-                      {#if table.dimension === 'page'}
+                      {#if table.dimension === 'page' && /^https?:\/\//i.test(row.value)}
                         <a href={row.value} target="_blank" rel="noopener noreferrer" title={row.value}
                           >{pagePath(row.value)} <ExternalLink size={11} aria-hidden="true" /></a
                         >
