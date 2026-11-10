@@ -51,6 +51,9 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
       INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      BING_CLIENT_ID: ${BING_CLIENT_ID:-}
+      BING_CLIENT_SECRET: ${BING_CLIENT_SECRET:-}
+      BING_REDIRECT_URI: ${BING_REDIRECT_URI:-}
       RUST_LOG: ${RUST_LOG:-slimlytics=info,tower_http=info}
     volumes:
       - ./data/geoip:/data/geoip:ro
