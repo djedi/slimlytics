@@ -808,3 +808,15 @@ fn porkbun_zones_and_names() {
     assert!(is_dns_label("7c69828857bf17add8ec212638faeea4"));
     assert!(!is_dns_label("a.b") && !is_dns_label("") && !is_dns_label("-a"));
 }
+
+#[test]
+fn porkbun_record_names_for_delegation_checks() {
+    // The names checked for NS delegation are every suffix of the record's relative name.
+    let name =
+        slimlytics_backend::porkbun::relative_name("abc.docs.example.com", "example.com").unwrap();
+    let labels: Vec<&str> = name.split('.').collect();
+    let checked: Vec<String> = (0..labels.len())
+        .map(|start| labels[start..].join("."))
+        .collect();
+    assert_eq!(checked, vec!["abc.docs", "docs"]);
+}

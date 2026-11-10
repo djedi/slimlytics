@@ -3836,6 +3836,37 @@ async fn porkbun_add_record(
     let Some(name) = relative_name(fqdn, &zone) else {
         return failed(format!("{fqdn} is outside {zone}"));
     };
+    // A subdomain delegated elsewhere (NS records in this zone at or above the record name)
+    // is answered by that other provider, so a record written here would never be seen.
+    let labels: Vec<&str> = name.split('.').filter(|label| !label.is_empty()).collect();
+    for start in 0..labels.len() {
+        let delegated_name = labels[start..].join(".");
+        match porkbun_call(
+            state,
+            config,
+            &format!("dns/retrieveByNameType/{zone}/NS/{delegated_name}"),
+            keys,
+            json!({}),
+        )
+        .await
+        {
+            Ok(value)
+                if value["records"]
+                    .as_array()
+                    .is_some_and(|list| !list.is_empty()) =>
+            {
+                return failed(format!(
+                    "{delegated_name}.{zone} is delegated to other nameservers, so add the record with that DNS provider"
+                ));
+            }
+            Ok(_) => {}
+            Err((_, message)) => {
+                return failed(format!(
+                    "Couldn't check DNS delegation in {zone}: {message}"
+                ))
+            }
+        }
+    }
     // Look before creating, so a record already in place counts as done.
     let records = match porkbun_call(
         state,
