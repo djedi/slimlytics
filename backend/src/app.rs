@@ -3382,7 +3382,7 @@ async fn add_search_console_property(
         ));
     }
     let automation =
-        porkbun_add_record(&s, u, &domain, &domain, "TXT", &verification.token).await?;
+        porkbun_add_record(&s, &mut tx, u, &domain, &domain, "TXT", &verification.token).await?;
     tx.commit().await?;
     Ok(Json(json!({
         "propertyUrl":property,
@@ -3721,6 +3721,10 @@ async fn delete_porkbun(
 /// reported so the user can add the record by hand.
 async fn porkbun_add_record(
     state: &AppState,
+    // The caller's transaction, which holds the site and connection locks: the keys are read
+    // (and share-locked) on it, so disconnecting or replacing them waits for this write, and
+    // no second pooled connection is needed while those locks are held.
+    conn: &mut sqlx::PgConnection,
     user: Uuid,
     site_domain: &str,
     fqdn: &str,
@@ -3731,10 +3735,11 @@ async fn porkbun_add_record(
         return Ok(None);
     };
     let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT api_key_encrypted,secret_key_encrypted FROM porkbun_credentials WHERE user_id=$1",
+        "SELECT api_key_encrypted,secret_key_encrypted FROM porkbun_credentials
+         WHERE user_id=$1 FOR SHARE",
     )
     .bind(user)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *conn)
     .await?;
     let Some((key, secret)) = row else {
         return Ok(None);
@@ -4514,6 +4519,7 @@ async fn add_bing_site(
         json!(
             porkbun_add_record(
                 &s,
+                &mut tx,
                 u,
                 &connection.domain,
                 &format!("{label}.{}", connection.domain),
