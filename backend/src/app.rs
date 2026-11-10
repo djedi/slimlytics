@@ -3322,7 +3322,7 @@ async fn add_search_console_property(
     Path(site): Path<Uuid>,
 ) -> Result<Json<Value>, ApiError> {
     require_site(&s.pool, u, site, true).await?;
-    let (domain, access_token, _) = search_console_access(&s, site).await?;
+    let (domain, access_token, connection) = search_console_access(&s, site).await?;
     let property = domain_property(&domain);
     google_api_response(
         s.http
@@ -3357,6 +3357,21 @@ async fn add_search_console_property(
     .bind(site)
     .execute(&s.pool)
     .await?;
+    // Recheck just before publishing: a token for a connection replaced (or a domain changed)
+    // while Google answered must not reach DNS, where it would let the old account verify.
+    let still_current: Option<(String, String)> = sqlx::query_as(
+        "SELECT i.refresh_token_encrypted,s.domain FROM search_console_integrations i
+         JOIN sites s ON s.id=i.site_id WHERE i.site_id=$1",
+    )
+    .bind(site)
+    .fetch_optional(&s.pool)
+    .await?;
+    if still_current != Some((connection, domain.clone())) {
+        return Err(ApiError::BadRequest(
+            "Search Console was reconnected or the site changed while adding the property; try again"
+                .into(),
+        ));
+    }
     let automation =
         porkbun_add_record(&s, u, &domain, &domain, "TXT", &verification.token).await?;
     Ok(Json(json!({
