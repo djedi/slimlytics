@@ -4066,11 +4066,15 @@ async fn add_bing_site(
         .ok_or_else(|| {
             ApiError::BadRequest("Bing added the site but did not list it; try again".into())
         })?;
-    let (Some(code), Some(dns_code)) = (&entry.authentication_code, &entry.dns_verification_code)
-    else {
-        return Err(ApiError::BadRequest(
-            "Bing did not provide verification codes for the site".into(),
-        ));
+    // A site Bing already has verified needs no records; it is attached below.
+    let codes = match (&entry.authentication_code, &entry.dns_verification_code) {
+        _ if entry.is_verified => None,
+        (Some(code), Some(dns_code)) => Some((code, dns_code)),
+        _ => {
+            return Err(ApiError::BadRequest(
+                "Bing did not provide verification codes for the site".into(),
+            ))
+        }
     };
     // The records are only good for the connection and domain they were issued for; site, then
     // connection, the lock order connect, sync, and domain changes use.
@@ -4091,6 +4095,23 @@ async fn add_bing_site(
                 .into(),
         ));
     }
+    let Some((code, dns_code)) = codes else {
+        sqlx::query(
+            "UPDATE bing_webmaster_integrations
+             SET site_url=$2,last_error=NULL,last_synced_at=NULL,updated_at=now()
+             WHERE site_id=$1",
+        )
+        .bind(site)
+        .bind(&entry.url)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM bing_webmaster_metrics WHERE site_id=$1")
+            .bind(site)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        return Ok(Json(json!({"siteUrl":entry.url,"verified":true})));
+    };
     sqlx::query(
         "UPDATE bing_webmaster_integrations
          SET last_error='Publish one of the verification records, then verify the site',
@@ -4103,7 +4124,7 @@ async fn add_bing_site(
     tx.commit().await?;
     let mut response = verification_methods(&connection.domain, code, dns_code);
     response["siteUrl"] = json!(entry.url);
-    response["verified"] = json!(entry.is_verified);
+    response["verified"] = json!(false);
     Ok(Json(response))
 }
 

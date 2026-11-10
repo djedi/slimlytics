@@ -4279,7 +4279,7 @@
           "Reporting"
         ],
         "summary": "Add the site to the connected Bing account",
-        "description": "Adds https://{domain}/ to Bing Webmaster Tools (a no-op if it is already there) and returns what to publish to verify it: a DNS CNAME record, a msvalidate.01 meta tag, or a BingSiteAuth.xml file.",
+        "description": "Adds https://{domain}/ to Bing Webmaster Tools (a no-op if it is already there) and returns what to publish to verify it: a DNS CNAME record (name relative to the domain, and the absolute name), a msvalidate.01 meta tag, or a BingSiteAuth.xml file. If Bing already has the site verified, the connection is matched to it and the response is just the site URL with verified true.",
         "operationId": "addBingSite",
         "parameters": [
           {

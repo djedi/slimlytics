@@ -96,18 +96,20 @@ pub fn verification_methods(
     authentication_code: &str,
     dns_code: &str,
 ) -> serde_json::Value {
-    // Bing lists the CNAME host either bare or already qualified with the domain.
-    let host = dns_code.trim_end_matches('.');
-    let host = if host
+    // Bing lists the CNAME host either bare or already qualified with the domain. DNS providers
+    // mostly want the label relative to the zone; the absolute name (trailing dot) is given too,
+    // for providers that take full names, so neither appends the domain a second time.
+    let domain = domain.to_ascii_lowercase();
+    let code = dns_code.trim_end_matches('.');
+    let label = code
         .to_ascii_lowercase()
-        .ends_with(&format!(".{}", domain.to_ascii_lowercase()))
-    {
-        host.to_owned()
-    } else {
-        format!("{host}.{domain}")
-    };
+        .strip_suffix(&format!(".{domain}"))
+        .map(|label| code[..label.len()].to_owned())
+        .unwrap_or_else(|| code.to_owned());
     serde_json::json!({
-        "dnsRecord":{"type":"CNAME","name":host,"value":"verify.bing.com"},
+        "dnsRecord":{
+            "type":"CNAME","name":label,"fqdn":format!("{label}.{domain}."),"value":"verify.bing.com"
+        },
         "metaTag":format!(r#"<meta name="msvalidate.01" content="{authentication_code}" />"#),
         "xmlFile":{
             "path":"/BingSiteAuth.xml",

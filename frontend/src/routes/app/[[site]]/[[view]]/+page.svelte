@@ -216,7 +216,7 @@
   const setBingPending = (id: string, pending: boolean) => (bingPending = { ...bingPending, [id]: pending });
   let bingNotice = $state('');
   // The verification records for a site just added to Bing; cleared when the site changes.
-  let bingSiteSetup = $state<BingSiteSetup | null>(null);
+  let bingSiteSetup = $state<Extract<BingSiteSetup, { verified: false }> | null>(null);
   // Shown only while it still matches the site's domain: records for an old domain can't verify the new one.
   const bingSetup = $derived(
     bingSiteSetup && site &&
@@ -947,7 +947,22 @@
     try {
       const setup = await api.addBingSite(id);
       // Records from before a reconnect or disconnect belong to the old connection.
-      if (site?.id === id && bingVersions[id] === version) bingSiteSetup = setup;
+      if (site?.id !== id || bingVersions[id] !== version) return;
+      if (!setup.verified) {
+        bingSiteSetup = setup;
+        return;
+      }
+      // Bing already had it verified, so the connection is matched: load its data.
+      finishBingChange(id);
+      bingNotice = 'Already verified in Bing. Syncing search data…';
+      try {
+        await api.syncBing(id);
+        await bingSynced(id);
+        if (site?.id === id) bingNotice = 'Connected and synced.';
+      } catch (reason) {
+        if (site?.id === id)
+          bingNotice = `Connected, but the first sync failed: ${reason instanceof Error ? reason.message : 'unknown error'}. Try Sync now.`;
+      }
     } catch (reason) {
       if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not add the site to Bing.';
     } finally {
@@ -1821,6 +1836,7 @@
                   <dl aria-label="Bing DNS verification record">
                     <div><dt>Type</dt><dd><code>{bingSetup.dnsRecord.type}</code></dd></div>
                     <div><dt>Name</dt><dd><code>{bingSetup.dnsRecord.name}</code></dd></div>
+                    <div><dt>Full name</dt><dd><code>{bingSetup.dnsRecord.fqdn}</code></dd></div>
                     <div><dt>Value</dt><dd><code>{bingSetup.dnsRecord.value}</code></dd></div>
                   </dl>
                   <details>

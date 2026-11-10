@@ -160,13 +160,17 @@ export interface BingStatus {
   lastError?: string | null;
 }
 /** A site Slimlytics added to Bing, and the ways to prove ownership so Bing can verify it. */
-export interface BingSiteSetup {
-  siteUrl: string;
-  verified: boolean;
-  dnsRecord: { type: 'CNAME'; name: string; value: string };
-  metaTag: string;
-  xmlFile: { path: string; content: string };
-}
+export type BingSiteSetup =
+  /** Bing already had the site verified; the connection is now matched to it. */
+  | { siteUrl: string; verified: true }
+  | {
+      siteUrl: string;
+      verified: false;
+      /** `name` is relative to the domain; `fqdn` is the absolute name, with a trailing dot. */
+      dnsRecord: { type: 'CNAME'; name: string; fqdn: string; value: string };
+      metaTag: string;
+      xmlFile: { path: string; content: string };
+    };
 /** Bing reports queries and pages but no countries or devices; `date` is daily site totals. */
 export type BingDimension = 'query' | 'page' | 'date';
 /** A Bing row; `rankedImpressions` are the impressions its position averages over. */

@@ -599,7 +599,7 @@ mod flow {
         assert_eq!(added["siteUrl"], "https://bing-new.example/");
         assert_eq!(
             added["dnsRecord"],
-            json!({"type":"CNAME","name":"dns123.bing-new.example","value":"verify.bing.com"})
+            json!({"type":"CNAME","name":"dns123","fqdn":"dns123.bing-new.example.","value":"verify.bing.com"})
         );
         assert_eq!(
             added["metaTag"],
