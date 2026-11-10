@@ -4187,15 +4187,22 @@ async fn sync_bing(
     let config = bing_config(&s)?;
     // Claim a sync generation up front so an older sync that finishes last cannot replace the
     // results of a newer one.
-    let generation: Option<i64> = sqlx::query_scalar(
+    let claimed: Option<(i64, Uuid)> = sqlx::query_as(
         "UPDATE bing_webmaster_integrations SET sync_generation=sync_generation+1
-         WHERE site_id=$1 RETURNING sync_generation",
+         WHERE site_id=$1 RETURNING sync_generation,connection_id",
     )
     .bind(site)
     .fetch_optional(&s.pool)
     .await?;
-    let generation = generation.ok_or(ApiError::NotFound)?;
+    let (generation, claimed_connection) = claimed.ok_or(ApiError::NotFound)?;
     let connection = bing_connection(&s, config, site).await?;
+    // The generation belongs to the connection that claimed it; a reconnect since then starts
+    // its own count, so this sync must not run against (or save into) the new connection.
+    if connection.connection_id != claimed_connection {
+        return Err(ApiError::BadRequest(
+            "Bing Webmaster Tools was reconnected during sync; sync again".into(),
+        ));
+    }
     let site_url = connection
         .site_url
         .clone()

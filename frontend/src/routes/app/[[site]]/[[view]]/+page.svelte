@@ -225,6 +225,8 @@
   /** Ends a connect or disconnect: loads of that site that overlapped it are discarded, so reload. */
   function finishBingChange(id: string) {
     bumpBing(id);
+    // Verification records belong to the connection that added the site.
+    if (site?.id === id) bingSiteSetup = null;
     // The server drops a site's metrics on connect and disconnect, so its cached reports are stale.
     bingReportsByKey = Object.fromEntries(
       Object.entries(bingReportsByKey).filter(([key]) => !key.startsWith(`${id}:`))
@@ -932,11 +934,13 @@
   async function addBingSite() {
     if (!site || bingPending[site.id]) return;
     const id = site.id;
+    const version = bingVersions[id];
     setBingPending(id, true);
     bingNotice = '';
     try {
       const setup = await api.addBingSite(id);
-      if (site?.id === id) bingSiteSetup = setup;
+      // Records from before a reconnect or disconnect belong to the old connection.
+      if (site?.id === id && bingVersions[id] === version) bingSiteSetup = setup;
     } catch (reason) {
       if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not add the site to Bing.';
     } finally {
@@ -955,10 +959,9 @@
         if (site?.id === id) bingNotice = reason instanceof Error ? reason.message : 'Could not verify the site.';
         return;
       }
-      if (site?.id === id) {
-        bingSiteSetup = null;
-        bingNotice = 'Verified. Syncing search data…';
-      }
+      // The connection now has its Bing site: reload its status (a failed verify keeps the records).
+      finishBingChange(id);
+      if (site?.id === id) bingNotice = 'Verified. Syncing search data…';
       try {
         await api.syncBing(id);
         await bingSynced(id);
@@ -969,7 +972,6 @@
       }
     } finally {
       setBingPending(id, false);
-      finishBingChange(id);
     }
   }
   async function connectBing(event: SubmitEvent) {
