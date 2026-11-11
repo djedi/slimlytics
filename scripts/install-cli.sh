@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPOSITORY="https://github.com/djedi/slimlytics-next"
+REPOSITORY="https://github.com/djedi/slimlytics"
 REF="${SLIMLYTICS_CLI_REF:-cli-v0.2.0}"
 
 for command in cargo curl tar mktemp; do
@@ -20,8 +20,10 @@ curl --fail --silent --show-error --location \
   --output "$workdir/source.tar.gz"
 tar -xzf "$workdir/source.tar.gz" -C "$workdir"
 source_dir=""
-for candidate in "$workdir"/slimlytics-next-*; do
-  if [ -d "$candidate" ]; then
+# GitHub names the archive's top directory after the repository and ref (for example
+# slimlytics-cli-v0.2.0), so find it by its contents rather than by name.
+for candidate in "$workdir"/*; do
+  if [ -d "$candidate" ] && [ -f "$candidate/cli/Cargo.toml" ]; then
     source_dir=$candidate
     break
   fi
