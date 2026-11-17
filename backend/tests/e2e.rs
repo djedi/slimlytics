@@ -1333,6 +1333,69 @@ async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
         .unwrap();
     assert_eq!(half_range.status(), StatusCode::BAD_REQUEST);
 
+    // A visit that starts before local midnight keeps its source for a signup after it.
+    let day = today - chrono::Days::new(3);
+    let denver: chrono_tz::Tz = "America/Denver".parse().unwrap();
+    let local = |date: chrono::NaiveDate, h: u32, m: u32| {
+        date.and_hms_opt(h, m, 0)
+            .unwrap()
+            .and_local_timezone(denver)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    let site_uuid = uuid::Uuid::parse_str(&site_id).unwrap();
+    for (at, name, path, source) in [
+        (
+            local(day.pred_opt().unwrap(), 23, 0),
+            "pageview",
+            "/landing",
+            Some("late-night"),
+        ),
+        (local(day, 0, 30), "midnight-signup", "/register", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO events(site_id,occurred_at,visitor_id,session_id,event_name,url,path,utm_source)
+             VALUES($1,$2,'midnight-visitor','midnight-session',$3,$4,$5,$6)",
+        )
+        .bind(site_uuid)
+        .bind(at)
+        .bind(name)
+        .bind(format!("https://{domain}{path}"))
+        .bind(path)
+        .bind(source)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let midnight = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Midnight","eventName":"midnight-signup"}),
+    )
+    .await;
+    let midnight_id = midnight["result"]["structuredContent"]["goal"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let report = mcp(
+        read_only.clone(),
+        "conversions_report",
+        json!({"siteId":site_id,"from":day,"to":day,"goalId":midnight_id}),
+    )
+    .await;
+    let report = &report["result"]["structuredContent"];
+    assert_eq!(
+        report["recentConversions"][0]["source"], "late-night",
+        "{report}"
+    );
+    assert_eq!(report["goals"][0]["topSources"][0]["source"], "late-night");
+    mcp(
+        token.clone(),
+        "delete_goal",
+        json!({"siteId":site_id,"goalId":midnight_id}),
+    )
+    .await;
+
     // A page goal backfills matching page views.
     let page_goal = mcp(
         token.clone(),

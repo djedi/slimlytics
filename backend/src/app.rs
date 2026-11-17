@@ -6037,14 +6037,15 @@ async fn conversions_report(
     .bind(&timezone)
     .fetch_all(pool)
     .await?;
-    // A converter's source is their first human event in the range (first touch), as in the
-    // attribution report: a signup event itself rarely carries the original referrer.
+    // A converter's source is their earliest retained human event (first touch): a signup
+    // event itself rarely carries the original referrer. It is not limited to the range, so
+    // a visit that began before local midnight keeps its source.
     const FIRST_TOUCH: &str = "first_touch AS ( \
            SELECT DISTINCT ON(visitor_id) visitor_id, \
              COALESCE(utm_source,referrer_host,'(direct)') source, \
              COALESCE(utm_medium,'(none)') medium, \
              COALESCE(utm_campaign,'(none)') campaign \
-           FROM events WHERE site_id=$1 AND occurred_at >= $2 AND occurred_at < $3 \
+           FROM events WHERE site_id=$1 AND occurred_at < $3 \
              AND traffic_class='human' \
              AND visitor_id IN (SELECT visitor_id FROM conv) \
            ORDER BY visitor_id,occurred_at)";
@@ -6180,7 +6181,7 @@ async fn conversions_report(
         "conversion":"One human event that matched the goal's eventName and optional pathPattern.",
         "uniqueConverters":"Distinct site-scoped rotating visitor identifiers with at least one conversion.",
         "conversionRate":"uniqueConverters as a percent of distinct human visitors in the range.",
-        "source":"The converter's first human event in the range: utm_source, else referrer host, else (direct).",
+        "source":"The converter's earliest retained human event, which can precede the range (a visit that started before local midnight): utm_source, else referrer host, else (direct).",
         "comparison":"Immediately preceding date range with the same number of site-local calendar days."
       },
       "evidence":{
