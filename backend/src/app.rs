@@ -4908,6 +4908,17 @@ async fn bing_report(
     ))
 }
 
+#[cfg(test)]
+mod instrumentation_tests {
+    #[test]
+    fn event_names_cannot_close_an_inline_script() {
+        let literal = super::js_string_literal("signup</script><b>&");
+        assert_eq!(literal, r#""signup\u003c/script\u003e\u003cb\u003e\u0026""#);
+        assert!(!literal.contains('<'));
+        assert_eq!(super::js_string_literal("signup"), r#""signup""#);
+    }
+}
+
 #[derive(Deserialize)]
 struct McpRequest {
     jsonrpc: String,
@@ -5091,8 +5102,18 @@ fn mcp_site(arguments: &Value) -> Result<Uuid, ApiError> {
 
 /// How a website sends the events a goal counts, returned by `create_goal` so an agent can
 /// instrument the site. Never includes the server write key.
+/// A JavaScript string literal that is also safe inside an inline `<script>` element.
+fn js_string_literal(value: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+}
+
 fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
     let name = serde_json::to_string(&goal.event_name).unwrap_or_default();
+    let js_name = js_string_literal(&goal.event_name);
     if goal.event_name == "pageview" {
         return json!({
             "kind":"pageview",
@@ -5137,9 +5158,9 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
         "kind":"customEvent",
         "browser":{
             "code":format!(
-                "// Sends a Slimlytics event once the tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({name});"
+                "// Sends a Slimlytics event once the tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({js_name});"
             ),
-            "withProperties":format!("slimlyticsEvent({name}, {{ plan: 'free' }});"),
+            "withProperties":format!("slimlyticsEvent({js_name}, {{ plan: 'free' }});"),
             "notes":with_path(vec![
                 "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
                 "The snippet loads asynchronously, so the helper waits for the page load event when the tracker is not ready yet. A deferred call records the page the visitor is on when it runs: in a single-page app, a path-restricted goal only counts it if the visitor is still on a matching route.",
