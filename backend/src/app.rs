@@ -1629,6 +1629,9 @@ async fn collect(
             .map(|(_, v)| v.into_owned())
     };
     let mut tx = state.pool.begin().await?;
+    // Before any event insert: goal creation waits for this, and taking it later could
+    // deadlock with another batch inserting the same idempotency key.
+    lock_site_goals(&mut tx, site, true).await?;
     let event_id: Uuid = sqlx::query_scalar(
         "INSERT INTO events(
             site_id,occurred_at,visitor_id,session_id,event_name,url,path,referrer,referrer_host,
@@ -1756,6 +1759,9 @@ async fn server_collect(
     let mut accepted = 0_i64;
     let mut duplicates = 0_i64;
     let mut tx = state.pool.begin().await?;
+    // Before any event insert: goal creation waits for this, and taking it later could
+    // deadlock with another batch inserting the same idempotency key.
+    lock_site_goals(&mut tx, site, true).await?;
     for raw in batch.events {
         let event = validate_server_event(raw, &domain)
             .map_err(|message| ApiError::BadRequest(message.into()))?;
@@ -1953,6 +1959,8 @@ async fn collect_options(
     Ok((response_headers, StatusCode::NO_CONTENT))
 }
 
+/// Records completions of the site's goals for one event. The caller's transaction must
+/// already hold the shared goal lock (`lock_site_goals`), taken before it inserted events.
 async fn complete_goals(
     tx: &mut Transaction<'_, Postgres>,
     site: Uuid,
@@ -1962,8 +1970,6 @@ async fn complete_goals(
     name: &str,
     path: &str,
 ) -> Result<(), ApiError> {
-    // Shared with other ingestion; conflicts only with goal creation (see `lock_site_goals`).
-    lock_site_goals(tx, site, true).await?;
     sqlx::query("INSERT INTO goal_completions(goal_id,event_id,site_id,visitor_id,occurred_at) SELECT id,$2,$1,$3,$4 FROM goals WHERE site_id=$1 AND event_name=$5 AND (path_pattern IS NULL OR $6 LIKE path_pattern) ON CONFLICT DO NOTHING").bind(site).bind(event).bind(visitor).bind(at).bind(name).bind(path).execute(&mut **tx).await?;
     Ok(())
 }
@@ -1975,6 +1981,8 @@ async fn complete_goals(
 /// checked goals before the goal was committed, but committed after the backfill read, would
 /// be missed by both. Ingestion takes the lock shared; goal creation takes it exclusively, so
 /// it waits for in-flight ingestion to commit and later ingestion sees the new goal.
+/// Ingestion takes it right after BEGIN, before inserting any event, so lock order is
+/// always advisory lock first, then event rows.
 async fn lock_site_goals(
     tx: &mut Transaction<'_, Postgres>,
     site: Uuid,

@@ -1359,3 +1359,116 @@ async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
     assert_eq!(goals[0]["name"], "Home");
     assert_eq!(goals[0]["conversions"], 1);
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn goal_creation_and_overlapping_server_batches_do_not_deadlock_or_miss_conversions() {
+    let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL required");
+    let pool = PgPoolOptions::new()
+        .max_connections(20)
+        .connect(&url)
+        .await
+        .unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    let router = app(AppState::new(
+        pool.clone(),
+        "01234567890123456789012345678901".into(),
+        b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
+    ));
+    let email = format!("race+{}@example.com", uuid::Uuid::new_v4());
+    let register = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/register",
+            None,
+            json!({"email":email,"password":"long-enough-password"}),
+        ))
+        .await
+        .unwrap();
+    let token = body_json(register.into_body()).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let domain = format!("race-{}.example.com", uuid::Uuid::new_v4().simple());
+    let created = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/sites",
+            Some(&token),
+            json!({"name":"Race","domain":domain,"timezone":"UTC","retention_days":30}),
+        ))
+        .await
+        .unwrap();
+    let site = body_json(created.into_body()).await;
+    let site_id = site["id"].as_str().unwrap().to_owned();
+    let server_key = site["serverWriteKey"].as_str().unwrap().to_owned();
+
+    // Every batch retries the same keys, so batches contend on the idempotency keys while
+    // goals are created and wait for the goal lock.
+    let keys: Vec<String> = (0..6).map(|i| format!("race-signup-{i}")).collect();
+    let mut tasks = Vec::new();
+    for batch in 0..8_usize {
+        let events: Vec<Value> = keys
+            .iter()
+            .map(|key| {
+                json!({"eventName":"signup","url":format!("https://{domain}/register"),
+                       "clientIp":format!("203.0.113.{}", 30 + key.len()),
+                       "userAgent":"Mozilla/5.0","idempotencyKey":key})
+            })
+            .collect();
+        let mut request = json_request("POST", "/api/ingest", None, json!({ "events": events }));
+        request
+            .headers_mut()
+            .insert("x-slimlytics-server-key", server_key.parse().unwrap());
+        request.extensions_mut().insert(ConnectInfo(
+            format!("198.51.100.{}:443", 10 + batch)
+                .parse::<std::net::SocketAddr>()
+                .unwrap(),
+        ));
+        let router = router.clone();
+        tasks.push(tokio::spawn(async move {
+            router.oneshot(request).await.unwrap().status()
+        }));
+    }
+    let mut goals = Vec::new();
+    for i in 0..3 {
+        let router = router.clone();
+        let path = format!("/api/sites/{site_id}/goals");
+        let token = token.clone();
+        goals.push(tokio::spawn(async move {
+            router
+                .oneshot(json_request(
+                    "POST",
+                    &path,
+                    Some(&token),
+                    json!({"name":format!("Signup {i}"),"eventName":"signup"}),
+                ))
+                .await
+                .unwrap()
+                .status()
+        }));
+    }
+    for task in tasks {
+        assert_eq!(task.await.unwrap(), StatusCode::ACCEPTED);
+    }
+    for goal in goals {
+        assert_eq!(goal.await.unwrap(), StatusCode::CREATED);
+    }
+    let site_uuid = uuid::Uuid::parse_str(&site_id).unwrap();
+    let events: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE site_id=$1")
+        .bind(site_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(events, keys.len() as i64);
+    // Each goal completed every event, whether by ingestion or by its backfill.
+    let completions: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM goal_completions WHERE site_id=$1")
+            .bind(site_uuid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(completions, 3 * keys.len() as i64);
+}
