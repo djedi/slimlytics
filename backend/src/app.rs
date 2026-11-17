@@ -5134,10 +5134,9 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
             "withProperties":format!("slimlyticsEvent({name}, {{ plan: 'free' }});"),
             "notes":with_path(vec![
                 "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
-                "The snippet loads asynchronously; the helper waits for the page load event so an early call is not lost. If the tracker is still missing after load, it was blocked or not installed on that page.",
-                "Once the tracker has loaded, events are sent within a few seconds and when the page is hidden, so navigating away right after the call is fine. A call made before the tracker loads is lost if the page navigates away before its load event; for signups and purchases, prefer server ingestion, which does not depend on the browser.",
-                "Properties are optional flat values; never send names, emails or other personal data.",
-                "Browser events respect consent, Do Not Track and Global Privacy Control, and ad blockers can drop them."
+                "The snippet loads asynchronously, so the helper waits for the page load event when the tracker is not ready yet. A deferred call records the page the visitor is on when it runs: in a single-page app, a path-restricted goal only counts it if the visitor is still on a matching route.",
+                "Browser delivery is best effort: an event can be lost if the page unloads before it is sent, and consent, Do Not Track, Global Privacy Control and ad blockers can prevent it. For conversions that must be counted, such as signups and purchases, prefer server ingestion.",
+                "Properties are optional flat values; never send names, emails or other personal data."
             ].into_iter().map(String::from).collect())
         },
         "server":server
