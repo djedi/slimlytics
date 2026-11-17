@@ -5124,7 +5124,7 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
                 "Use this when the action is confirmed on the server, so ad blockers cannot drop it.",
                 "SLIMLYTICS_SERVER_KEY is the site's server key from the Slimlytics dashboard; keep it in private server config, never in the repository or browser code.",
                 "url must be on the site's exact domain. Forward the visitor's real IP and User-Agent: they tie the conversion to the visitor's source, and a server User-Agent is classified as a bot and not counted.",
-                "Respect the visitor's analytics consent before sending."
+                "Honor the same privacy choices as the browser tracker: do not send the event when the visitor has not given analytics consent, or when the request carries DNT: 1 or Sec-GPC: 1."
             ].into_iter().map(String::from).collect())
         })
     } else {
