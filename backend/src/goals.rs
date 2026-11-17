@@ -2,7 +2,7 @@
 
 use crate::models::GoalInput;
 
-/// Longest custom event name the browser tracker sends.
+/// Longest custom event name the browser tracker sends, in UTF-16 code units.
 pub const MAX_EVENT_NAME: usize = 120;
 const MAX_GOAL_NAME: usize = 120;
 const MAX_PATH_PATTERN: usize = 512;
@@ -28,7 +28,8 @@ pub fn validate_goal(input: GoalInput) -> Result<GoalDefinition, &'static str> {
     }
     let event_name = input.event_name;
     if event_name.is_empty()
-        || event_name.chars().count() > MAX_EVENT_NAME
+        // The tracker truncates names to 120 UTF-16 code units (JavaScript string length).
+        || event_name.encode_utf16().count() > MAX_EVENT_NAME
         || event_name.trim() != event_name
         || event_name.chars().any(char::is_control)
     {
@@ -98,6 +99,9 @@ mod tests {
         assert!(validate_goal(input("Signup", " signup", None)).is_err());
         assert!(validate_goal(input("Signup", "sign\nup", None)).is_err());
         assert!(validate_goal(input("Signup", &"x".repeat(121), None)).is_err());
+        // 61 emoji are 122 UTF-16 code units; the tracker would send only the first 60.
+        assert!(validate_goal(input("Signup", &"🎉".repeat(61), None)).is_err());
+        assert!(validate_goal(input("Signup", &"🎉".repeat(60), None)).is_ok());
         assert!(validate_goal(input("Signup", "signup", Some("welcome"))).is_err());
         assert!(validate_goal(input("Signup", "signup", Some("/signup\\"))).is_err());
         assert!(validate_goal(input("Signup", "signup", Some("/a\\%b"))).is_err());
