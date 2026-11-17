@@ -5094,6 +5094,12 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
             ]
         });
     }
+    // A custom-event goal with a path pattern only counts events sent from matching pages.
+    let path_note = goal.path_pattern.as_deref().map(|pattern| {
+        format!("This goal only counts {name} events whose page path matches the SQL LIKE pattern {pattern} (% matches any characters), so send it from such a page URL.")
+    });
+    let with_path =
+        |notes: Vec<String>| -> Vec<String> { path_note.iter().cloned().chain(notes).collect() };
     let server = if valid_server_event_name(&goal.event_name) {
         json!({
             "url":format!("{analytics_origin}/api/ingest"),
@@ -5106,12 +5112,12 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
                 "userAgent":"<visitor User-Agent from the request>",
                 "idempotencyKey":"<unique id, for example signup:<account id>>"
             }]},
-            "notes":[
+            "notes":with_path(vec![
                 "Use this when the action is confirmed on the server, so ad blockers cannot drop it.",
                 "SLIMLYTICS_SERVER_KEY is the site's server key from the Slimlytics dashboard; keep it in private server config, never in the repository or browser code.",
                 "url must be on the site's exact domain. Forward the visitor's real IP and User-Agent: they tie the conversion to the visitor's source, and a server User-Agent is classified as a bot and not counted.",
                 "Respect the visitor's analytics consent before sending."
-            ]
+            ].into_iter().map(String::from).collect())
         })
     } else {
         json!({
@@ -5126,13 +5132,13 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
                 "// Sends {name} once the Slimlytics tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({name});"
             ),
             "withProperties":format!("slimlyticsEvent({name}, {{ plan: 'free' }});"),
-            "notes":[
+            "notes":with_path(vec![
                 "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
                 "The snippet loads asynchronously; the helper waits for the page load event so an early call is not lost. If the tracker is still missing after load, it was blocked or not installed on that page.",
-                "Queued events are sent within a few seconds and when the page is hidden, so navigating away right after the call is fine.",
+                "Once the tracker has loaded, events are sent within a few seconds and when the page is hidden, so navigating away right after the call is fine. A call made before the tracker loads is lost if the page navigates away before its load event; for signups and purchases, prefer server ingestion, which does not depend on the browser.",
                 "Properties are optional flat values; never send names, emails or other personal data.",
                 "Browser events respect consent, Do Not Track and Global Privacy Control, and ad blockers can drop them."
-            ]
+            ].into_iter().map(String::from).collect())
         },
         "server":server
     })

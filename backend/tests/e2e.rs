@@ -1150,6 +1150,31 @@ async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
         spaced["instrumentation"]["server"]["available"], false,
         "{spaced}"
     );
+    // A path-restricted event goal says where the event must be sent from.
+    let scoped = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Welcome signup","eventName":"signup","pathPattern":"/welcome%"}),
+    )
+    .await;
+    let scoped = &scoped["result"]["structuredContent"];
+    for channel in ["browser", "server"] {
+        assert!(
+            scoped["instrumentation"][channel]["notes"][0]
+                .as_str()
+                .unwrap()
+                .contains("/welcome%"),
+            "{scoped}"
+        );
+    }
+    let scoped_id = scoped["goal"]["id"].as_str().unwrap().to_owned();
+    let removed = mcp(
+        token.clone(),
+        "delete_goal",
+        json!({"siteId":site_id,"goalId":scoped_id}),
+    )
+    .await;
+    assert_eq!(removed["result"]["structuredContent"]["deleted"], true);
     let spaced_id = spaced["goal"]["id"].as_str().unwrap().to_owned();
     let removed = mcp(
         token.clone(),
