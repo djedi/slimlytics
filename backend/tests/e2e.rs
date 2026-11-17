@@ -1132,6 +1132,30 @@ async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
         "window.Slimlytics?.event(\"signup\");"
     );
     assert!(!goal.to_string().contains(&server_key), "server key leaked");
+    assert_eq!(
+        goal["instrumentation"]["server"]["body"]["events"][0]["eventName"],
+        "signup"
+    );
+    // Server ingestion rejects this name, so only browser instrumentation is offered.
+    let spaced = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Spaced","eventName":"Sign up"}),
+    )
+    .await;
+    let spaced = &spaced["result"]["structuredContent"];
+    assert_eq!(
+        spaced["instrumentation"]["server"]["available"], false,
+        "{spaced}"
+    );
+    let spaced_id = spaced["goal"]["id"].as_str().unwrap().to_owned();
+    let removed = mcp(
+        token.clone(),
+        "delete_goal",
+        json!({"siteId":site_id,"goalId":spaced_id}),
+    )
+    .await;
+    assert_eq!(removed["result"]["structuredContent"]["deleted"], true);
 
     // Repeating the call reuses the goal; a different definition under the name is refused.
     let again = mcp(

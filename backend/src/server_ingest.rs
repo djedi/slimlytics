@@ -34,6 +34,15 @@ pub struct ValidatedServerEvent {
     pub event_name: String,
 }
 
+/// Event names server ingestion accepts: 1-64 ASCII letters, digits, `_`, `-` or `.`.
+pub fn valid_server_event_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+}
+
 pub fn validate_server_event(
     input: ServerEvent,
     site_domain: &str,
@@ -68,12 +77,7 @@ pub fn validate_server_event(
         return Err("invalid status");
     }
     let event_name = input.event_name.unwrap_or_else(|| "pageview".into());
-    if event_name.is_empty()
-        || event_name.len() > 64
-        || !event_name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
-    {
+    if !valid_server_event_name(&event_name) {
         return Err("invalid eventName");
     }
     if input

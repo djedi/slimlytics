@@ -42,8 +42,13 @@ pub fn validate_goal(input: GoalInput) -> Result<GoalDefinition, &'static str> {
         if pattern.len() > MAX_PATH_PATTERN
             || !(pattern.starts_with('/') || pattern.starts_with('%'))
             || pattern.chars().any(char::is_control)
+            // A backslash escapes LIKE wildcards, and a trailing one is a database error that
+            // would fail ingestion of every matching event. Paths do not contain backslashes.
+            || pattern.contains('\\')
         {
-            return Err("pathPattern must start with / or % and be at most 512 characters");
+            return Err(
+                "pathPattern must start with / or %, have no backslashes, and be at most 512 characters",
+            );
         }
     }
     Ok(GoalDefinition {
@@ -94,6 +99,8 @@ mod tests {
         assert!(validate_goal(input("Signup", "sign\nup", None)).is_err());
         assert!(validate_goal(input("Signup", &"x".repeat(121), None)).is_err());
         assert!(validate_goal(input("Signup", "signup", Some("welcome"))).is_err());
+        assert!(validate_goal(input("Signup", "signup", Some("/signup\\"))).is_err());
+        assert!(validate_goal(input("Signup", "signup", Some("/a\\%b"))).is_err());
         assert!(validate_goal(input(
             "Signup",
             "signup",

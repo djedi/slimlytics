@@ -39,7 +39,7 @@ use crate::{
         missing_scopes, oauth_state, preferred_property, site_resource_url, state_hash,
         verification_request, verified_property_urls, SearchConsoleConfig,
     },
-    server_ingest::{validate_server_event, ServerEventBatch},
+    server_ingest::{valid_server_event_name, validate_server_event, ServerEventBatch},
     site_icon::{fetch_favicon, normalize_color},
     traffic::{
         automation_for, client_metadata, collection_origin_allowed, origin_allowed, traffic_class,
@@ -1962,7 +1962,30 @@ async fn complete_goals(
     name: &str,
     path: &str,
 ) -> Result<(), ApiError> {
+    // Shared with other ingestion; conflicts only with goal creation (see `lock_site_goals`).
+    lock_site_goals(tx, site, true).await?;
     sqlx::query("INSERT INTO goal_completions(goal_id,event_id,site_id,visitor_id,occurred_at) SELECT id,$2,$1,$3,$4 FROM goals WHERE site_id=$1 AND event_name=$5 AND (path_pattern IS NULL OR $6 LIKE path_pattern) ON CONFLICT DO NOTHING").bind(site).bind(event).bind(visitor).bind(at).bind(name).bind(path).execute(&mut **tx).await?;
+    Ok(())
+}
+
+/// Serializes goal creation with ingestion for one site, until the transaction ends.
+///
+/// Ingestion completes goals that exist when its statement runs, and a new goal backfills
+/// events that are committed. Without this lock an event inserted by a transaction that
+/// checked goals before the goal was committed, but committed after the backfill read, would
+/// be missed by both. Ingestion takes the lock shared; goal creation takes it exclusively, so
+/// it waits for in-flight ingestion to commit and later ingestion sees the new goal.
+async fn lock_site_goals(
+    tx: &mut Transaction<'_, Postgres>,
+    site: Uuid,
+    shared: bool,
+) -> Result<(), ApiError> {
+    let sql = if shared {
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('slimlytics:goals:' || $1::text, 0))"
+    } else {
+        "SELECT pg_advisory_xact_lock(hashtextextended('slimlytics:goals:' || $1::text, 0))"
+    };
+    sqlx::query(sql).bind(site).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -5071,19 +5094,8 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
             ]
         });
     }
-    json!({
-        "kind":"customEvent",
-        "browser":{
-            "code":format!("window.Slimlytics?.event({name});"),
-            "withProperties":format!("window.Slimlytics?.event({name}, {{ plan: 'free' }});"),
-            "notes":[
-                "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
-                "The snippet loads asynchronously, so keep the optional call (?.) or call it after the page has loaded.",
-                "Properties are optional flat values; never send names, emails or other personal data.",
-                "Browser events respect consent, Do Not Track and Global Privacy Control, and ad blockers can drop them."
-            ]
-        },
-        "server":{
+    let server = if valid_server_event_name(&goal.event_name) {
+        json!({
             "url":format!("{analytics_origin}/api/ingest"),
             "method":"POST",
             "headers":{"Content-Type":"application/json","X-Slimlytics-Server-Key":"${SLIMLYTICS_SERVER_KEY}"},
@@ -5100,7 +5112,26 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
                 "url must be on the site's exact domain. Forward the visitor's real IP and User-Agent: they tie the conversion to the visitor's source, and a server User-Agent is classified as a bot and not counted.",
                 "Respect the visitor's analytics consent before sending."
             ]
-        }
+        })
+    } else {
+        json!({
+            "available":false,
+            "notes":["Server ingestion accepts event names of at most 64 letters, digits, '_', '-' or '.'. Use such a name for this goal to send it from the server."]
+        })
+    };
+    json!({
+        "kind":"customEvent",
+        "browser":{
+            "code":format!("window.Slimlytics?.event({name});"),
+            "withProperties":format!("window.Slimlytics?.event({name}, {{ plan: 'free' }});"),
+            "notes":[
+                "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
+                "The snippet loads asynchronously, so keep the optional call (?.) or call it after the page has loaded.",
+                "Properties are optional flat values; never send names, emails or other personal data.",
+                "Browser events respect consent, Do Not Track and Global Privacy Control, and ad blockers can drop them."
+            ]
+        },
+        "server":server
     })
 }
 
@@ -5816,8 +5847,11 @@ async fn create_goal(
 ) -> Result<impl IntoResponse, ApiError> {
     require_site(&s.pool, u, site, true).await?;
     let goal = validate_goal(i).map_err(|message| ApiError::BadRequest(message.into()))?;
-    let goal:Goal=sqlx::query_as("INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) RETURNING id,site_id,name,event_name,path_pattern,created_at").bind(site).bind(goal.name).bind(goal.event_name).bind(goal.path_pattern).fetch_one(&s.pool).await.map_err(map_conflict)?;
-    backfill_goal(&s.pool, &goal).await?;
+    let mut tx = s.pool.begin().await?;
+    lock_site_goals(&mut tx, site, false).await?;
+    let goal:Goal=sqlx::query_as("INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) RETURNING id,site_id,name,event_name,path_pattern,created_at").bind(site).bind(goal.name).bind(goal.event_name).bind(goal.path_pattern).fetch_one(&mut *tx).await.map_err(map_conflict)?;
+    backfill_goal(&mut tx, &goal).await?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(goal)))
 }
 
@@ -5828,6 +5862,10 @@ async fn ensure_goal(
     site: Uuid,
     goal: GoalDefinition,
 ) -> Result<(Goal, bool), ApiError> {
+    let mut tx = pool.begin().await?;
+    // Exclusive per-site lock: concurrent creates and ingestion wait, so the insert, the
+    // backfill, and the existence check below all see a stable set of goals and events.
+    lock_site_goals(&mut tx, site, false).await?;
     let created: Option<Goal> = sqlx::query_as(
         "INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) \
          ON CONFLICT (site_id,name) DO NOTHING \
@@ -5837,7 +5875,7 @@ async fn ensure_goal(
     .bind(&goal.name)
     .bind(&goal.event_name)
     .bind(&goal.path_pattern)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
     let (existing, created) = match created {
         Some(goal) => (goal, true),
@@ -5848,7 +5886,7 @@ async fn ensure_goal(
             )
             .bind(site)
             .bind(&goal.name)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?
             // Deleted between the insert and this read; the caller can retry.
             .ok_or_else(|| ApiError::BadRequest("goal changed concurrently; retry".into()))?,
@@ -5867,14 +5905,17 @@ async fn ensure_goal(
                 .unwrap_or_default()
         )));
     }
-    backfill_goal(pool, &existing).await?;
+    if created {
+        backfill_goal(&mut tx, &existing).await?;
+    }
+    tx.commit().await?;
     Ok((existing, created))
 }
 
 /// Records completions for retained events that already match a goal. Collection only
 /// completes goals that exist when an event arrives, so without this a goal on an existing
 /// event or page would start at zero. Safe to repeat: completions are unique per event.
-async fn backfill_goal(pool: &PgPool, goal: &Goal) -> Result<u64, ApiError> {
+async fn backfill_goal(tx: &mut Transaction<'_, Postgres>, goal: &Goal) -> Result<u64, ApiError> {
     Ok(sqlx::query(
         "INSERT INTO goal_completions(goal_id,event_id,site_id,visitor_id,occurred_at) \
          SELECT $1,e.id,e.site_id,e.visitor_id,e.occurred_at FROM events e \
@@ -5885,7 +5926,7 @@ async fn backfill_goal(pool: &PgPool, goal: &Goal) -> Result<u64, ApiError> {
     .bind(goal.site_id)
     .bind(&goal.event_name)
     .bind(&goal.path_pattern)
-    .execute(pool)
+    .execute(&mut **tx)
     .await?
     .rows_affected())
 }
