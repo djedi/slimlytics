@@ -5129,7 +5129,7 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
         "kind":"customEvent",
         "browser":{
             "code":format!(
-                "// Sends {name} once the Slimlytics tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({name});"
+                "// Sends a Slimlytics event once the tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({name});"
             ),
             "withProperties":format!("slimlyticsEvent({name}, {{ plan: 'free' }});"),
             "notes":with_path(vec![
