@@ -6,6 +6,7 @@ pub mod bing_webmaster;
 pub mod briefs;
 pub mod enrichment;
 pub mod error;
+pub mod goals;
 pub mod identity;
 pub mod maintenance;
 pub mod marketing;

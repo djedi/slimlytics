@@ -35,6 +35,10 @@ Slimlytics implements JSON-RPC 2.0 lifecycle and tools for the MCP `2025-03-26`,
 - `search_console_report`
 - `bing_webmaster_report`
 - `marketing_brief`
+- `list_goals` — goals with all-time conversions
+- `create_goal` — create or reuse a conversion goal (`analytics:write`) and get the event instrumentation for the website
+- `delete_goal` — delete a goal (`analytics:write`)
+- `conversions_report` — conversions per goal for explicit dates, with daily rows, sources, and the most recent conversions
 
 Every analytics call requires an explicit site ID and inclusive `from`/`to` dates. Results include a generation time, source evidence, definitions where metrics can be ambiguous, and a freshness field such as `dataThrough`.
 

@@ -192,6 +192,27 @@ fn empty_object() -> Value {
     Value::Object(Default::default())
 }
 
+/// Optional inclusive date range for goal statistics; both dates or neither.
+#[derive(Debug, Deserialize)]
+pub struct GoalsQuery {
+    pub from: Option<NaiveDate>,
+    pub to: Option<NaiveDate>,
+}
+#[derive(Debug, Deserialize)]
+pub struct EventsQuery {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    /// Only events with exactly this name (for example `signup`).
+    pub name: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversionsQuery {
+    pub from: NaiveDate,
+    pub to: NaiveDate,
+    pub goal_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
 #[derive(Debug, Deserialize)]
 pub struct RangeQuery {
     pub from: NaiveDate,

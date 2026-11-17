@@ -102,8 +102,12 @@ Overview, reports, visitors, events, and export accept inclusive `from` and `to`
 
 - `GET /api/sites/{siteId}/goals`
 - `POST /api/sites/{siteId}/goals`
+- `DELETE /api/sites/{siteId}/goals/{goalId}`
+- `GET /api/sites/{siteId}/conversions`
 
-Version 1 goals match an event name and an optional SQL-LIKE path pattern. This covers explicit custom-event goals and page-path goals without collecting additional identity data.
+A goal defines what counts as a conversion. It matches one event name exactly and an optional SQL-LIKE path pattern (`%` matches any characters). This covers custom-event goals, such as a `signup` event the website sends with `window.Slimlytics.event('signup')` or through server ingestion with `eventName`, and page goals (`pageview` with a pattern such as `/welcome%`), without collecting additional identity data. Creating a goal also counts retained events that already match it.
+
+`GET /goals` returns all-time conversions and conversion rate, or, with both `from` and `to`, the figures for those inclusive site-local dates. `GET /conversions` takes `from`, `to`, an optional `goalId` and `limit` (0-500 recent conversions, default 50). It returns conversions, unique converters and conversion rate per goal against the preceding period, daily rows, top first-touch sources, and the most recent conversions with their page, source, country, device and event properties. `GET /events` accepts an optional `name` to return only events with that exact name. Goal reports count human traffic only.
 
 ## Export
 

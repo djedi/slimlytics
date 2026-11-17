@@ -47,5 +47,13 @@ fn maps_rest_operations_to_least_privilege_scopes() {
         required_scope("DELETE", "/api/sites/id/integrations/search-console"),
         INTEGRATIONS_WRITE
     );
+    assert_eq!(
+        required_scope("GET", "/api/sites/id/conversions"),
+        ANALYTICS_READ
+    );
+    assert_eq!(
+        required_scope("POST", "/api/sites/id/goals"),
+        ANALYTICS_WRITE
+    );
     assert_eq!(required_scope("DELETE", "/api/sites/id"), SITES_WRITE);
 }

@@ -4836,6 +4836,16 @@
               "format": "date"
             },
             "description": "Inclusive last date"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "description": "Only events with exactly this name, such as signup",
+            "schema": {
+              "type": "string",
+              "maxLength": 120
+            }
           }
         ]
       }
@@ -4846,6 +4856,7 @@
           "Goals"
         ],
         "summary": "List goals",
+        "description": "Without dates, conversions and conversionRate cover all retained events. With from and to (given together), they cover those site-local inclusive dates, and conversionRate is unique converters as a percent of human visitors in the range.",
         "operationId": "listGoals",
         "responses": {
           "200": {
@@ -4933,6 +4944,26 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive first date; requires to",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive last date; requires from",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
           }
         ]
       },
@@ -4941,6 +4972,7 @@
           "Goals"
         ],
         "summary": "Create a goal",
+        "description": "Event names match exactly. Retained events that already match the new goal are counted immediately.",
         "operationId": "createGoal",
         "responses": {
           "201": {
@@ -5151,6 +5183,143 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sites/{siteId}/conversions": {
+      "get": {
+        "tags": [
+          "Goals"
+        ],
+        "summary": "Conversions report",
+        "description": "Per-goal conversions, unique converters and conversion rate against the preceding period, daily rows, first-touch sources, and the most recent conversions. The MCP conversions_report tool returns the same document.",
+        "operationId": "conversionsReport",
+        "responses": {
+          "200": {
+            "description": "Conversions report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversionsReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Failed to deserialize path parameters"
+              }
+            }
+          },
+          "401": {
+            "description": "Authentication required or invalid/expired credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Credential lacks permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal service error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "siteId",
+            "in": "path",
+            "required": true,
+            "description": "Site UUID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive first date"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Inclusive last date"
+          },
+          {
+            "name": "goalId",
+            "in": "query",
+            "required": false,
+            "description": "Only this goal",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Most recent conversions to list",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 500,
+              "default": 50
             }
           }
         ]
@@ -7768,6 +7937,207 @@
             "type": "number",
             "minimum": 0,
             "maximum": 100
+          }
+        }
+      },
+      "ConversionsReport": {
+        "type": "object",
+        "required": [
+          "siteId",
+          "from",
+          "to",
+          "timezone",
+          "generatedAt",
+          "visitors",
+          "goals",
+          "recentConversions"
+        ],
+        "properties": {
+          "siteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "from": {
+            "type": "string",
+            "format": "date"
+          },
+          "to": {
+            "type": "string",
+            "format": "date"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "generatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "dataThrough": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "visitors": {
+            "$ref": "#/components/schemas/Metric"
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "goalId",
+                "name",
+                "eventName",
+                "conversions",
+                "uniqueConverters",
+                "conversionRate",
+                "previousConversionRate",
+                "daily",
+                "topSources"
+              ],
+              "properties": {
+                "goalId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "eventName": {
+                  "type": "string"
+                },
+                "pathPattern": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "conversions": {
+                  "$ref": "#/components/schemas/Metric"
+                },
+                "uniqueConverters": {
+                  "$ref": "#/components/schemas/Metric"
+                },
+                "conversionRate": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "previousConversionRate": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                },
+                "daily": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "date",
+                      "conversions",
+                      "uniqueConverters"
+                    ],
+                    "properties": {
+                      "date": {
+                        "type": "string",
+                        "format": "date"
+                      },
+                      "conversions": {
+                        "type": "integer"
+                      },
+                      "uniqueConverters": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                },
+                "topSources": {
+                  "type": "array",
+                  "maxItems": 10,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string"
+                      },
+                      "medium": {
+                        "type": "string"
+                      },
+                      "campaign": {
+                        "type": "string"
+                      },
+                      "conversions": {
+                        "type": "integer"
+                      },
+                      "uniqueConverters": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "recentConversions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "goalId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "goalName": {
+                  "type": "string"
+                },
+                "occurredAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "visitorId": {
+                  "type": "string"
+                },
+                "page": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "device": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "properties": {
+                  "type": "object"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "medium": {
+                  "type": "string"
+                },
+                "campaign": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "definitions": {
+            "type": "object"
+          },
+          "evidence": {
+            "type": "object"
           }
         }
       },

@@ -10,7 +10,8 @@ mod mcp_oauth;
 mod tracking_setup;
 use crate::{
     agent::{
-        required_scope, validate_idempotency_key, validate_scopes, ANALYTICS_READ, SITES_READ,
+        required_scope, validate_idempotency_key, validate_scopes, ANALYTICS_READ, ANALYTICS_WRITE,
+        SITES_READ,
     },
     auth::{
         generate_api_token, generate_refresh_token, hash_api_token, hash_password,
@@ -26,6 +27,7 @@ use crate::{
     briefs::{build_marketing_brief, deliver_report},
     enrichment::{location_from_headers, GeoIp},
     error::ApiError,
+    goals::{validate_goal, GoalDefinition},
     identity::derive_ids,
     marketing::marketing_context,
     models::*,
@@ -37,7 +39,7 @@ use crate::{
         missing_scopes, oauth_state, preferred_property, site_resource_url, state_hash,
         verification_request, verified_property_urls, SearchConsoleConfig,
     },
-    server_ingest::{validate_server_event, ServerEventBatch},
+    server_ingest::{valid_server_event_name, validate_server_event, ServerEventBatch},
     site_icon::{fetch_favicon, normalize_color},
     traffic::{
         automation_for, client_metadata, collection_origin_allowed, origin_allowed, traffic_class,
@@ -536,6 +538,7 @@ pub fn app(state: AppState) -> Router {
             "/api/sites/{site_id}/goals",
             get(list_goals).post(create_goal),
         )
+        .route("/api/sites/{site_id}/conversions", get(conversions))
         .route("/api/sites/{site_id}/goals/{goal_id}", delete(delete_goal))
         .route("/api/sites/{site_id}/export.csv", get(export_csv))
         .route("/api/sites/{site_id}/stream", get(stream))
@@ -1626,6 +1629,9 @@ async fn collect(
             .map(|(_, v)| v.into_owned())
     };
     let mut tx = state.pool.begin().await?;
+    // Before any event insert: goal creation waits for this, and taking it later could
+    // deadlock with another batch inserting the same idempotency key.
+    lock_site_goals(&mut tx, site, true).await?;
     let event_id: Uuid = sqlx::query_scalar(
         "INSERT INTO events(
             site_id,occurred_at,visitor_id,session_id,event_name,url,path,referrer,referrer_host,
@@ -1753,6 +1759,9 @@ async fn server_collect(
     let mut accepted = 0_i64;
     let mut duplicates = 0_i64;
     let mut tx = state.pool.begin().await?;
+    // Before any event insert: goal creation waits for this, and taking it later could
+    // deadlock with another batch inserting the same idempotency key.
+    lock_site_goals(&mut tx, site, true).await?;
     for raw in batch.events {
         let event = validate_server_event(raw, &domain)
             .map_err(|message| ApiError::BadRequest(message.into()))?;
@@ -1950,6 +1959,8 @@ async fn collect_options(
     Ok((response_headers, StatusCode::NO_CONTENT))
 }
 
+/// Records completions of the site's goals for one event. The caller's transaction must
+/// already hold the shared goal lock (`lock_site_goals`), taken before it inserted events.
 async fn complete_goals(
     tx: &mut Transaction<'_, Postgres>,
     site: Uuid,
@@ -1960,6 +1971,29 @@ async fn complete_goals(
     path: &str,
 ) -> Result<(), ApiError> {
     sqlx::query("INSERT INTO goal_completions(goal_id,event_id,site_id,visitor_id,occurred_at) SELECT id,$2,$1,$3,$4 FROM goals WHERE site_id=$1 AND event_name=$5 AND (path_pattern IS NULL OR $6 LIKE path_pattern) ON CONFLICT DO NOTHING").bind(site).bind(event).bind(visitor).bind(at).bind(name).bind(path).execute(&mut **tx).await?;
+    Ok(())
+}
+
+/// Serializes goal creation with ingestion for one site, until the transaction ends.
+///
+/// Ingestion completes goals that exist when its statement runs, and a new goal backfills
+/// events that are committed. Without this lock an event inserted by a transaction that
+/// checked goals before the goal was committed, but committed after the backfill read, would
+/// be missed by both. Ingestion takes the lock shared; goal creation takes it exclusively, so
+/// it waits for in-flight ingestion to commit and later ingestion sees the new goal.
+/// Ingestion takes it right after BEGIN, before inserting any event, so lock order is
+/// always advisory lock first, then event rows.
+async fn lock_site_goals(
+    tx: &mut Transaction<'_, Postgres>,
+    site: Uuid,
+    shared: bool,
+) -> Result<(), ApiError> {
+    let sql = if shared {
+        "SELECT pg_advisory_xact_lock_shared(hashtextextended('slimlytics:goals:' || $1::text, 0))"
+    } else {
+        "SELECT pg_advisory_xact_lock(hashtextextended('slimlytics:goals:' || $1::text, 0))"
+    };
+    sqlx::query(sql).bind(site).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -4874,6 +4908,17 @@ async fn bing_report(
     ))
 }
 
+#[cfg(test)]
+mod instrumentation_tests {
+    #[test]
+    fn event_names_cannot_close_an_inline_script() {
+        let literal = super::js_string_literal("signup</script><b>&");
+        assert_eq!(literal, r#""signup\u003c/script\u003e\u003cb\u003e\u0026""#);
+        assert!(!literal.contains('<'));
+        assert_eq!(super::js_string_literal("signup"), r#""signup""#);
+    }
+}
+
 #[derive(Deserialize)]
 struct McpRequest {
     jsonrpc: String,
@@ -4974,6 +5019,60 @@ fn mcp_tools() -> Value {
         "annotations":{"readOnlyHint":true,"idempotentHint":true}
       },
       {
+        "name":"list_goals",
+        "description":"List a site's goals (what counts as a conversion) with all-time conversions. Each goal matches one event name (a custom event such as signup, or pageview) and an optional SQL LIKE path pattern.",
+        "inputSchema":{
+          "type":"object","required":["siteId"],"additionalProperties":false,
+          "properties":{"siteId":{"type":"string","format":"uuid"}}
+        },
+        "outputSchema":{"type":"object","required":["goals"],"properties":{"goals":{"type":"array"}}},
+        "annotations":{"readOnlyHint":true,"idempotentHint":true}
+      },
+      {
+        "name":"create_goal",
+        "description":"Create a conversion goal, or return the existing goal with the same name and definition (safe to repeat). For a signup, purchase or other action, use a custom event name the website sends with window.Slimlytics.event(name) (for example eventName signup). To count visits to a page instead, use eventName pageview with pathPattern, a SQL LIKE pattern such as /welcome%. Matching events already collected are counted too. Returns how to send the event from the website.",
+        "inputSchema":{
+          "type":"object","required":["siteId","name","eventName"],"additionalProperties":false,
+          "properties":{
+            "siteId":{"type":"string","format":"uuid"},
+            "name":{"type":"string","minLength":1,"maxLength":120,"description":"Display name, unique per site, such as Signup."},
+            "eventName":{"type":"string","minLength":1,"maxLength":120,"description":"Exact event name to match, such as signup or pageview."},
+            "pathPattern":{"type":"string","maxLength":512,"description":"Optional SQL LIKE pattern on the page path, starting with / or %."}
+          }
+        },
+        "outputSchema":{"type":"object"},
+        "annotations":{"readOnlyHint":false,"destructiveHint":false,"idempotentHint":true}
+      },
+      {
+        "name":"delete_goal",
+        "description":"Delete a goal and its recorded conversions. The underlying events are kept, so creating the goal again restores its history.",
+        "inputSchema":{
+          "type":"object","required":["siteId","goalId"],"additionalProperties":false,
+          "properties":{
+            "siteId":{"type":"string","format":"uuid"},
+            "goalId":{"type":"string","format":"uuid"}
+          }
+        },
+        "outputSchema":{"type":"object"},
+        "annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true}
+      },
+      {
+        "name":"conversions_report",
+        "description":"Conversions for each goal (signups, purchases, key pages) over explicit inclusive site-local dates: conversions, unique converters and conversion rate against the preceding period, daily rows, top first-touch sources and campaigns, and the most recent conversions with their page, source, country, device and event properties.",
+        "inputSchema":{
+          "type":"object","required":["siteId","from","to"],"additionalProperties":false,
+          "properties":{
+            "siteId":{"type":"string","format":"uuid"},
+            "from":{"type":"string","format":"date"},
+            "to":{"type":"string","format":"date"},
+            "goalId":{"type":"string","format":"uuid","description":"Only this goal."},
+            "limit":{"type":"integer","minimum":0,"maximum":500,"default":50,"description":"Most recent conversions to list."}
+          }
+        },
+        "outputSchema":{"type":"object"},
+        "annotations":{"readOnlyHint":true,"idempotentHint":true}
+      },
+      {
         "name":"marketing_brief",
         "description":"Generate the same evidence-rich completed-day marketing brief used by scheduled webhook delivery.",
         "inputSchema":{
@@ -4994,6 +5093,83 @@ fn mcp_argument<'a>(arguments: &'a Value, name: &str) -> Result<&'a str, ApiErro
         .get(name)
         .and_then(Value::as_str)
         .ok_or_else(|| ApiError::BadRequest(format!("{name} is required")))
+}
+
+fn mcp_site(arguments: &Value) -> Result<Uuid, ApiError> {
+    Uuid::parse_str(mcp_argument(arguments, "siteId")?)
+        .map_err(|_| ApiError::BadRequest("invalid siteId".into()))
+}
+
+/// How a website sends the events a goal counts, returned by `create_goal` so an agent can
+/// instrument the site. Never includes the server write key.
+/// A JavaScript string literal that is also safe inside an inline `<script>` element.
+fn js_string_literal(value: &str) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+}
+
+fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
+    let name = serde_json::to_string(&goal.event_name).unwrap_or_default();
+    let js_name = js_string_literal(&goal.event_name);
+    if goal.event_name == "pageview" {
+        return json!({
+            "kind":"pageview",
+            "notes":[
+                "The installed tracker already sends page views; no code change is needed.",
+                format!("Completions count page views whose path matches {}.", goal.path_pattern.as_deref().unwrap_or("any path"))
+            ]
+        });
+    }
+    // A custom-event goal with a path pattern only counts events sent from matching pages.
+    let path_note = goal.path_pattern.as_deref().map(|pattern| {
+        format!("This goal only counts {name} events whose page path matches the SQL LIKE pattern {pattern} (% matches any characters), so send it from such a page URL.")
+    });
+    let with_path =
+        |notes: Vec<String>| -> Vec<String> { path_note.iter().cloned().chain(notes).collect() };
+    let server = if valid_server_event_name(&goal.event_name) {
+        json!({
+            "url":format!("{analytics_origin}/api/ingest"),
+            "method":"POST",
+            "headers":{"Content-Type":"application/json","X-Slimlytics-Server-Key":"${SLIMLYTICS_SERVER_KEY}"},
+            "body":{"events":[{
+                "eventName":goal.event_name,
+                "url":"https://<site domain>/<page where it happened>",
+                "clientIp":"<visitor IP from the request>",
+                "userAgent":"<visitor User-Agent from the request>",
+                "idempotencyKey":"<unique id, for example signup:<account id>>"
+            }]},
+            "notes":with_path(vec![
+                "Use this when the action is confirmed on the server, so ad blockers cannot drop it.",
+                "SLIMLYTICS_SERVER_KEY is the site's server key from the Slimlytics dashboard; keep it in private server config, never in the repository or browser code.",
+                "url must be on the site's exact domain. Forward the visitor's real IP and User-Agent: they tie the conversion to the visitor's source, and a server User-Agent is classified as a bot and not counted.",
+                "Honor the same privacy choices as the browser tracker: do not send the event when the visitor has not given analytics consent, or when the request carries DNT: 1 or Sec-GPC: 1."
+            ].into_iter().map(String::from).collect())
+        })
+    } else {
+        json!({
+            "available":false,
+            "notes":["Server ingestion accepts event names of at most 64 letters, digits, '_', '-' or '.'. Use such a name for this goal to send it from the server."]
+        })
+    };
+    json!({
+        "kind":"customEvent",
+        "browser":{
+            "code":format!(
+                "// Sends a Slimlytics event once the tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({js_name});"
+            ),
+            "withProperties":format!("slimlyticsEvent({js_name}, {{ plan: 'free' }});"),
+            "notes":with_path(vec![
+                "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
+                "The snippet loads asynchronously, so the helper waits for the page load event when the tracker is not ready yet. A deferred call records the page the visitor is on when it runs: in a single-page app, a path-restricted goal only counts it if the visitor is still on a matching route.",
+                "Browser delivery is best effort: an event can be lost if the page unloads before it is sent, and consent, Do Not Track, Global Privacy Control and ad blockers can prevent it. For conversions that must be counted, such as signups and purchases, prefer server ingestion.",
+                "Properties are optional flat values; never send names, emails or other personal data."
+            ].into_iter().map(String::from).collect())
+        },
+        "server":server
+    })
 }
 
 fn mcp_site_and_range(
@@ -5308,7 +5484,7 @@ async fn mcp(
                 "name":"slimlytics","title":"Slimlytics Analytics","version":"1.0.0",
                 "description":"Deterministic privacy-minded web and marketing analytics."
               },
-              "instructions":"For website installation call setup_site with name, domain and optional serverType (caddy, nginx, apache). Install returned first-party proxy routes and snippet in the website, then verify both URLs and a page view. Preserve consent, DNT and GPC. Repeated setup reuses the domain. Use explicit site IDs and inclusive date ranges for analytics; report dataThrough and evidence."
+              "instructions":"For website installation call setup_site with name, domain and optional serverType (caddy, nginx, apache). Install returned first-party proxy routes and snippet in the website, then verify both URLs and a page view. Preserve consent, DNT and GPC. Repeated setup reuses the domain. To track signups, purchases or other conversions call create_goal with an event name, send that event from the website as the returned instrumentation shows, then read conversions_report. Use explicit site IDs and inclusive date ranges for analytics; report dataThrough and evidence."
             }),
         )).into_response());
     }
@@ -5342,6 +5518,7 @@ async fn mcp(
     let scope = match name {
         "setup_site" => "sites:write",
         "tracking_setup" | "list_sites" => SITES_READ,
+        "create_goal" | "delete_goal" => ANALYTICS_WRITE,
         _ => ANALYTICS_READ,
     };
     principal.require(scope)?;
@@ -5443,6 +5620,68 @@ async fn mcp(
                 mcp_bing_webmaster_report(&state, principal.user_id, &arguments)
                     .await
                     .map(|(site, value)| (Some(site), value))
+            }
+            "list_goals" => {
+                let site = mcp_site(&arguments)?;
+                require_site(&state.pool, principal.user_id, site, false).await?;
+                let goals = goal_stats(&state.pool, site, None).await?;
+                Ok((
+                    Some(site),
+                    json!({"siteId":site,"goals":goals,"generatedAt":Utc::now()}),
+                ))
+            }
+            "create_goal" => {
+                let site = mcp_site(&arguments)?;
+                require_site(&state.pool, principal.user_id, site, true).await?;
+                let input: GoalInput = serde_json::from_value(json!({
+                    "name":arguments.get("name").cloned().unwrap_or(Value::Null),
+                    "eventName":arguments.get("eventName").cloned().unwrap_or(Value::Null),
+                    "pathPattern":arguments.get("pathPattern").cloned().unwrap_or(Value::Null)
+                }))
+                .map_err(|_| ApiError::BadRequest("name and eventName are required".into()))?;
+                let definition =
+                    validate_goal(input).map_err(|message| ApiError::BadRequest(message.into()))?;
+                let (goal, created) = ensure_goal(&state.pool, site, definition).await?;
+                let instrumentation = goal_instrumentation(&goal, &state.public_url);
+                Ok((
+                    Some(site),
+                    json!({"created":created,"goal":goal,"instrumentation":instrumentation}),
+                ))
+            }
+            "delete_goal" => {
+                let site = mcp_site(&arguments)?;
+                let goal = Uuid::parse_str(mcp_argument(&arguments, "goalId")?)
+                    .map_err(|_| ApiError::BadRequest("invalid goalId".into()))?;
+                require_site(&state.pool, principal.user_id, site, true).await?;
+                let deleted = remove_goal(&state.pool, site, goal).await?;
+                Ok((Some(site), json!({"deleted":deleted,"goalId":goal})))
+            }
+            "conversions_report" => {
+                let (site, from, to) = mcp_site_and_range(&arguments)?;
+                require_site(&state.pool, principal.user_id, site, false).await?;
+                // A supplied filter must be well formed: silently ignoring it would report
+                // every goal as if it were the requested one.
+                let goal = match arguments.get("goalId") {
+                    None => None,
+                    Some(value) => Some(
+                        value
+                            .as_str()
+                            .and_then(|id| Uuid::parse_str(id).ok())
+                            .ok_or_else(|| ApiError::BadRequest("invalid goalId".into()))?,
+                    ),
+                };
+                let limit = match arguments.get("limit") {
+                    None => 50,
+                    Some(value) => value
+                        .as_i64()
+                        .filter(|limit| (0..=500).contains(limit))
+                        .ok_or_else(|| {
+                            ApiError::BadRequest("limit must be an integer from 0 to 500".into())
+                        })?,
+                };
+                conversions_report(&state.pool, site, from, to, goal, limit)
+                    .await
+                    .map(|value| (Some(site), value))
             }
             "marketing_brief" => {
                 let site = Uuid::parse_str(mcp_argument(&arguments, "siteId")?)
@@ -5547,7 +5786,7 @@ async fn custom_events(
     State(s): State<AppState>,
     CurrentUser(u): CurrentUser,
     Path(site): Path<Uuid>,
-    Query(q): Query<RangeQuery>,
+    Query(q): Query<EventsQuery>,
 ) -> Result<Json<Vec<Value>>, ApiError> {
     require_site(&s.pool, u, site, false).await?;
     let ((a, b, _), _) = bounds(&s.pool, site, q.from, q.to).await?;
@@ -5563,11 +5802,13 @@ async fn custom_events(
     let rows: Vec<EventRow> = sqlx::query_as(
         "SELECT id,occurred_at,event_name,path,visitor_id,country_code::text,referrer_host \
          FROM events WHERE site_id=$1 AND occurred_at >= $2 AND occurred_at < $3 \
+           AND ($4::text IS NULL OR event_name=$4) \
          ORDER BY occurred_at DESC LIMIT 500",
     )
     .bind(site)
     .bind(a)
     .bind(b)
+    .bind(q.name.as_deref().filter(|name| !name.is_empty()))
     .fetch_all(&s.pool)
     .await?;
     Ok(Json(
@@ -5590,25 +5831,59 @@ async fn list_goals(
     State(s): State<AppState>,
     CurrentUser(u): CurrentUser,
     Path(site): Path<Uuid>,
+    Query(q): Query<GoalsQuery>,
 ) -> Result<Json<Vec<GoalWithStats>>, ApiError> {
     require_site(&s.pool, u, site, false).await?;
-    Ok(Json(
-        sqlx::query_as(
-            "SELECT g.id,g.site_id,g.name,g.event_name,g.path_pattern,g.created_at, \
-             (SELECT count(*) FROM goal_completions gc JOIN events e ON e.id=gc.event_id \
-              WHERE gc.goal_id=g.id AND e.traffic_class='human')::bigint conversions, \
-             COALESCE(100.0 * \
-               (SELECT count(DISTINCT gc.visitor_id) FROM goal_completions gc \
-                JOIN events e ON e.id=gc.event_id WHERE gc.goal_id=g.id AND e.traffic_class='human') / \
-               NULLIF((SELECT count(DISTINCT visitor_id) FROM events \
-                       WHERE site_id=g.site_id AND traffic_class='human'),0),0)::float8 conversion_rate \
-             FROM goals g WHERE g.site_id=$1 ORDER BY g.created_at",
-        )
-        .bind(site)
-        .fetch_all(&s.pool)
-        .await?,
-    ))
+    let range = match (q.from, q.to) {
+        (Some(from), Some(to)) => {
+            let ((a, b, _), _) = bounds(&s.pool, site, from, to).await?;
+            Some((a, b))
+        }
+        (None, None) => None,
+        _ => {
+            return Err(ApiError::BadRequest(
+                "from and to must be given together".into(),
+            ))
+        }
+    };
+    Ok(Json(goal_stats(&s.pool, site, range).await?))
 }
+
+/// Goals with conversions and conversion rate (percent of human visitors who converted),
+/// within `range` or over all retained events.
+async fn goal_stats(
+    pool: &PgPool,
+    site: Uuid,
+    range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+) -> Result<Vec<GoalWithStats>, ApiError> {
+    Ok(sqlx::query_as(
+        "SELECT g.id,g.site_id,g.name,g.event_name,g.path_pattern,g.created_at, \
+           COALESCE(c.conversions,0)::bigint conversions, \
+           COALESCE(100.0*c.converters/NULLIF(v.visitors,0),0)::float8 conversion_rate \
+         FROM goals g \
+         LEFT JOIN ( \
+           SELECT gc.goal_id,count(*) conversions,count(DISTINCT gc.visitor_id) converters \
+           FROM goal_completions gc JOIN events e ON e.id=gc.event_id \
+           WHERE gc.site_id=$1 AND e.traffic_class='human' \
+             AND ($2::timestamptz IS NULL OR gc.occurred_at >= $2) \
+             AND ($3::timestamptz IS NULL OR gc.occurred_at < $3) \
+           GROUP BY gc.goal_id \
+         ) c ON c.goal_id=g.id \
+         CROSS JOIN ( \
+           SELECT count(DISTINCT visitor_id) visitors FROM events \
+           WHERE site_id=$1 AND traffic_class='human' \
+             AND ($2::timestamptz IS NULL OR occurred_at >= $2) \
+             AND ($3::timestamptz IS NULL OR occurred_at < $3) \
+         ) v \
+         WHERE g.site_id=$1 ORDER BY g.created_at",
+    )
+    .bind(site)
+    .bind(range.map(|r| r.0))
+    .bind(range.map(|r| r.1))
+    .fetch_all(pool)
+    .await?)
+}
+
 async fn create_goal(
     State(s): State<AppState>,
     CurrentUser(u): CurrentUser,
@@ -5616,24 +5891,352 @@ async fn create_goal(
     Json(i): Json<GoalInput>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_site(&s.pool, u, site, true).await?;
-    if i.name.is_empty() || i.event_name.is_empty() {
-        return Err(ApiError::BadRequest("name and event_name required".into()));
-    }
-    let goal:Goal=sqlx::query_as("INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) RETURNING id,site_id,name,event_name,path_pattern,created_at").bind(site).bind(i.name).bind(i.event_name).bind(i.path_pattern).fetch_one(&s.pool).await.map_err(map_conflict)?;
+    let goal = validate_goal(i).map_err(|message| ApiError::BadRequest(message.into()))?;
+    let mut tx = s.pool.begin().await?;
+    lock_site_goals(&mut tx, site, false).await?;
+    let goal:Goal=sqlx::query_as("INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) RETURNING id,site_id,name,event_name,path_pattern,created_at").bind(site).bind(goal.name).bind(goal.event_name).bind(goal.path_pattern).fetch_one(&mut *tx).await.map_err(map_conflict)?;
+    backfill_goal(&mut tx, &goal).await?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(goal)))
 }
+
+/// Creates the goal, or returns the site's goal with the same name when its definition
+/// matches, so an agent can safely repeat the call. The boolean is true when it was created.
+async fn ensure_goal(
+    pool: &PgPool,
+    site: Uuid,
+    goal: GoalDefinition,
+) -> Result<(Goal, bool), ApiError> {
+    let mut tx = pool.begin().await?;
+    // Exclusive per-site lock: concurrent creates, deletes and ingestion wait, so the insert,
+    // the backfill, and the existence check below all see a stable set of goals and events.
+    lock_site_goals(&mut tx, site, false).await?;
+    let created: Option<Goal> = sqlx::query_as(
+        "INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) \
+         ON CONFLICT (site_id,name) DO NOTHING \
+         RETURNING id,site_id,name,event_name,path_pattern,created_at",
+    )
+    .bind(site)
+    .bind(&goal.name)
+    .bind(&goal.event_name)
+    .bind(&goal.path_pattern)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (existing, created) = match created {
+        Some(goal) => (goal, true),
+        None => (
+            sqlx::query_as(
+                "SELECT id,site_id,name,event_name,path_pattern,created_at FROM goals \
+                 WHERE site_id=$1 AND name=$2",
+            )
+            .bind(site)
+            .bind(&goal.name)
+            .fetch_optional(&mut *tx)
+            .await?
+            // Deleted between the insert and this read; the caller can retry.
+            .ok_or_else(|| ApiError::BadRequest("goal changed concurrently; retry".into()))?,
+            false,
+        ),
+    };
+    if existing.event_name != goal.event_name || existing.path_pattern != goal.path_pattern {
+        return Err(ApiError::BadRequest(format!(
+            "a goal named \"{}\" already exists for event \"{}\"{}; delete it or choose another name",
+            existing.name,
+            existing.event_name,
+            existing
+                .path_pattern
+                .as_deref()
+                .map(|pattern| format!(" on paths like \"{pattern}\""))
+                .unwrap_or_default()
+        )));
+    }
+    if created {
+        backfill_goal(&mut tx, &existing).await?;
+    }
+    tx.commit().await?;
+    Ok((existing, created))
+}
+
+/// Records completions for retained events that already match a goal. Collection only
+/// completes goals that exist when an event arrives, so without this a goal on an existing
+/// event or page would start at zero. Safe to repeat: completions are unique per event.
+async fn backfill_goal(tx: &mut Transaction<'_, Postgres>, goal: &Goal) -> Result<u64, ApiError> {
+    Ok(sqlx::query(
+        "INSERT INTO goal_completions(goal_id,event_id,site_id,visitor_id,occurred_at) \
+         SELECT $1,e.id,e.site_id,e.visitor_id,e.occurred_at FROM events e \
+         WHERE e.site_id=$2 AND e.event_name=$3 AND ($4::text IS NULL OR e.path LIKE $4) \
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(goal.id)
+    .bind(goal.site_id)
+    .bind(&goal.event_name)
+    .bind(&goal.path_pattern)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected())
+}
+
+async fn conversions(
+    State(s): State<AppState>,
+    CurrentUser(u): CurrentUser,
+    Path(site): Path<Uuid>,
+    Query(q): Query<ConversionsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    require_site(&s.pool, u, site, false).await?;
+    Ok(Json(
+        conversions_report(
+            &s.pool,
+            site,
+            q.from,
+            q.to,
+            q.goal_id,
+            q.limit.unwrap_or(50),
+        )
+        .await?,
+    ))
+}
+
+/// Conversions for each goal over site-local inclusive dates: totals with the preceding
+/// period, daily rows, first-touch sources, and the most recent conversions.
+async fn conversions_report(
+    pool: &PgPool,
+    site: Uuid,
+    from: NaiveDate,
+    to: NaiveDate,
+    goal: Option<Uuid>,
+    limit: i64,
+) -> Result<Value, ApiError> {
+    let ((start, end, prior), timezone) = bounds(pool, site, from, to).await?;
+    let limit = limit.clamp(0, 500);
+    let goals: Vec<Goal> = sqlx::query_as(
+        "SELECT id,site_id,name,event_name,path_pattern,created_at FROM goals \
+         WHERE site_id=$1 AND ($2::uuid IS NULL OR id=$2) ORDER BY created_at",
+    )
+    .bind(site)
+    .bind(goal)
+    .fetch_all(pool)
+    .await?;
+    if goal.is_some() && goals.is_empty() {
+        return Err(ApiError::NotFound);
+    }
+    let visitors = |a: DateTime<Utc>, b: DateTime<Utc>| {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(DISTINCT visitor_id) FROM events \
+             WHERE site_id=$1 AND occurred_at >= $2 AND occurred_at < $3 AND traffic_class='human'",
+        )
+        .bind(site)
+        .bind(a)
+        .bind(b)
+        .fetch_one(pool)
+    };
+    let current_visitors = visitors(start, end).await?;
+    let previous_visitors = visitors(prior, start).await?;
+    let totals = |a: DateTime<Utc>, b: DateTime<Utc>| {
+        sqlx::query_as::<_, (Uuid, i64, i64)>(
+            "SELECT gc.goal_id,count(*)::bigint,count(DISTINCT gc.visitor_id)::bigint \
+             FROM goal_completions gc JOIN events e ON e.id=gc.event_id \
+             WHERE gc.site_id=$1 AND gc.occurred_at >= $2 AND gc.occurred_at < $3 \
+               AND e.traffic_class='human' GROUP BY gc.goal_id",
+        )
+        .bind(site)
+        .bind(a)
+        .bind(b)
+        .fetch_all(pool)
+    };
+    let current = totals(start, end).await?;
+    let previous = totals(prior, start).await?;
+    let daily: Vec<(Uuid, NaiveDate, i64, i64)> = sqlx::query_as(
+        "SELECT gc.goal_id,(gc.occurred_at AT TIME ZONE $4)::date local_day, \
+           count(*)::bigint,count(DISTINCT gc.visitor_id)::bigint \
+         FROM goal_completions gc JOIN events e ON e.id=gc.event_id \
+         WHERE gc.site_id=$1 AND gc.occurred_at >= $2 AND gc.occurred_at < $3 \
+           AND e.traffic_class='human' GROUP BY 1,2",
+    )
+    .bind(site)
+    .bind(start)
+    .bind(end)
+    .bind(&timezone)
+    .fetch_all(pool)
+    .await?;
+    // A converter's source is their earliest retained human event (first touch): a signup
+    // event itself rarely carries the original referrer. It is not limited to the range, so
+    // a visit that began before local midnight keeps its source.
+    const FIRST_TOUCH: &str = "first_touch AS ( \
+           SELECT DISTINCT ON(visitor_id) visitor_id, \
+             COALESCE(utm_source,referrer_host,'(direct)') source, \
+             COALESCE(utm_medium,'(none)') medium, \
+             COALESCE(utm_campaign,'(none)') campaign \
+           FROM events WHERE site_id=$1 AND occurred_at < $3 \
+             AND traffic_class='human' \
+             AND visitor_id IN (SELECT visitor_id FROM conv) \
+           ORDER BY visitor_id,occurred_at)";
+    let sources: Vec<(Uuid, String, String, String, i64, i64)> = sqlx::query_as(&format!(
+        "WITH conv AS ( \
+           SELECT gc.goal_id,gc.visitor_id,count(*) n \
+           FROM goal_completions gc JOIN events e ON e.id=gc.event_id \
+           WHERE gc.site_id=$1 AND gc.occurred_at >= $2 AND gc.occurred_at < $3 \
+             AND e.traffic_class='human' GROUP BY 1,2 \
+         ), {FIRST_TOUCH} \
+         SELECT conv.goal_id,ft.source,ft.medium,ft.campaign, \
+           sum(conv.n)::bigint conversions,count(*)::bigint converters \
+         FROM conv JOIN first_touch ft USING(visitor_id) \
+         GROUP BY 1,2,3,4 ORDER BY conversions DESC,converters DESC,2,3,4"
+    ))
+    .bind(site)
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?;
+    type RecentRow = (
+        Uuid,
+        DateTime<Utc>,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Value,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let recent: Vec<RecentRow> = sqlx::query_as(&format!(
+        "WITH recent AS ( \
+           SELECT gc.goal_id,gc.occurred_at,e.visitor_id,e.path,e.country_code::text country, \
+             e.device_type,e.properties \
+           FROM goal_completions gc JOIN events e ON e.id=gc.event_id \
+           WHERE gc.site_id=$1 AND gc.occurred_at >= $2 AND gc.occurred_at < $3 \
+             AND e.traffic_class='human' AND ($4::uuid IS NULL OR gc.goal_id=$4) \
+           ORDER BY gc.occurred_at DESC,gc.id LIMIT $5 \
+         ), conv AS (SELECT DISTINCT visitor_id FROM recent), {FIRST_TOUCH} \
+         SELECT r.goal_id,r.occurred_at,r.visitor_id,r.path,r.country,r.device_type,r.properties, \
+           ft.source,ft.medium,ft.campaign \
+         FROM recent r LEFT JOIN first_touch ft USING(visitor_id) \
+         ORDER BY r.occurred_at DESC"
+    ))
+    .bind(site)
+    .bind(start)
+    .bind(end)
+    .bind(goal)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    let data_through: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT max(received_at) FROM events WHERE site_id=$1")
+            .bind(site)
+            .fetch_one(pool)
+            .await?;
+    let rate = |converters: i64, visitors: i64| {
+        if visitors == 0 {
+            0.0
+        } else {
+            converters as f64 * 100.0 / visitors as f64
+        }
+    };
+    let find = |rows: &[(Uuid, i64, i64)], id: Uuid| {
+        rows.iter()
+            .find(|row| row.0 == id)
+            .map_or((0, 0), |row| (row.1, row.2))
+    };
+    let names: std::collections::HashMap<Uuid, &str> =
+        goals.iter().map(|g| (g.id, g.name.as_str())).collect();
+    let goal_rows: Vec<Value> = goals
+        .iter()
+        .map(|g| {
+            let now = find(&current, g.id);
+            let before = find(&previous, g.id);
+            let days: Vec<Value> = from
+                .iter_days()
+                .take_while(|day| *day <= to)
+                .map(|day| {
+                    let row = daily.iter().find(|row| row.0 == g.id && row.1 == day);
+                    json!({
+                        "date":day,
+                        "conversions":row.map_or(0, |row| row.2),
+                        "uniqueConverters":row.map_or(0, |row| row.3)
+                    })
+                })
+                .collect();
+            let top_sources: Vec<Value> = sources
+                .iter()
+                .filter(|row| row.0 == g.id)
+                .take(10)
+                .map(|row| {
+                    json!({
+                        "source":row.1,"medium":row.2,"campaign":row.3,
+                        "conversions":row.4,"uniqueConverters":row.5
+                    })
+                })
+                .collect();
+            json!({
+                "goalId":g.id,"name":g.name,"eventName":g.event_name,
+                "pathPattern":g.path_pattern,"createdAt":g.created_at,
+                "conversions":metric(now.0,before.0),
+                "uniqueConverters":metric(now.1,before.1),
+                "conversionRate":rate(now.1,current_visitors),
+                "previousConversionRate":rate(before.1,previous_visitors),
+                "daily":days,
+                "topSources":top_sources
+            })
+        })
+        .collect();
+    let recent: Vec<Value> = recent
+        .into_iter()
+        .map(|row| {
+            json!({
+                "goalId":row.0,"goalName":names.get(&row.0).copied().unwrap_or_default(),
+                "occurredAt":row.1,"visitorId":row.2,"page":row.3,"country":row.4,
+                "device":row.5,"properties":row.6,
+                "source":row.7.unwrap_or_else(|| "(direct)".into()),
+                "medium":row.8.unwrap_or_else(|| "(none)".into()),
+                "campaign":row.9.unwrap_or_else(|| "(none)".into())
+            })
+        })
+        .collect();
+    Ok(json!({
+      "siteId":site,"from":from,"to":to,"timezone":timezone,
+      "generatedAt":Utc::now(),"dataThrough":data_through,
+      "visitors":metric(current_visitors,previous_visitors),
+      "goals":goal_rows,
+      "recentConversions":recent,
+      "definitions":{
+        "conversion":"One human event that matched the goal's eventName and optional pathPattern.",
+        "uniqueConverters":"Distinct site-scoped rotating visitor identifiers with at least one conversion.",
+        "conversionRate":"uniqueConverters as a percent of distinct human visitors in the range.",
+        "source":"The converter's earliest retained human event, which can precede the range (a visit that started before local midnight): utm_source, else referrer host, else (direct).",
+        "comparison":"Immediately preceding date range with the same number of site-local calendar days."
+      },
+      "evidence":{
+        "source":"Slimlytics goal completions joined to the event store",
+        "trafficClass":"human",
+        "dateBoundary":"site-local inclusive dates",
+        "freshnessField":"dataThrough"
+      }
+    }))
+}
+
 async fn delete_goal(
     State(s): State<AppState>,
     CurrentUser(u): CurrentUser,
     Path((site, goal)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
     require_site(&s.pool, u, site, true).await?;
-    sqlx::query("DELETE FROM goals WHERE id=$1 AND site_id=$2")
+    remove_goal(&s.pool, site, goal).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a goal under the site's goal lock, so it cannot vanish while `ensure_goal` is
+/// returning it as reused. True when the goal existed.
+async fn remove_goal(pool: &PgPool, site: Uuid, goal: Uuid) -> Result<bool, ApiError> {
+    let mut tx = pool.begin().await?;
+    lock_site_goals(&mut tx, site, false).await?;
+    let deleted = sqlx::query("DELETE FROM goals WHERE id=$1 AND site_id=$2")
         .bind(goal)
         .bind(site)
-        .execute(&s.pool)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
+    Ok(deleted == 1)
 }
 async fn export_csv(
     State(s): State<AppState>,
