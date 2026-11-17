@@ -5122,11 +5122,14 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
     json!({
         "kind":"customEvent",
         "browser":{
-            "code":format!("window.Slimlytics?.event({name});"),
-            "withProperties":format!("window.Slimlytics?.event({name}, {{ plan: 'free' }});"),
+            "code":format!(
+                "// Sends {name} once the Slimlytics tracker has loaded.\nfunction slimlyticsEvent(name, properties) {{\n  if (window.Slimlytics) return window.Slimlytics.event(name, properties);\n  // The snippet is async; the page load event fires after it runs.\n  if (document.readyState !== 'complete') {{\n    window.addEventListener('load', () => window.Slimlytics?.event(name, properties), {{ once: true }});\n  }}\n}}\nslimlyticsEvent({name});"
+            ),
+            "withProperties":format!("slimlyticsEvent({name}, {{ plan: 'free' }});"),
             "notes":[
                 "Call it once the action succeeds (for example after the signup request returns), on a page that loads the site's Slimlytics snippet.",
-                "The snippet loads asynchronously, so keep the optional call (?.) or call it after the page has loaded.",
+                "The snippet loads asynchronously; the helper waits for the page load event so an early call is not lost. If the tracker is still missing after load, it was blocked or not installed on that page.",
+                "Queued events are sent within a few seconds and when the page is hidden, so navigating away right after the call is fine.",
                 "Properties are optional flat values; never send names, emails or other personal data.",
                 "Browser events respect consent, Do Not Track and Global Privacy Control, and ad blockers can drop them."
             ]
@@ -5616,13 +5619,8 @@ async fn mcp(
                 let goal = Uuid::parse_str(mcp_argument(&arguments, "goalId")?)
                     .map_err(|_| ApiError::BadRequest("invalid goalId".into()))?;
                 require_site(&state.pool, principal.user_id, site, true).await?;
-                let deleted = sqlx::query("DELETE FROM goals WHERE id=$1 AND site_id=$2")
-                    .bind(goal)
-                    .bind(site)
-                    .execute(&state.pool)
-                    .await?
-                    .rows_affected();
-                Ok((Some(site), json!({"deleted":deleted == 1,"goalId":goal})))
+                let deleted = remove_goal(&state.pool, site, goal).await?;
+                Ok((Some(site), json!({"deleted":deleted,"goalId":goal})))
             }
             "conversions_report" => {
                 let (site, from, to) = mcp_site_and_range(&arguments)?;
@@ -5863,8 +5861,8 @@ async fn ensure_goal(
     goal: GoalDefinition,
 ) -> Result<(Goal, bool), ApiError> {
     let mut tx = pool.begin().await?;
-    // Exclusive per-site lock: concurrent creates and ingestion wait, so the insert, the
-    // backfill, and the existence check below all see a stable set of goals and events.
+    // Exclusive per-site lock: concurrent creates, deletes and ingestion wait, so the insert,
+    // the backfill, and the existence check below all see a stable set of goals and events.
     lock_site_goals(&mut tx, site, false).await?;
     let created: Option<Goal> = sqlx::query_as(
         "INSERT INTO goals(site_id,name,event_name,path_pattern) VALUES($1,$2,$3,$4) \
@@ -6174,12 +6172,23 @@ async fn delete_goal(
     Path((site, goal)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, ApiError> {
     require_site(&s.pool, u, site, true).await?;
-    sqlx::query("DELETE FROM goals WHERE id=$1 AND site_id=$2")
+    remove_goal(&s.pool, site, goal).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes a goal under the site's goal lock, so it cannot vanish while `ensure_goal` is
+/// returning it as reused. True when the goal existed.
+async fn remove_goal(pool: &PgPool, site: Uuid, goal: Uuid) -> Result<bool, ApiError> {
+    let mut tx = pool.begin().await?;
+    lock_site_goals(&mut tx, site, false).await?;
+    let deleted = sqlx::query("DELETE FROM goals WHERE id=$1 AND site_id=$2")
         .bind(goal)
         .bind(site)
-        .execute(&s.pool)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
+    Ok(deleted == 1)
 }
 async fn export_csv(
     State(s): State<AppState>,

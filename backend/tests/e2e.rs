@@ -1127,10 +1127,12 @@ async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
     let goal = &goal["result"]["structuredContent"];
     assert_eq!(goal["created"], true, "{goal}");
     let goal_id = goal["goal"]["id"].as_str().unwrap().to_owned();
-    assert_eq!(
-        goal["instrumentation"]["browser"]["code"],
-        "window.Slimlytics?.event(\"signup\");"
+    let browser_code = goal["instrumentation"]["browser"]["code"].as_str().unwrap();
+    assert!(
+        browser_code.ends_with("slimlyticsEvent(\"signup\");"),
+        "{browser_code}"
     );
+    assert!(browser_code.contains("addEventListener('load'"));
     assert!(!goal.to_string().contains(&server_key), "server key leaked");
     assert_eq!(
         goal["instrumentation"]["server"]["body"]["events"][0]["eventName"],
