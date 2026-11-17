@@ -5638,13 +5638,26 @@ async fn mcp(
             "conversions_report" => {
                 let (site, from, to) = mcp_site_and_range(&arguments)?;
                 require_site(&state.pool, principal.user_id, site, false).await?;
-                let goal = arguments
-                    .get("goalId")
-                    .and_then(Value::as_str)
-                    .map(Uuid::parse_str)
-                    .transpose()
-                    .map_err(|_| ApiError::BadRequest("invalid goalId".into()))?;
-                let limit = arguments.get("limit").and_then(Value::as_i64).unwrap_or(50);
+                // A supplied filter must be well formed: silently ignoring it would report
+                // every goal as if it were the requested one.
+                let goal = match arguments.get("goalId") {
+                    None => None,
+                    Some(value) => Some(
+                        value
+                            .as_str()
+                            .and_then(|id| Uuid::parse_str(id).ok())
+                            .ok_or_else(|| ApiError::BadRequest("invalid goalId".into()))?,
+                    ),
+                };
+                let limit = match arguments.get("limit") {
+                    None => 50,
+                    Some(value) => value
+                        .as_i64()
+                        .filter(|limit| (0..=500).contains(limit))
+                        .ok_or_else(|| {
+                            ApiError::BadRequest("limit must be an integer from 0 to 500".into())
+                        })?,
+                };
                 conversions_report(&state.pool, site, from, to, goal, limit)
                     .await
                     .map(|value| (Some(site), value))

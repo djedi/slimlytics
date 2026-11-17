@@ -1266,6 +1266,15 @@ async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
             .len(),
         1
     );
+    for arguments in [
+        json!({"siteId":site_id,"from":today,"to":today,"goalId":null}),
+        json!({"siteId":site_id,"from":today,"to":today,"goalId":7}),
+        json!({"siteId":site_id,"from":today,"to":today,"limit":"5"}),
+        json!({"siteId":site_id,"from":today,"to":today,"limit":501}),
+    ] {
+        let malformed = mcp(read_only.clone(), "conversions_report", arguments.clone()).await;
+        assert_eq!(malformed["result"]["isError"], true, "{arguments}");
+    }
     let missing = mcp(
         read_only.clone(),
         "conversions_report",
