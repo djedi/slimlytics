@@ -14,13 +14,14 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
-const SCOPES: [&str; 4] = [
+const SCOPES: [&str; 5] = [
     "sites:read",
     "sites:write",
     "analytics:read",
+    "analytics:write",
     "integrations:read",
 ];
-const DEFAULT_SCOPE: &str = "sites:read sites:write analytics:read";
+const DEFAULT_SCOPE: &str = "sites:read sites:write analytics:read analytics:write";
 /// Lifetime of one access token. Clients renew it with the refresh token.
 const ACCESS_TOKEN_SECONDS: i64 = 3600;
 
@@ -408,6 +409,7 @@ fn describe_scope(scope: &str) -> (&'static str, bool) {
         "sites:read" => ("See your sites and their settings", false),
         "sites:write" => ("Create and configure sites", true),
         "analytics:read" => ("Read analytics reports", false),
+        "analytics:write" => ("Create and delete goals", true),
         "integrations:read" => ("Read connected integrations like Search Console", false),
         _ => ("Additional access", false),
     }

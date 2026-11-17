@@ -229,6 +229,7 @@ async fn openapi_document_covers_every_public_backend_route() {
         ("/api/sites/{siteId}/goals", "get"),
         ("/api/sites/{siteId}/goals", "post"),
         ("/api/sites/{siteId}/goals/{goalId}", "delete"),
+        ("/api/sites/{siteId}/conversions", "get"),
         ("/api/sites/{siteId}/export.csv", "get"),
         ("/api/sites/{siteId}/stream", "get"),
         ("/api/collect/{writeKey}", "post"),

@@ -279,6 +279,10 @@ hermes mcp test slimlytics`;
               <tr><td><code>analytics_summary</code></td><td>Inspect metrics and comparisons with an explicit siteId and inclusive from/to dates.</td></tr>
               <tr><td><code>dimension_report</code></td><td>Inspect pages, referrers, countries, devices, and campaigns.</td></tr>
               <tr><td><code>marketing_brief</code></td><td>Get a completed-day marketing summary and supporting evidence.</td></tr>
+              <tr><td><code>list_goals</code></td><td>List the conversion goals for a site.</td></tr>
+              <tr><td><code>create_goal</code></td><td>Create or reuse a goal, such as a <code>signup</code> event, and get the code that sends the event from the website. Requires analytics:write.</td></tr>
+              <tr><td><code>delete_goal</code></td><td>Delete a goal. Requires analytics:write.</td></tr>
+              <tr><td><code>conversions_report</code></td><td>Conversions per goal for inclusive from/to dates, with daily rows, sources, and the most recent conversions.</td></tr>
               <tr><td><code>search_console_report</code></td><td>Read connected Search Console data with integrations:read permission.</td></tr>
             </tbody>
           </table>
@@ -306,9 +310,11 @@ Report any deployment step that still needs operator access.`}
       <div class="mkt-prose">
         <h2 id="permissions">Permissions and reconnecting</h2>
         <p>
-          Default permissions are <code>sites:read sites:write analytics:read</code>. Site setup also
-          requires owner or administrator access. Read-only agents can request
-          <code>sites:read analytics:read</code>; they cannot create or configure sites.
+          Default permissions are <code>sites:read sites:write analytics:read analytics:write</code>.
+          <code>analytics:write</code> lets the agent create and delete goals; reconnect an older
+          connection to grant it. Site setup also requires owner or administrator access. Read-only
+          agents can request <code>sites:read analytics:read</code>; they cannot create or configure
+          sites or goals.
         </p>
         <p>
           OAuth connections appear as <strong>MCP OAuth agent</strong> in your account’s API token

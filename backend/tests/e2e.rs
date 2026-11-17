@@ -943,3 +943,368 @@ async fn site_summaries_match_each_sites_overview() {
         .unwrap();
     assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn agent_sets_up_goals_and_reads_conversions_over_mcp() {
+    let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL required");
+    let pool = PgPoolOptions::new().connect(&url).await.unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    let router = app(AppState::new(
+        pool.clone(),
+        "01234567890123456789012345678901".into(),
+        b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
+    ));
+    let email = format!("goals+{}@example.com", uuid::Uuid::new_v4());
+    let register = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/register",
+            None,
+            json!({"email":email,"password":"long-enough-password"}),
+        ))
+        .await
+        .unwrap();
+    let session = body_json(register.into_body()).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mint = |scopes: Value| {
+        let router = router.clone();
+        let session = session.clone();
+        async move {
+            let response = router
+                .oneshot(json_request(
+                    "POST",
+                    "/api/account/tokens",
+                    Some(&session),
+                    json!({"name":"goal agent","expiresInDays":1,"scopes":scopes}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+            body_json(response.into_body()).await["token"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        }
+    };
+    let token = mint(json!([
+        "sites:read",
+        "sites:write",
+        "analytics:read",
+        "analytics:write"
+    ]))
+    .await;
+    let read_only = mint(json!(["sites:read", "analytics:read"])).await;
+    let mcp = |token: String, name: &'static str, arguments: Value| {
+        let router = router.clone();
+        async move {
+            let response = router
+                .oneshot(json_request(
+                    "POST",
+                    "/api/mcp",
+                    Some(&token),
+                    json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                           "params":{"name":name,"arguments":arguments}}),
+                ))
+                .await
+                .unwrap();
+            body_json(response.into_body()).await
+        }
+    };
+
+    let listed = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/mcp",
+            Some(&token),
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+        ))
+        .await
+        .unwrap();
+    let listed = body_json(listed.into_body()).await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    for tool in [
+        "list_goals",
+        "create_goal",
+        "delete_goal",
+        "conversions_report",
+    ] {
+        assert!(names.contains(&tool), "{tool} missing from tools/list");
+    }
+
+    let domain = format!("goals-{}.example.com", uuid::Uuid::new_v4().simple());
+    let created = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/sites",
+            Some(&token),
+            json!({"name":"Goals","domain":domain,"timezone":"America/Denver",
+                   "allowed_origins":[format!("https://{domain}")],"retention_days":30}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let site = body_json(created.into_body()).await;
+    let site_id = site["id"].as_str().unwrap().to_owned();
+    let write_key = site["writeKey"].as_str().unwrap().to_owned();
+    let server_key = site["serverWriteKey"].as_str().unwrap().to_owned();
+
+    let browser = |name: &'static str, path: &'static str, ip: &'static str| {
+        let mut request = json_request(
+            "POST",
+            &format!("/api/e/{write_key}"),
+            None,
+            json!({"name":name,"url":format!("https://{domain}{path}"),
+                   "properties":{"plan":"free"}}),
+        );
+        request
+            .headers_mut()
+            .insert(header::ORIGIN, format!("https://{domain}").parse().unwrap());
+        request
+            .headers_mut()
+            .insert(header::USER_AGENT, "Mozilla/5.0".parse().unwrap());
+        request.extensions_mut().insert(ConnectInfo(
+            format!("{ip}:443").parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        let router = router.clone();
+        async move {
+            let response = router.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+        }
+    };
+    // A visitor arrives from a newsletter and signs up before any goal exists.
+    browser(
+        "pageview",
+        "/?utm_source=newsletter&utm_campaign=fall",
+        "203.0.113.20",
+    )
+    .await;
+    browser("signup", "/register", "203.0.113.20").await;
+
+    // A read-only agent cannot create goals.
+    let refused = mcp(
+        read_only.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Signup","eventName":"signup"}),
+    )
+    .await;
+    assert_eq!(refused["error"]["code"], "forbidden", "{refused}");
+
+    for (arguments, message) in [
+        (
+            json!({"siteId":site_id,"name":"Signup"}),
+            "missing eventName",
+        ),
+        (
+            json!({"siteId":site_id,"name":"Signup","eventName":" signup"}),
+            "padded eventName",
+        ),
+        (
+            json!({"siteId":site_id,"name":"Signup","eventName":"signup","pathPattern":"register"}),
+            "relative pathPattern",
+        ),
+    ] {
+        let invalid = mcp(token.clone(), "create_goal", arguments).await;
+        assert_eq!(invalid["result"]["isError"], true, "{message}: {invalid}");
+    }
+
+    let goal = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Signup","eventName":"signup"}),
+    )
+    .await;
+    let goal = &goal["result"]["structuredContent"];
+    assert_eq!(goal["created"], true, "{goal}");
+    let goal_id = goal["goal"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        goal["instrumentation"]["browser"]["code"],
+        "window.Slimlytics?.event(\"signup\");"
+    );
+    assert!(!goal.to_string().contains(&server_key), "server key leaked");
+
+    // Repeating the call reuses the goal; a different definition under the name is refused.
+    let again = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Signup","eventName":"signup","pathPattern":""}),
+    )
+    .await;
+    assert_eq!(again["result"]["structuredContent"]["created"], false);
+    assert_eq!(again["result"]["structuredContent"]["goal"]["id"], goal_id);
+    let conflict = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Signup","eventName":"register"}),
+    )
+    .await;
+    assert_eq!(conflict["result"]["isError"], true);
+
+    // A second signup arrives from the server with the visitor's IP and user agent.
+    let mut server = json_request(
+        "POST",
+        "/api/ingest",
+        None,
+        json!({"events":[{
+            "eventName":"signup","url":format!("https://{domain}/register"),
+            "clientIp":"203.0.113.21","userAgent":"Mozilla/5.0",
+            "idempotencyKey":"signup:account-2"
+        }]}),
+    );
+    server
+        .headers_mut()
+        .insert("x-slimlytics-server-key", server_key.parse().unwrap());
+    server.extensions_mut().insert(ConnectInfo(
+        "198.51.100.10:443".parse::<std::net::SocketAddr>().unwrap(),
+    ));
+    let server = router.clone().oneshot(server).await.unwrap();
+    assert_eq!(server.status(), StatusCode::ACCEPTED);
+
+    let today = chrono::Utc::now()
+        .with_timezone(&"America/Denver".parse::<chrono_tz::Tz>().unwrap())
+        .date_naive();
+    let from = today.pred_opt().unwrap();
+    let report = mcp(
+        read_only.clone(),
+        "conversions_report",
+        json!({"siteId":site_id,"from":from,"to":today}),
+    )
+    .await;
+    let report = &report["result"]["structuredContent"];
+    assert_eq!(report["timezone"], "America/Denver", "{report}");
+    let signup = &report["goals"][0];
+    // The first signup predates the goal and is counted by the backfill.
+    assert_eq!(signup["conversions"]["current"], 2, "{report}");
+    assert_eq!(signup["uniqueConverters"]["current"], 2);
+    assert_eq!(signup["conversionRate"], 100.0);
+    let daily = signup["daily"].as_array().unwrap();
+    assert_eq!(daily.len(), 2);
+    assert_eq!(daily[1]["date"], today.to_string());
+    assert_eq!(daily[1]["conversions"], 2);
+    let sources = signup["topSources"].as_array().unwrap();
+    assert!(sources.iter().any(|row| row["source"] == "newsletter"
+        && row["campaign"] == "fall"
+        && row["conversions"] == 1));
+    let recent = report["recentConversions"].as_array().unwrap();
+    assert_eq!(recent.len(), 2);
+    assert!(recent
+        .iter()
+        .any(|row| row["source"] == "newsletter" && row["properties"]["plan"] == "free"));
+    assert_eq!(recent[0]["goalName"], "Signup");
+
+    let limited = mcp(
+        read_only.clone(),
+        "conversions_report",
+        json!({"siteId":site_id,"from":today,"to":today,"goalId":goal_id,"limit":1}),
+    )
+    .await;
+    assert_eq!(
+        limited["result"]["structuredContent"]["recentConversions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let missing = mcp(
+        read_only.clone(),
+        "conversions_report",
+        json!({"siteId":site_id,"from":today,"to":today,"goalId":uuid::Uuid::new_v4()}),
+    )
+    .await;
+    assert_eq!(missing["result"]["isError"], true);
+
+    let goals = mcp(read_only.clone(), "list_goals", json!({"siteId":site_id})).await;
+    assert_eq!(
+        goals["result"]["structuredContent"]["goals"][0]["conversions"],
+        2
+    );
+
+    // REST: the same report, goals over a range, and events filtered by name.
+    for (path, check) in [
+        (
+            format!("/api/sites/{site_id}/conversions?from={today}&to={today}"),
+            "conversions",
+        ),
+        (
+            format!("/api/sites/{site_id}/goals?from={today}&to={today}"),
+            "goals",
+        ),
+        (
+            format!("/api/sites/{site_id}/events?from={today}&to={today}&name=signup"),
+            "events",
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(json_request("GET", &path, Some(&read_only), json!({})))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body = body_json(response.into_body()).await;
+        match check {
+            "conversions" => assert_eq!(body["goals"][0]["conversions"]["current"], 2),
+            "goals" => assert_eq!(body[0]["conversions"], 2),
+            _ => {
+                let events = body.as_array().unwrap();
+                assert_eq!(events.len(), 2);
+                assert!(events.iter().all(|event| event["type"] == "signup"));
+            }
+        }
+    }
+    let half_range = router
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            &format!("/api/sites/{site_id}/goals?from={today}"),
+            Some(&read_only),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(half_range.status(), StatusCode::BAD_REQUEST);
+
+    // A page goal backfills matching page views.
+    let page_goal = mcp(
+        token.clone(),
+        "create_goal",
+        json!({"siteId":site_id,"name":"Home","eventName":"pageview","pathPattern":"/"}),
+    )
+    .await;
+    assert_eq!(
+        page_goal["result"]["structuredContent"]["instrumentation"]["kind"],
+        "pageview"
+    );
+
+    let refused = mcp(
+        read_only.clone(),
+        "delete_goal",
+        json!({"siteId":site_id,"goalId":goal_id}),
+    )
+    .await;
+    assert_eq!(refused["error"]["code"], "forbidden", "{refused}");
+    let deleted = mcp(
+        token.clone(),
+        "delete_goal",
+        json!({"siteId":site_id,"goalId":goal_id}),
+    )
+    .await;
+    assert_eq!(deleted["result"]["structuredContent"]["deleted"], true);
+    let goals = mcp(read_only, "list_goals", json!({"siteId":site_id})).await;
+    let goals = goals["result"]["structuredContent"]["goals"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(goals.len(), 1);
+    assert_eq!(goals[0]["name"], "Home");
+    assert_eq!(goals[0]["conversions"], 1);
+}

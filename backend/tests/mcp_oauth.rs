@@ -646,7 +646,7 @@ async fn authorization_errors_redirect_once_the_callback_is_trusted() {
             with("resource", Some("https://elsewhere.example/api/mcp")),
             "invalid_target",
         ),
-        (with("scope", Some("analytics:write")), "invalid_scope"),
+        (with("scope", Some("integrations:write")), "invalid_scope"),
     ] {
         let response = get(&router, &path).await;
         assert_eq!(response.status(), 303, "{expected}: {path}");
