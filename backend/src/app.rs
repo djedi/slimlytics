@@ -39,7 +39,10 @@ use crate::{
         missing_scopes, oauth_state, preferred_property, site_resource_url, state_hash,
         verification_request, verified_property_urls, SearchConsoleConfig,
     },
-    server_ingest::{valid_server_event_name, validate_server_event, ServerEventBatch},
+    server_ingest::{
+        server_event_classification, valid_server_event_name, validate_server_event,
+        ServerEventBatch,
+    },
     site_icon::{fetch_favicon, normalize_color},
     traffic::{
         automation_for, client_metadata, collection_origin_allowed, origin_allowed, traffic_class,
@@ -1544,7 +1547,7 @@ async fn collect(
             .title
             .as_ref()
             .is_some_and(|v| v.chars().count() > 500)
-        || input.properties.to_string().len() > 16 * 1024
+        || input.properties.to_string().len() > MAX_EVENT_PROPERTIES_BYTES
     {
         record_collection_rejection(&state.pool, site, "invalid_payload").await;
         return Err(ApiError::BadRequest("event payload too large".into()));
@@ -1786,8 +1789,7 @@ async fn server_collect(
             &event.user_agent,
             event.occurred_at,
         );
-        let class = traffic_class(&event.user_agent, event.client_ip, &state.internal_ips);
-        let automation = automation_for(&event.user_agent, event.client_ip);
+        let (class, automation) = server_event_classification(&event, &state.internal_ips);
         let client = client_metadata(&event.user_agent);
         let location = state
             .geoip
@@ -1801,17 +1803,19 @@ async fn server_collect(
                 .find(|(key, _)| key == name)
                 .map(|(_, value)| value.into_owned())
         };
-        let properties = json!({"method":event.method,"status":event.status});
+        let marketing = marketing_context(&event.properties);
         let event_id: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO events(
                site_id,occurred_at,visitor_id,session_id,event_name,url,path,referrer,
                referrer_host,country_code,region,city,continent_code,device_type,browser,
                browser_version,os,os_version,utm_source,utm_medium,utm_campaign,utm_term,
                utm_content,automation_name,automation_category,properties,traffic_class,
-               privacy_mode,tracker_version,ingestion_source,source_event_id
+               source_event_id,revenue_amount,revenue_currency,content_id,content_type,
+               content_author,privacy_mode,tracker_version,ingestion_source
              ) VALUES(
                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-               $20,$21,$22,$23,$24,$25,$26,$27::traffic_class,'standard','server','server',$28
+               $20,$21,$22,$23,$24,$25,$26,$27::traffic_class,$28,$29::numeric,$30,$31,$32,
+               $33,'standard','server','server'
              ) ON CONFLICT(site_id,source_event_id) WHERE source_event_id IS NOT NULL
                DO NOTHING RETURNING id",
         )
@@ -1840,9 +1844,14 @@ async fn server_collect(
         .bind(query("utm_content"))
         .bind(automation.map(|value| value.name))
         .bind(automation.map(|value| value.category))
-        .bind(properties)
+        .bind(&event.properties)
         .bind(class)
         .bind(event.idempotency_key.as_deref())
+        .bind(marketing.revenue_amount.as_deref())
+        .bind(marketing.revenue_currency.as_deref())
+        .bind(marketing.content_id.as_deref())
+        .bind(marketing.content_type.as_deref())
+        .bind(marketing.content_author.as_deref())
         .fetch_optional(&mut *tx)
         .await?;
         let Some(event_id) = event_id else {
@@ -5139,12 +5148,16 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
                 "url":"https://<site domain>/<page where it happened>",
                 "clientIp":"<visitor IP from the request>",
                 "userAgent":"<visitor User-Agent from the request>",
-                "idempotencyKey":"<unique id, for example signup:<account id>>"
+                "idempotencyKey":"<unique id, for example signup:<account id>>",
+                "confirmed":true,
+                "properties":{"plan":"pro"}
             }]},
             "notes":with_path(vec![
                 "Use this when the action is confirmed on the server, so ad blockers cannot drop it.",
                 "SLIMLYTICS_SERVER_KEY is the site's server key from the Slimlytics dashboard; keep it in private server config, never in the repository or browser code.",
-                "url must be on the site's exact domain. Forward the visitor's real IP and User-Agent: they tie the conversion to the visitor's source, and a server User-Agent is classified as a bot and not counted.",
+                "url must be on the site's exact domain. Forward the visitor's real IP and User-Agent: they tie the conversion to the visitor's source.",
+                "confirmed: true says your server confirmed the action, so it is counted even when the User-Agent looks automated (an app's HTTP client, a link preview). Without it, a bot-like User-Agent excludes the event from goals. It is refused on pageview events, which keep bot filtering.",
+                "properties is optional and works like browser event properties: an object of flat values up to 16 KB serialized; never send names, emails or other personal data. A numeric revenue, with an optional three-letter currency (for example {\"plan\":\"pro\",\"revenue\":9.99,\"currency\":\"USD\"}), is recorded as revenue; a revenue string is not.",
                 "Honor the same privacy choices as the browser tracker: do not send the event when the visitor has not given analytics consent, or when the request carries DNT: 1 or Sec-GPC: 1."
             ].into_iter().map(String::from).collect())
         })

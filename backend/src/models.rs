@@ -185,6 +185,9 @@ pub struct CollectInput {
     pub privacy_control: Option<String>,
     pub tracker_version: Option<String>,
 }
+/// Largest serialized `properties` object an event may carry, from the browser or a server.
+pub const MAX_EVENT_PROPERTIES_BYTES: usize = 16 * 1024;
+
 fn pageview() -> String {
     "pageview".into()
 }

@@ -169,3 +169,17 @@ fn product_name_wins_over_network_and_internal_wins_over_all() {
     );
     assert_eq!(traffic_class(CHROME_UA, ip, &[ip]), "internal");
 }
+
+#[test]
+fn http_client_user_agents_without_bot_markers_are_human() {
+    // Server-confirmed events often carry an app's HTTP client user agent.
+    let ip: IpAddr = "203.0.113.20".parse().unwrap();
+    for ua in [
+        "Dart/3.13 (dart:io)",
+        "okhttp/4.12.0",
+        "python-requests/2.32",
+    ] {
+        assert_eq!(traffic_class(ua, ip, &[]), "human", "{ua}");
+    }
+    assert_eq!(traffic_class("SomeApp-Preview/1.0", ip, &[]), "bot");
+}

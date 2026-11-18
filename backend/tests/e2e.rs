@@ -1544,3 +1544,190 @@ async fn goal_creation_and_overlapping_server_batches_do_not_deadlock_or_miss_co
             .unwrap();
     assert_eq!(completions, 3 * keys.len() as i64);
 }
+
+#[tokio::test]
+#[ignore = "requires TEST_DATABASE_URL pointing to a disposable PostgreSQL database"]
+async fn server_ingest_confirmed_events_carry_properties_and_skip_bot_filtering() {
+    let url = std::env::var("TEST_DATABASE_URL").expect("TEST_DATABASE_URL required");
+    let pool = PgPoolOptions::new().connect(&url).await.unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
+    let router = app(AppState::new(
+        pool.clone(),
+        "01234567890123456789012345678901".into(),
+        b"abcdefghijklmnopqrstuvwxyz012345".to_vec(),
+    ));
+    let email = format!("confirmed+{}@example.com", uuid::Uuid::new_v4());
+    let register = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/auth/register",
+            None,
+            json!({"email":email,"password":"long-enough-password"}),
+        ))
+        .await
+        .unwrap();
+    let token = body_json(register.into_body()).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let domain = format!("confirmed-{}.example.com", uuid::Uuid::new_v4().simple());
+    let created = router
+        .clone()
+        .oneshot(json_request(
+            "POST",
+            "/api/sites",
+            Some(&token),
+            json!({"name":"Confirmed","domain":domain,"timezone":"UTC","retention_days":30}),
+        ))
+        .await
+        .unwrap();
+    let site = body_json(created.into_body()).await;
+    let site_id = site["id"].as_str().unwrap().to_owned();
+    let site_uuid = uuid::Uuid::parse_str(&site_id).unwrap();
+    let server_key = site["serverWriteKey"].as_str().unwrap().to_owned();
+    for (name, event_name, path) in [
+        ("Paid", "paid", None),
+        ("Trial", "trial_started", None),
+        ("Pricing", "pageview", Some("/pricing%")),
+    ] {
+        let goal = router
+            .clone()
+            .oneshot(json_request(
+                "POST",
+                &format!("/api/sites/{site_id}/goals"),
+                Some(&token),
+                json!({"name":name,"eventName":event_name,"pathPattern":path}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(goal.status(), StatusCode::CREATED);
+    }
+    let ingest = |events: Value| {
+        let mut request = json_request("POST", "/api/ingest", None, json!({ "events": events }));
+        request
+            .headers_mut()
+            .insert("x-slimlytics-server-key", server_key.parse().unwrap());
+        request.extensions_mut().insert(ConnectInfo(
+            "198.51.100.10:443".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        router.clone().oneshot(request)
+    };
+    let page = format!("https://{domain}/pricing");
+    let bot_ua = "ExampleApp-Preview/2.0";
+
+    // Invalid properties or a confirmed pageview reject the whole batch, like collect does.
+    for (invalid, message) in [
+        (
+            json!({"properties":["monthly"]}),
+            "properties must be an object",
+        ),
+        (
+            json!({"properties":{"note":"x".repeat(16 * 1024)}}),
+            "event payload too large",
+        ),
+        (
+            json!({"eventName":"pageview","confirmed":true}),
+            "confirmed applies only to custom events",
+        ),
+    ] {
+        let mut bad = json!({"eventName":"paid","url":page,"clientIp":"203.0.113.50",
+                             "userAgent":"Mozilla/5.0","idempotencyKey":"invalid:event"});
+        for (key, value) in invalid.as_object().unwrap() {
+            bad[key] = value.clone();
+        }
+        let good = json!({"eventName":"paid","url":page,"clientIp":"203.0.113.51",
+                          "userAgent":"Mozilla/5.0","idempotencyKey":"valid:sibling"});
+        let response = ingest(json!([good, bad])).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{message}");
+        let body = body_json(response.into_body()).await;
+        assert!(body.to_string().contains(message), "{body}");
+    }
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM events WHERE site_id=$1")
+        .bind(site_uuid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 0);
+
+    let response = ingest(json!([
+        // Confirmed by the site's server: counted although the user agent looks automated.
+        {"eventName":"paid","url":page,"clientIp":"203.0.113.60","userAgent":bot_ua,
+         "idempotencyKey":"paid:confirmed","confirmed":true,
+         "properties":{"plan":"monthly","revenue":9.99,"currency":"usd"}},
+        // The same user agent without the opt-in stays a bot.
+        {"eventName":"paid","url":page,"clientIp":"203.0.113.61","userAgent":bot_ua,
+         "idempotencyKey":"paid:unconfirmed","properties":{"plan":"annual","revenue":99}},
+        // A mobile app's HTTP client user agent is not a bot marker.
+        {"eventName":"trial_started","url":format!("https://{domain}/signup"),
+         "clientIp":"203.0.113.62","userAgent":"Dart/3.13 (dart:io)",
+         "idempotencyKey":"trial:app"},
+        // Log-shipped crawler pageviews are still filtered.
+        {"url":page,"clientIp":"203.0.113.63","userAgent":"GPTBot/1.0",
+         "idempotencyKey":"log:crawler","method":"GET","status":200}
+    ]))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(body_json(response.into_body()).await["accepted"], 4);
+
+    type Row = (String, Option<String>, Option<f64>, Option<String>, Value);
+    let row = |key: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, Row>(
+                "SELECT traffic_class::text,automation_name,revenue_amount::float8,
+                        revenue_currency,properties
+                 FROM events WHERE site_id=$1 AND source_event_id=$2",
+            )
+            .bind(site_uuid)
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let confirmed = row("paid:confirmed").await;
+    assert_eq!(confirmed.0, "human");
+    assert_eq!(confirmed.2, Some(9.99));
+    assert_eq!(confirmed.3.as_deref(), Some("USD"));
+    assert_eq!(confirmed.4["plan"], "monthly");
+    let unconfirmed = row("paid:unconfirmed").await;
+    assert_eq!(unconfirmed.0, "bot");
+    assert_eq!(unconfirmed.2, Some(99.0));
+    assert_eq!(row("trial:app").await.0, "human");
+    let crawler = row("log:crawler").await;
+    assert_eq!(crawler.0, "bot");
+    assert_eq!(crawler.1.as_deref(), Some("GPTBot"));
+    assert_eq!(crawler.4, json!({"method":"GET","status":200}));
+
+    let today = chrono::Utc::now().date_naive();
+    let report = router
+        .clone()
+        .oneshot(json_request(
+            "GET",
+            &format!("/api/sites/{site_id}/conversions?from={today}&to={today}"),
+            Some(&token),
+            json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(report.status(), StatusCode::OK);
+    let report = body_json(report.into_body()).await;
+    let goal = |name: &str| {
+        report["goals"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|goal| goal["name"] == name)
+            .unwrap()["conversions"]["current"]
+            .clone()
+    };
+    assert_eq!(goal("Paid"), 1, "{report}");
+    assert_eq!(goal("Trial"), 1, "{report}");
+    assert_eq!(goal("Pricing"), 0, "{report}");
+    let recent = report["recentConversions"].as_array().unwrap();
+    let paid = recent.iter().find(|row| row["goalName"] == "Paid").unwrap();
+    assert_eq!(paid["properties"]["plan"], "monthly", "{report}");
+    assert_eq!(paid["properties"]["revenue"], 9.99);
+}
