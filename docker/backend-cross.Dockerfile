@@ -3,7 +3,7 @@
 # emulation: Debian's x86-64 GCC cross toolchain links against Debian's own amd64 libssl, the
 # same libssl3 the production runtime image installs.
 # Usage: docker build -f docker/backend-cross.Dockerfile --output type=local,dest=OUT .
-FROM rust:1.98-bookworm AS toolchain
+FROM rust:1.100-bookworm AS toolchain
 RUN dpkg --add-architecture amd64 \
     && apt-get update \
     && apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu libc6-dev-amd64-cross libssl-dev:amd64 \
