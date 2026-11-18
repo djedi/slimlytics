@@ -71,7 +71,7 @@
     type Site,
     type Visitor
   } from '$lib/api';
-  import { applyTheme, compactNumber, duration, flagEmoji, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
+  import { applyTheme, compactNumber, duration, flagEmoji, formatRate, ignoreVisitsLinks, portfolioTotals, sparklinePoints, type Theme } from '$lib/ui';
   import {
     DEFAULT_RANGE,
     appHref,
@@ -615,7 +615,7 @@
       addToWindow(events);
       visitors = await api.visitors(site.id);
       if (resetStream || !source || source.readyState === EventSource.CLOSED) connectSpy();
-    } else if (view === 'goals') goals = await api.goals(site.id);
+    } else if (view === 'goals') goals = await api.goals(site.id, range.period);
     else if (view === 'search') {
       const id = site.id;
       const period = range.period;
@@ -1630,7 +1630,7 @@
                 <strong>{goal.conversions ?? 0}</strong><small>conversions</small>
               </div>
               <div>
-                <strong>{goal.conversionRate ?? 0}%</strong><small>conversion rate</small>
+                <strong>{formatRate(goal.conversionRate)}</strong><small>conversion rate</small>
               </div>
             </article>
           {/each}

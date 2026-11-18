@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyTheme, ignoreVisitsLinks, sparklinePoints } from '../src/lib/ui';
+import { applyTheme, formatRate, ignoreVisitsLinks, sparklinePoints } from '../src/lib/ui';
 
 describe('UI helpers', () => {
   it('creates bounded SVG points including flat datasets', () => {
@@ -32,5 +32,18 @@ describe('ignoreVisitsLinks', () => {
   it('returns nothing for unusable domains', () => {
     expect(ignoreVisitsLinks('')).toBeUndefined();
     expect(ignoreVisitsLinks('javascript:alert(1)')).toBeUndefined();
+  });
+});
+
+describe('formatRate', () => {
+  it('rounds conversion rates to a readable precision', () => {
+    expect(formatRate(0.020790020790020790)).toBe('0.02%');
+    expect(formatRate(0.004)).toBe('<0.01%');
+    expect(formatRate(0)).toBe('0%');
+    expect(formatRate(undefined)).toBe('0%');
+    expect(formatRate(3.14159)).toBe('3.1%');
+    expect(formatRate(2.5)).toBe('2.5%');
+    expect(formatRate(33.3333)).toBe('33%');
+    expect(formatRate(100)).toBe('100%');
   });
 });

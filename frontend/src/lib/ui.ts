@@ -39,6 +39,15 @@ export function formatChange(change: number | undefined): { text: string; tone: 
   return { text, tone: value > 0 ? 'up' : 'down' };
 }
 
+/** A conversion rate (already a percent) at a readable precision: tiny nonzero rates show as "<0.01%". */
+export function formatRate(rate: number | undefined): string {
+  const value = rate ?? 0;
+  if (!Number.isFinite(value) || value <= 0) return '0%';
+  if (value < 0.01) return '<0.01%';
+  const digits = value < 1 ? 2 : value < 10 ? 1 : 0;
+  return `${Number(value.toFixed(digits))}%`;
+}
+
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 export function compactNumber(value: number): string {
   return compact.format(value);
