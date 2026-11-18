@@ -5150,7 +5150,7 @@ fn goal_instrumentation(goal: &Goal, analytics_origin: &str) -> Value {
                 "userAgent":"<visitor User-Agent from the request>",
                 "idempotencyKey":"<unique id, for example signup:<account id>>",
                 "confirmed":true,
-                "properties":{"plan":"pro"}
+                "properties":{"<optional property>":"<flat value, no personal data>"}
             }]},
             "notes":with_path(vec![
                 "Use this when the action is confirmed on the server, so ad blockers cannot drop it.",
