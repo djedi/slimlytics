@@ -78,6 +78,10 @@ The browser tracker sends page views and custom events. The collector accepts `s
 
 A write key authorizes ingestion only. It never grants dashboard or reporting access.
 
+- `POST /api/ingest` — batched server events authorized by the `X-Slimlytics-Server-Key` header
+
+Server ingestion accepts trusted access-log requests and server-confirmed custom events. Each event may carry `properties` with the same limits as browser events (a flat object, at most 16 KB serialized, numeric `revenue` and three-letter `currency` recorded as revenue) and `confirmed: true` on custom events to count them regardless of User-Agent bot classification. See [SERVER_INGESTION.md](SERVER_INGESTION.md).
+
 ## First-party tracker bootstrap
 
 - `GET /p/{writeKey}/{beaconName}`

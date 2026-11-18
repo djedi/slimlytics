@@ -33,7 +33,7 @@ Site owners should avoid putting personal or secret data into URLs at all. Confi
 
 Raw addresses are used only transiently for abuse controls, crawler-network classification, and coarse location derivation when enabled. Persisted visitor identifiers must be one-way, site-scoped, and rotated. Application logs must not include raw authorization tokens, passwords, full IP addresses, or unredacted collector payloads.
 
-Server-side ingestion follows the same rule: a supplied access-log IP is used transiently for classification, optional GeoIP, and rotating HMAC identifiers, then discarded. Server ingestion is marked separately from browser collection and accepts only bounded request metadata for the configured site domain.
+Server-side ingestion follows the same rule: a supplied access-log IP is used transiently for classification, optional GeoIP, and rotating HMAC identifiers, then discarded. Server ingestion is marked separately from browser collection and accepts only bounded request metadata and the same flat, size-limited event properties as browser collection for the configured site domain. Callers must not send events for visitors who opted out through consent, DNT, or GPC.
 
 Trusted edge location headers or an optional local GeoIP database can populate country, continent, region, and city. Region and city are discarded when Global Privacy Control is active. Slimlytics never stores coordinates. The default database is DB-IP City Lite (CC BY 4.0, "IP Geolocation by DB-IP"), downloaded with `make geoip`; lookups run locally and never send visitor IPs to a third party.
 

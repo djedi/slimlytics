@@ -1,5 +1,8 @@
+use crate::models::MAX_EVENT_PROPERTIES_BYTES;
+use crate::traffic::{automation_for, traffic_class, AutomationMetadata};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use serde_json::Value;
 use std::net::IpAddr;
 use url::Url;
 
@@ -15,6 +18,11 @@ pub struct ServerEvent {
     pub method: Option<String>,
     pub status: Option<u16>,
     pub event_name: Option<String>,
+    /// Optional flat event properties, validated and stored like `/api/collect` properties.
+    pub properties: Option<Value>,
+    /// The caller's server confirmed this custom event happened (a signup, a payment), so its
+    /// user agent does not mark it as automated. Refused on pageviews.
+    pub confirmed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +40,9 @@ pub struct ValidatedServerEvent {
     pub method: Option<String>,
     pub status: Option<u16>,
     pub event_name: String,
+    /// Caller properties merged with the request `method` and `status`.
+    pub properties: Value,
+    pub confirmed: bool,
 }
 
 /// Event names server ingestion accepts: 1-64 ASCII letters, digits, `_`, `-` or `.`.
@@ -80,6 +91,11 @@ pub fn validate_server_event(
     if !valid_server_event_name(&event_name) {
         return Err("invalid eventName");
     }
+    let confirmed = input.confirmed.unwrap_or(false);
+    if confirmed && event_name == "pageview" {
+        return Err("confirmed applies only to custom events");
+    }
+    let properties = server_event_properties(input.properties, method.as_deref(), input.status)?;
     if input
         .referrer
         .as_ref()
@@ -105,5 +121,48 @@ pub fn validate_server_event(
         method,
         status: input.status,
         event_name,
+        properties,
+        confirmed,
     })
+}
+
+/// Caller properties, held to the limits `/api/collect` applies, with the request metadata
+/// ingestion has always stored. A sent `method` or `status` overrides a same-named property.
+fn server_event_properties(
+    properties: Option<Value>,
+    method: Option<&str>,
+    status: Option<u16>,
+) -> Result<Value, &'static str> {
+    let mut properties = match properties {
+        None | Some(Value::Null) => serde_json::Map::new(),
+        Some(Value::Object(map)) => map,
+        Some(_) => return Err("properties must be an object"),
+    };
+    // Serialized exactly as collect measures its `properties` value.
+    if serde_json::to_string(&properties)
+        .map_or(true, |json| json.len() > MAX_EVENT_PROPERTIES_BYTES)
+    {
+        return Err("event payload too large");
+    }
+    if method.is_some() || !properties.contains_key("method") {
+        properties.insert("method".into(), method.into());
+    }
+    if status.is_some() || !properties.contains_key("status") {
+        properties.insert("status".into(), status.into());
+    }
+    Ok(Value::Object(properties))
+}
+
+/// Traffic class and automation metadata for a server event. A confirmed custom event is a
+/// visitor's action vouched for by the site's server, so its user agent or network does not
+/// make it a bot; operators' internal addresses still apply.
+pub fn server_event_classification(
+    event: &ValidatedServerEvent,
+    internal: &[IpAddr],
+) -> (&'static str, Option<AutomationMetadata>) {
+    let class = traffic_class(&event.user_agent, event.client_ip, internal);
+    if event.confirmed {
+        return (if class == "bot" { "human" } else { class }, None);
+    }
+    (class, automation_for(&event.user_agent, event.client_ip))
 }
